@@ -108,6 +108,10 @@ startup() do #(0) {{
 
         impl MatchEvent for App {
             fn handle_startup(&mut self, cx: &mut Cx) {
+                ::quinn::set_live_shell(
+                    concat!(env!("CARGO_MANIFEST_DIR"), "/src/main.rs"),
+                    #shell,
+                );
                 ::quinn::startup(cx, &self.ui, || #root);
             }
 
@@ -122,7 +126,7 @@ startup() do #(0) {{
                 let shell = #shell;
                 let component = App::script_component(vm);
                 vm.eval(::quinn::makepad_widgets::makepad_script::ScriptMod {
-                    cargo_manifest_path: String::new(),
+                    cargo_manifest_path: env!("CARGO_MANIFEST_DIR").to_string(),
                     module_path: module_path!().to_string(),
                     file: file!().to_string(),
                     line: line!() as usize,

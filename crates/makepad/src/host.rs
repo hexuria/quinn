@@ -198,6 +198,31 @@ impl Surface for MakepadSurface {
     }
 }
 
+impl MakepadSurface {
+    pub(crate) fn widget_count(&self) -> usize {
+        self.widgets.len()
+    }
+
+    pub(crate) fn host_child_count(&self) -> usize {
+        self.host
+            .as_view()
+            .borrow()
+            .map(|view| view.children.len())
+            .unwrap_or(0)
+    }
+
+    pub(crate) fn widget_texts(&self) -> Vec<String> {
+        let mut texts: Vec<String> = self
+            .widgets
+            .values()
+            .map(|slot| slot.widget.text())
+            .filter(|text| !text.is_empty())
+            .collect();
+        texts.sort();
+        texts
+    }
+}
+
 fn spawn(spec: &NodeSpec) -> WidgetRef {
     let text = script_string(&spec.text);
     let placeholder = script_string(&spec.placeholder);
@@ -217,6 +242,73 @@ fn spawn(spec: &NodeSpec) -> WidgetRef {
         }
     };
     eval_widget(&code)
+}
+
+pub(crate) fn flush_session() {
+    session_slot().with(|slot| {
+        if let Some(session) = slot.borrow_mut().as_mut() {
+            session.runtime.flush();
+        }
+    });
+}
+
+pub(crate) fn session_snapshot() -> (usize, usize, usize, Vec<String>) {
+    session_slot().with(|slot| {
+        let borrowed = slot.borrow();
+        let Some(session) = borrowed.as_ref() else {
+            return (0, 0, 0, Vec::new());
+        };
+        let nodes = session.runtime.node_count();
+        let Some(surface) = session
+            .runtime
+            .surface_any()
+            .downcast_ref::<MakepadSurface>()
+        else {
+            return (nodes, 0, 0, Vec::new());
+        };
+        (
+            nodes,
+            surface.widget_count(),
+            surface.host_child_count(),
+            surface.widget_texts(),
+        )
+    })
+}
+
+/// Create and update `n` Makepad labels on `host`, then detach them.
+///
+/// Returns `(create_us, update_us)`. This is the renderer cost, not the
+/// signal flush. The baseline repeats the same script and `set_text` calls.
+pub(crate) fn bench_labels(host: &WidgetRef, n: usize) -> (u128, u128) {
+    let base = host
+        .as_view()
+        .borrow()
+        .map(|view| view.children.len())
+        .unwrap_or(0);
+    let started = std::time::Instant::now();
+    let mut created = Vec::with_capacity(n);
+    for i in 0..n {
+        let widget = eval_widget(&format!(
+            "mod.widgets.Label{{text:\"row {i}\" width:Fit height:Fit}}"
+        ));
+        if widget.is_empty() {
+            continue;
+        }
+        attach(host, &widget);
+        created.push(widget);
+    }
+    let create_us = started.elapsed().as_micros();
+    let started = std::time::Instant::now();
+    for (i, widget) in created.iter().enumerate() {
+        widget.set_text(cx(), &format!("upd {i}"));
+    }
+    let update_us = started.elapsed().as_micros();
+    if let Some(mut view) = host.as_view().borrow_mut() {
+        view.children.truncate(base);
+    }
+    drop(created);
+    host.redraw(cx());
+    (create_us, update_us)
 }
 
 fn eval_widget(code: &str) -> WidgetRef {
@@ -450,6 +542,24 @@ fn control_script(style: &Style) -> String {
     parts.join(" ")
 }
 
+/// Mark-sweep the Makepad script heap and return spare capacity to the
+/// allocator. Routine `ScriptVm::gc` (the paint loop) refills free lists and
+/// deliberately keeps the high-water allocation. Widget mounts go through
+/// `ScriptVm::eval`, which allocates a scope object each time; this is the
+/// call that releases those objects once the widgets are gone.
+pub fn reclaim_script_heap() {
+    cx().with_vm(|vm| vm.gc_and_compact());
+    #[cfg(target_os = "linux")]
+    unsafe {
+        malloc_trim(0);
+    }
+}
+
+#[cfg(target_os = "linux")]
+unsafe extern "C" {
+    fn malloc_trim(pad: usize) -> i32;
+}
+
 pub fn startup<V: IntoView>(cx: &mut Cx, ui: &WidgetRef, build: impl FnOnce() -> V) {
     let host = ui.view(cx, ids!(host));
     if host.is_empty() {
@@ -460,16 +570,18 @@ pub fn startup<V: IntoView>(cx: &mut Cx, ui: &WidgetRef, build: impl FnOnce() ->
     let mut runtime = Runtime::new(Box::new(MakepadSurface::new((*host).clone())));
     with_cx(cx, || {
         runtime.mount_view(view);
+        session_slot().with(|slot| {
+            *slot.borrow_mut() = Some(Session { runtime, owner });
+        });
+        if let Some(hook) = crate::probe::take_after_mount() {
+            hook();
+        }
+        crate::probe::run_widget_bench(&host);
     });
-    session_slot().with(|slot| {
-        *slot.borrow_mut() = Some(Session { runtime, owner });
-    });
-    if let Ok(path) = std::env::var("QUINN_READY") {
-        let _ = std::fs::write(path, "ready\n");
-    }
-    if std::env::var("QUINN_EXIT").ok().as_deref() == Some("1") {
-        cx.quit();
-    }
+    // Ready is the first presented frame, not the end of `startup`. The hook
+    // runs from `Cx::post_draw_hook`, after this frame's draw lists are
+    // recorded and before `eglSwapBuffers` in the same paint.
+    crate::probe::install(cx);
 }
 
 pub fn on_actions(cx: &mut Cx, actions: &Actions) {

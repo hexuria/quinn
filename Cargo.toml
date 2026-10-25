@@ -13,6 +13,7 @@ members = [
     "examples/conditional",
     "examples/keyed-list",
     "examples/form",
+    "examples/retain",
 ]
 
 [workspace.package]

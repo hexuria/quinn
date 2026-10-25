@@ -10,7 +10,10 @@ pub use quinn_reactive::{on_cleanup, signal, ImmediateEffect, Owner};
 pub use quinn_styles::{parse_classes, parse_inline, Style};
 
 #[cfg(feature = "native")]
-pub use quinn_makepad::{makepad_widgets, on_actions, startup};
+pub use quinn_makepad::{
+    after_mount, flush_now, makepad_widgets, on_actions, reclaim_script_heap, rss_kib,
+    session_stats, set_frame_driver, set_inspector, set_live_shell, startup, SessionStats,
+};
 
 pub mod prelude {
     pub use crate::{

@@ -16,7 +16,7 @@ No GPUI, NSH, Electron, WebView, or JavaScript runtime is a dependency.
 
 Makepad's `platform/` tree contains Linux (X11 and Wayland), Windows, macOS, iOS, Android, and a wasm bridge. This milestone **runs** the Linux X11 software-GL path (`MAKEPAD_GPU=gl`, `LIBGL_ALWAYS_SOFTWARE=1`, Mesa llvmpipe, OpenGL ES 3.2). On this VM that was display `:1` (XFCE) and, for the headless smoke runs, Xvfb. Vulkan windowing is skipped on X11 because Makepad wants Wayland for Vulkan (`X11 session: Vulkan windowing needs Wayland; rendering with OpenGL ES`). macOS, Windows, iOS, and Android were not executed. A successful `cargo check` is not a running UI.
 
-`cargo check -p quinn-styles -p quinn-reactive -p quinn-core -p quinn --no-default-features --target wasm32-unknown-unknown` finished in 12.12s (dev profile, rustc 1.99.0). `cargo check -p baseline-counter --target wasm32-unknown-unknown` finished in 15.50s. Neither produced a browser session. `bumpalo` was not in the offline cache, so the framework check needed network once.
+`cargo-makepad wasm build --bindgen -p counter` produced `target/makepad-wasm-app/debug/counter`. Served with `Cross-Origin-Opener-Policy: same-origin` and `Cross-Origin-Embedder-Policy: require-corp`, that package loaded in headless Chromium (SwiftShader) and a click moved the counter from 0 to 1. An earlier `cargo check` of the framework crates for `wasm32-unknown-unknown` (12.12s) and of `baseline-counter` (15.50s) did not produce a browser session. `bumpalo` was not in the offline cache, so the first framework check needed network once. The wasm runtime needs `wasm-bindgen-cli` 0.2.129; without `--bindgen` instantiation fails on `__wbindgen_placeholder__`.
 
 ## Markup that works
 
@@ -61,20 +61,6 @@ Editing `View.children` is relying on a public field, not an unstable private on
 
 ## Measurements
 
-Host: Linux x86_64, kernel 6.12.94, rustc 1.99.0 (`b940084d7`), 4 cores, XFCE on X11, Mesa llvmpipe (LLVM 20.1.2), OpenGL ES 3.2. `MAKEPAD_GPU=gl`, `LIBGL_ALWAYS_SOFTWARE=1`. Release profile is `optimized` (Cargo default, no extra lto). Debug file sizes include debuginfo and were taken before a later `cargo clean -p`.
+The apples-to-apples numbers are in [benchmarks.md](benchmarks.md). Both the Quinn counter and the Makepad baseline report ready from `Cx::post_draw_hook`, immediately before `eglSwapBuffers`. On this machine the release counter reached that point in a median of 147 ms (nine runs, 136–168 ms) and the baseline in 123 ms (120–132 ms). A release incremental rebuild of `counter` is 1.30 s median; the baseline is 1.39 s. Stripped release binaries are 20,502,896 bytes (`counter`) and 20,178,256 bytes (`baseline-counter`).
 
-| What | Result |
-| --- | --- |
-| Cold `cargo build -p counter --release` (Makepad not yet built for release) | 1m 15s (cargo), 76s wall |
-| `cargo build -p baseline-counter --release` after that (only the example crate) | 1.41s |
-| Release rebuild after `touch examples/counter/src/main.rs` | 1.21s |
-| Release binary size, counter | 27,567,424 bytes |
-| Release binary size, baseline | 27,025,872 bytes |
-| Release counter, spawn to `QUINN_READY` (tree mounted) | 95 ms |
-| Release baseline, spawn to the `Makepad GL` log line | 133 ms |
-| Release counter idle, 3s sample of `/proc/stat` ticks | 0.33% CPU, RSS 232,080 KiB |
-| Release baseline idle, 2s sample | 0.0% CPU, RSS 210,880 KiB |
-| `MemorySurface`, 1000 signal updates + flush, debug test | 4.312 ms (4.3 µs each) |
-| `MemorySurface`, create 1 div + 200 labels | 621 µs |
-
-The memory-surface numbers are not GPU present latency. Clicks were observed to change the on-screen label; the frame time was not instrumented. Debug binaries were about 266–267 MiB (baseline, probe) and 279 MiB (framework examples) with debuginfo. A `cargo clean -p` afterwards did not produce a useful rebuild time (Cargo reported the packages fresh), so that sample is omitted.
+`MemorySurface`, measured inside the debug unit tests: 1,000 signal updates plus flush took 4.312 ms (4.3 µs each). Creating 1 div and 200 labels took 621 µs. Those figures are not GPU present latency. Signal-to-presented-frame latency is in the benchmarks note (Quinn p50 1.58 ms, baseline p50 0.74 ms, 80 samples each).

@@ -104,6 +104,12 @@ impl Runtime {
         self.root
     }
 
+    /// Reactive nodes still mounted. Unmount removes the entry, so a retain
+    /// loop that returns to the same tree should see the same count.
+    pub fn node_count(&self) -> usize {
+        self.nodes.len()
+    }
+
     pub fn text(&self, id: u64) -> String {
         self.surface.text(id)
     }

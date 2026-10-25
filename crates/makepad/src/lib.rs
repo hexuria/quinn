@@ -7,9 +7,14 @@
 //! object-safe [`quinn_core::Surface`] methods, which cannot take a `Cx` argument.
 
 mod host;
+mod probe;
 
-pub use host::{on_actions, startup, with_cx};
+pub use host::{on_actions, reclaim_script_heap, startup, with_cx};
 pub use makepad_widgets;
+pub use probe::{
+    after_mount, flush_now, rss_kib, session_stats, set_frame_driver, set_inspector,
+    set_live_shell, SessionStats,
+};
 
 use std::cell::RefCell;
 

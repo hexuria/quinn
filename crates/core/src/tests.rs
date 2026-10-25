@@ -2,6 +2,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
 use quinn_reactive::prelude::*;
+use quinn_reactive::reactive_graph::signal::WriteSignal;
 use quinn_reactive::{on_cleanup, Owner};
 
 use crate::{el, for_each, scope_owner, show, MemorySurface, Runtime, Tag};
@@ -299,4 +300,151 @@ fn measured_memory_surface_update_and_create() {
         "MEMORY_SURFACE create 1 div + 200 labels: {:?}",
         start.elapsed()
     );
+}
+
+struct LiveGuard(Arc<AtomicUsize>);
+
+impl LiveGuard {
+    fn new(counter: &Arc<AtomicUsize>) -> Self {
+        counter.fetch_add(1, Ordering::SeqCst);
+        Self(counter.clone())
+    }
+}
+
+impl Drop for LiveGuard {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, Ordering::SeqCst);
+    }
+}
+
+/// Thousands of conditional mount/unmount and keyed add/remove cycles must
+/// return to the same node, widget, handler, and cleanup footprint.
+#[test]
+fn retention_cycles_do_not_accumulate_nodes_or_handlers() {
+    let (owner, mut rt) = runtime();
+    let (open, set_open) = owner.with(|| signal(true));
+    #[derive(Clone)]
+    struct Item {
+        id: u64,
+        name: String,
+    }
+    let (items, set_items) = owner.with(|| {
+        signal(vec![Item {
+            id: 1,
+            name: "Alpha".into(),
+        }])
+    });
+    let handlers = Arc::new(AtomicUsize::new(0));
+    let cleanups = Arc::new(AtomicUsize::new(0));
+    let handlers_show = handlers.clone();
+    let cleanups_show = cleanups.clone();
+    let handlers_row = handlers.clone();
+    let cleanups_row = cleanups.clone();
+    let root = owner.with(|| {
+        let view = el(Tag::Div)
+            .child(show(
+                move || open.get(),
+                move || {
+                    let guard = LiveGuard::new(&handlers_show);
+                    let cleanups = cleanups_show.clone();
+                    let child_owner = Owner::new();
+                    child_owner.with(|| {
+                        on_cleanup(move || {
+                            cleanups.fetch_add(1, Ordering::SeqCst);
+                        });
+                    });
+                    scope_owner(
+                        child_owner,
+                        el(Tag::Button).text_fixed("detail").on_click(move || {
+                            let _keep = &guard;
+                        }),
+                    )
+                },
+            ))
+            .child(for_each(
+                move || items.get(),
+                |item: &Item| item.id,
+                move |item: Item| {
+                    let guard = LiveGuard::new(&handlers_row);
+                    let cleanups = cleanups_row.clone();
+                    let row_owner = Owner::new();
+                    row_owner.with(|| {
+                        on_cleanup(move || {
+                            cleanups.fetch_add(1, Ordering::SeqCst);
+                        });
+                    });
+                    scope_owner(
+                        row_owner,
+                        el(Tag::Span).text_fixed(item.name).on_click(move || {
+                            let _keep = &guard;
+                        }),
+                    )
+                },
+            ));
+        rt.mount_view(scope_owner(owner.clone(), view))
+    });
+
+    let settle =
+        |rt: &mut Runtime, set_open: &WriteSignal<bool>, set_items: &WriteSignal<Vec<Item>>| {
+            set_open.set(false);
+            set_items.set(vec![Item {
+                id: 1,
+                name: "Alpha".into(),
+            }]);
+            rt.flush();
+        };
+    settle(&mut rt, &set_open, &set_items);
+    let nodes = rt.node_count();
+    let alive = rt.memory_mut().unwrap().alive_count();
+    let handlers_at_rest = handlers.load(Ordering::SeqCst);
+    let cleanups_at_rest = cleanups.load(Ordering::SeqCst);
+    assert!(nodes > 0, "settled tree is empty");
+    assert_eq!(alive, nodes);
+
+    let mut max_nodes = nodes;
+    let mut next_id = 2u64;
+    for i in 0..2_000 {
+        set_open.set(i % 2 == 0);
+        if i % 2 == 0 {
+            let id = next_id;
+            next_id += 1;
+            set_items.update(move |rows| {
+                rows.push(Item {
+                    id,
+                    name: format!("row {id}"),
+                });
+            });
+        } else {
+            set_items.update(|rows| {
+                if rows.len() > 1 {
+                    rows.pop();
+                }
+            });
+        }
+        rt.flush();
+        max_nodes = max_nodes.max(rt.node_count());
+    }
+    settle(&mut rt, &set_open, &set_items);
+
+    assert_eq!(rt.node_count(), nodes, "reactive nodes leaked");
+    assert_eq!(
+        rt.memory_mut().unwrap().alive_count(),
+        alive,
+        "surface widgets leaked"
+    );
+    assert_eq!(
+        handlers.load(Ordering::SeqCst),
+        handlers_at_rest,
+        "click handlers leaked"
+    );
+    assert!(
+        cleanups.load(Ordering::SeqCst) >= cleanups_at_rest + 1_500,
+        "cleanups did not run on both show and rows, before {cleanups_at_rest} after {}",
+        cleanups.load(Ordering::SeqCst)
+    );
+    assert!(
+        max_nodes <= nodes + 40,
+        "node count climbed to {max_nodes} from a resting {nodes}"
+    );
+    assert!(rt.alive(root));
 }

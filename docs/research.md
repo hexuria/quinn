@@ -58,6 +58,8 @@ leptos-native (`README.md`, MIT) is a fork: its own `view!` / `IntoView<R>`, Taf
 
 rstml parses the token tree into `Node` / `NodeElement` / `KeyedAttribute`. `NodeName`'s `Display` joins `on:click` and `let:item` (`rstml/src/node/node_name.rs`). `parse2` is the entry point. That is the parser `view!` uses. It does not create DOM nodes.
 
+Numbers for startup, latency, live reload, retention, and the wasm counter are in [benchmarks.md](benchmarks.md). The macOS run that this machine could not do is [TESTING_ON_MACOS.md](TESTING_ON_MACOS.md).
+
 ## UI-thread experiment
 
 `probes/widget-lifecycle` is the experiment for the eight operations. `quinn-core`'s `MemorySurface` tests are the experiment for connecting that tree shape to `ImmediateEffect` (signal text, sibling identity, conditional cleanup, keyed identity, handler removal). The Makepad surface in `crates/makepad` is the same operations, called from the effect queue.

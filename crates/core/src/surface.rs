@@ -134,6 +134,12 @@ impl MemorySurface {
             .map(|n| n.children.clone())
             .unwrap_or_default()
     }
+
+    /// Widgets that have not been removed. Dead ids stay in the map so they
+    /// are never reused; this count is the live set.
+    pub fn alive_count(&self) -> usize {
+        self.nodes.values().filter(|node| node.alive).count()
+    }
 }
 
 impl Surface for MemorySurface {

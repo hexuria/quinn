@@ -65,6 +65,10 @@ pub enum HxExpr {
     Not(Box<HxExpr>),
     Binary(BinOp, Box<HxExpr>, Box<HxExpr>),
     Concat(Vec<HxExpr>),
+    /// A tuple or array written in a handler. Emitted as a script array.
+    List(Vec<HxExpr>),
+    /// A struct literal. Field order is source order.
+    Obj(Vec<(String, HxExpr)>),
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -224,7 +228,21 @@ pub enum ViewNode {
     },
 }
 
-/// Where the one argument of a compiled async fn comes from.
+/// One slot of a packed job argument. The script builds a JSON array or object.
+#[derive(Clone, Debug, PartialEq)]
+pub enum PackItem {
+    Signal(String),
+    Lit(String),
+    /// `state.{job}_source`.
+    Source,
+    /// `state.{job}_arg`.
+    Dispatch,
+}
+
+/// Where a compiled async fn's argument comes from.
+///
+/// One value stays a plain script value so `as_string()` still sees `"Cebu"`.
+/// Several values are a JSON array. A struct literal is a JSON object.
 #[derive(Clone, Debug, PartialEq)]
 pub enum ArgSrc {
     /// The fn takes no argument.
@@ -237,17 +255,26 @@ pub enum ArgSrc {
     Dispatch,
     /// A string literal in the closure.
     Lit(String),
+    /// JSON array of inputs. `JobArg::get` reads one slot.
+    List(Vec<PackItem>),
+    /// JSON object. `JobArg::deserialize` reads it.
+    Obj(Vec<(String, PackItem)>),
 }
 
-/// A client job. `view.rs` is not compiled, so the closure is only a function
-/// name plus one argument expression. The registered Rust fn runs off the UI
-/// thread. `deps` are signals that bump `gen` and set the phase back to loading.
+/// A client job. `view.rs` is not compiled. A single call names one registered
+/// Rust fn. A chain (`let a = f(x).await?; g(a).await`) keeps each fn in Rust
+/// and stores a plan whose key is those idents (`chain:f+g`), not a source
+/// line, so a markup edit above the closure does not change which fns run.
+/// `deps` are signals that bump `gen` and set the phase back to loading.
+/// An action reads captured signals when it is dispatched; they are not deps.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Job {
     pub name: String,
     pub kind: JobKind,
     pub func: String,
     pub arg: ArgSrc,
+    /// Empty for one call. Otherwise `name@spec;name@spec`.
+    pub plan: String,
     pub deps: Vec<String>,
 }
 

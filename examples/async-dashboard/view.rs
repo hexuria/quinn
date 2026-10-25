@@ -44,6 +44,16 @@ fn Dashboard() -> impl IntoView {
         let p = place.clone();
         async move { race_place(p).await }
     });
+    let (id, _set_id) = signal("ada".to_string());
+    let (page, set_page) = signal("1".to_string());
+    let pair = Resource::new(
+        move || (id.get(), page.get()),
+        |(id, page)| async move {
+            let raw = fetch_pair(id, page).await?;
+            decorate(raw).await
+        },
+    );
+    let stamp = Action::new(|place: &String| async move { save_stamp(place).await });
     let (open, set_open) = signal(false);
 
     view! {
@@ -58,6 +68,8 @@ fn Dashboard() -> impl IntoView {
                 <button class="px-2 py-1" on:click=move |_| { note.refetch(); }>"Reload"</button>
                 <button class="px-2 py-1" on:click=move |_| { race.dispatch("Cebu"); }>"Race Cebu"</button>
                 <button class="px-2 py-1" on:click=move |_| { race.dispatch("Davao"); }>"Race Davao"</button>
+                <button class="px-2 py-1" on:click=move |_| { set_page.set("2"); }>"Page 2"</button>
+                <button class="px-2 py-1" on:click=move |_| { stamp.dispatch(Place { city: city.get(), note: "desk" }); }>"Stamp"</button>
                 <span class="text-sm dark:text-stone-100">"Tone " {tone}</span>
                 <Shade />
             </div>
@@ -92,6 +104,11 @@ fn Dashboard() -> impl IntoView {
                             <span class="text-sm dark:text-stone-100">{city.name}</span>
                         </For>
                     </Suspense>
+                    <Suspense fallback=|| view! { <span class="text-sm dark:text-stone-100">"Loading the pair"</span> }>
+                        <span class="text-sm dark:text-stone-100">"Pair: " {pair}</span>
+                    </Suspense>
+                    <span class="text-sm dark:text-stone-100">"Stamp: " {stamp}</span>
+                    <span class="text-sm dark:text-stone-100">"Cancelled: " {move || cancelled_count()}</span>
                     <Card title="Ada".into()>
                         <div class="h-[48px] rounded bg-stone-100">
                             <div class="absolute left-2 top-1 z-10">

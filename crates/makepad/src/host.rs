@@ -837,8 +837,80 @@ pub fn drive_shell(cx: &mut Cx, event: &Event) {
     );
     if poll {
         drain_jobs(cx);
+        reap_unmounted(cx);
         poll_jobs(cx);
+        if sync_cancelled(cx) {
+            script_eval!(cx, {
+                ui.host.render()
+                true
+            });
+        }
     }
+}
+
+struct Flight {
+    gen: u64,
+    abort: tokio::task::AbortHandle,
+}
+
+fn flights() -> &'static Mutex<HashMap<String, Flight>> {
+    static FLIGHTS: OnceLock<Mutex<HashMap<String, Flight>>> = OnceLock::new();
+    FLIGHTS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn cancel_binding(name: &str) {
+    let flight = flights()
+        .lock()
+        .unwrap_or_else(|err| err.into_inner())
+        .remove(name);
+    let Some(flight) = flight else {
+        return;
+    };
+    if std::env::var("QUINN_JOB_LOG").is_ok() {
+        eprintln!("quinn job {name} gen {} cancelled", flight.gen);
+    }
+    flight.abort.abort();
+    SignalToUI::set_ui_signal();
+}
+
+fn clear_flight(name: &str, gen: u64) {
+    let mut flights = flights().lock().unwrap_or_else(|err| err.into_inner());
+    if flights.get(name).is_some_and(|flight| flight.gen == gen) {
+        flights.remove(name);
+    }
+}
+
+/// Abort a flight whose binding left the tree. A missing `quinn_job_live`
+/// means the script is mid-reload, so the flight stays.
+fn reap_unmounted(cx: &mut Cx) {
+    let names: Vec<String> = flights()
+        .lock()
+        .unwrap_or_else(|err| err.into_inner())
+        .keys()
+        .cloned()
+        .collect();
+    for name in names {
+        let live_name = name.clone();
+        let live = script_eval!(cx, {
+            fn quinn_hold() { 2 }
+            if ok{mod.quinn_job_live} == nil { quinn_hold() } else { mod.quinn_job_live(#(live_name)) }
+        });
+        if script_number(live).round() as i64 == 0 {
+            if std::env::var("QUINN_JOB_LOG").is_ok() {
+                eprintln!("quinn job {name} unmounted");
+            }
+            cancel_binding(&name);
+        }
+    }
+}
+
+fn sync_cancelled(cx: &mut Cx) -> bool {
+    let n = quinn_lower::cancelled_count() as f64;
+    let flag = script_eval!(cx, {
+        fn quinn_missing() { 0 }
+        if ok{mod.quinn_set_cancelled} == nil { quinn_missing() } else { mod.quinn_set_cancelled(#(n)) }
+    });
+    script_number(flag).round() as i64 == 2
 }
 
 fn script_number(value: ScriptValue) -> f64 {
@@ -892,33 +964,40 @@ fn poll_jobs(cx: &mut Cx) {
         let func = script_text(cx, func_value);
         let arg_value = script_eval!(cx, { mod.quinn_job_arg(#(i)) });
         let arg = script_text(cx, arg_value);
+        let plan_value = script_eval!(cx, {
+            fn quinn_missing() { "" }
+            if ok{mod.quinn_job_plan} == nil { quinn_missing() } else { mod.quinn_job_plan(#(i)) }
+        });
+        let plan = script_text(cx, plan_value);
         if std::env::var("QUINN_JOB_LOG").is_ok() {
-            eprintln!("quinn job {key} fn {func} gen {gen} arg {arg}");
+            eprintln!("quinn job {key} fn {func} plan {plan} gen {gen} arg {arg}");
         }
         STARTED.with(|started| {
             started.borrow_mut().insert((key.clone(), gen));
         });
-        spawn_job(func, key, gen, arg);
+        spawn_job(func, plan, key, gen, arg);
     }
 }
 
-fn spawn_job(func: String, binding: String, gen: u64, arg: String) {
+fn spawn_job(func: String, plan: String, binding: String, gen: u64, arg: String) {
+    cancel_binding(&binding);
     let job_arg = quinn_lower::JobArg::from_text(arg);
-    let Some(run) = quinn_lower::lookup(&func) else {
-        if std::env::var("QUINN_JOB_LOG").is_ok() {
-            eprintln!("quinn job {binding} has no fn {func}");
-        }
-        deliver(
+    let binding_task = binding.clone();
+    let handle = job_runtime().spawn(quinn_lower::track(async move {
+        let result = quinn_lower::run_registered(&func, &plan, job_arg).await;
+        clear_flight(&binding_task, gen);
+        deliver(binding_task, gen, result);
+    }));
+    flights()
+        .lock()
+        .unwrap_or_else(|err| err.into_inner())
+        .insert(
             binding,
-            gen,
-            Err(format!("no async fn `{func}`")),
+            Flight {
+                gen,
+                abort: handle.abort_handle(),
+            },
         );
-        return;
-    };
-    job_runtime().spawn(async move {
-        let result = run(job_arg).await;
-        deliver(binding, gen, result);
-    });
 }
 
 fn deliver(name: String, gen: u64, result: Result<JobValue, String>) {

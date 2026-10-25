@@ -576,14 +576,31 @@ fn emit_job_fns(model: &Model) -> String {
             .collect::<Vec<_>>(),
     ));
     out.push_str("        }\n");
+    out.push_str("        fn quinn_arg_missing() { \"\" }\n");
+    out.push_str("        fn quinn_plan_missing() { \"\" }\n");
+    for job in &model.jobs {
+        out.push_str(&emit_arg_fn(job));
+        out.push_str(&format!(
+            "        fn quinn_plan_{name}() {{ \"{}\" }}\n",
+            escape_script(&job.plan),
+            name = job.name
+        ));
+    }
+    let arg_calls: Vec<String> = model
+        .jobs
+        .iter()
+        .map(|job| format!("quinn_arg_{}()", job.name))
+        .collect();
+    let plan_calls: Vec<String> = model
+        .jobs
+        .iter()
+        .map(|job| format!("quinn_plan_{}()", job.name))
+        .collect();
     out.push_str("        fn quinn_job_arg(i) {\n");
-    out.push_str(&chain_expr(
-        &model
-            .jobs
-            .iter()
-            .map(arg_expr)
-            .collect::<Vec<_>>(),
-    ));
+    out.push_str(&chain_calls(&arg_calls, "quinn_arg_missing()"));
+    out.push_str("        }\n");
+    out.push_str("        fn quinn_job_plan(i) {\n");
+    out.push_str(&chain_calls(&plan_calls, "quinn_plan_missing()"));
     out.push_str("        }\n");
     out.push_str("        fn quinn_job_gen(i) {\n");
     out.push_str(&chain_expr(
@@ -605,9 +622,14 @@ fn emit_job_fns(model: &Model) -> String {
     out.push_str("        }\n");
     let names: Vec<String> = model.jobs.iter().map(|job| job.name.clone()).collect();
     out.push_str("        fn quinn_dead() { 0 }\n");
+    out.push_str("        fn quinn_live_yes() { 1 }\n");
     out.push_str("        fn quinn_skip_job() { 1 }\n");
     out.push_str("        fn quinn_job_live(name) {\n");
-    out.push_str(&chain_named(&names, |_| "1".into(), "quinn_dead()"));
+    out.push_str(&chain_named(
+        &names,
+        |_| "quinn_live_yes()".into(),
+        "quinn_dead()",
+    ));
     out.push_str("        }\n");
     out.push_str("        fn quinn_apply(name, gen, phase, value, err) {\n");
     out.push_str(
@@ -659,24 +681,90 @@ fn emit_job_fns(model: &Model) -> String {
             ));
         }
     }
+    out.push_str("        fn quinn_skip_cancelled() { 1 }\n");
+    out.push_str("        fn quinn_write_cancelled(n) {\n            state.quinn_cancelled = n\n            2\n        }\n");
+    out.push_str(
+        "        fn quinn_set_cancelled(n) {\n            if state.quinn_cancelled != n { quinn_write_cancelled(n) } else { quinn_skip_cancelled() }\n        }\n",
+    );
     out.push_str("        mod.quinn_job_count = quinn_job_count\n");
     out.push_str("        mod.quinn_job_fn = quinn_job_fn\n");
     out.push_str("        mod.quinn_job_key = quinn_job_key\n");
     out.push_str("        mod.quinn_job_arg = quinn_job_arg\n");
+    out.push_str("        mod.quinn_job_plan = quinn_job_plan\n");
     out.push_str("        mod.quinn_job_gen = quinn_job_gen\n");
     out.push_str("        mod.quinn_job_live = quinn_job_live\n");
     out.push_str("        mod.quinn_apply = quinn_apply\n");
+    out.push_str("        mod.quinn_set_cancelled = quinn_set_cancelled\n");
     out
 }
 
-fn arg_expr(job: &Job) -> String {
-    match &job.arg {
+fn emit_arg_fn(job: &Job) -> String {
+    let body = match &job.arg {
+        ArgSrc::List(items) => {
+            let mut lines = String::from("let quinn_pack = []\n".to_string());
+            for item in items {
+                lines.push_str(&format!(
+                    "            quinn_pack.push({})\n",
+                    pack_item(&job.name, item)
+                ));
+            }
+            lines.push_str("            quinn_pack.to_json()");
+            lines
+        }
+        ArgSrc::Obj(fields) => {
+            let obj = fields
+                .iter()
+                .map(|(key, value)| format!("{key}: {}", pack_item(&job.name, value)))
+                .collect::<Vec<_>>()
+                .join(", ");
+            format!("let quinn_pack = {{{obj}}}\n            quinn_pack.to_json()")
+        }
+        other => arg_value(&job.name, other),
+    };
+    format!(
+        "        fn quinn_arg_{name}() {{\n            {body}\n        }}\n",
+        name = job.name
+    )
+}
+
+fn pack_item(job: &str, item: &PackItem) -> String {
+    match item {
+        PackItem::Signal(name) => format!("state.{name}"),
+        PackItem::Lit(text) => format!("\"{}\"", escape_script(text)),
+        PackItem::Source => format!("state.{job}_source"),
+        PackItem::Dispatch => format!("state.{job}_arg"),
+    }
+}
+
+fn arg_value(job: &str, arg: &ArgSrc) -> String {
+    match arg {
         ArgSrc::None => "\"\"".into(),
         ArgSrc::Lit(text) => format!("\"{}\"", escape_script(text)),
         ArgSrc::Signal(name) => format!("state.{name}"),
-        ArgSrc::Source => format!("state.{}_source", job.name),
-        ArgSrc::Dispatch => format!("state.{}_arg", job.name),
+        ArgSrc::Source => format!("state.{job}_source"),
+        ArgSrc::Dispatch => format!("state.{job}_arg"),
+        ArgSrc::List(_) | ArgSrc::Obj(_) => "\"\"".into(),
     }
+}
+
+fn chain_calls(calls: &[String], fallback: &str) -> String {
+    if calls.is_empty() {
+        return format!("            {fallback}\n");
+    }
+    fn nest(calls: &[String], index: usize, fallback: &str) -> String {
+        if index + 1 >= calls.len() {
+            return format!(
+                "if i == {index} {{ {} }} else {{ {fallback} }}",
+                calls[index]
+            );
+        }
+        format!(
+            "if i == {index} {{ {} }} else {{ {} }}",
+            calls[index],
+            nest(calls, index + 1, fallback)
+        )
+    }
+    format!("            {}\n", nest(calls, 0, fallback))
 }
 
 fn source_expr(deps: &[String]) -> String {
@@ -798,6 +886,9 @@ fn seed_lines(model: &Model, shell: &Shell) -> Vec<String> {
     }
     lines.push(format!("quinn_width: {}.", shell.width));
     lines.push("quinn_dark: 0".into());
+    if !model.jobs.is_empty() {
+        lines.push("quinn_cancelled: 0".into());
+    }
     for job in &model.jobs {
         let phase = match job.kind {
             JobKind::Action => "idle",
@@ -2179,10 +2270,21 @@ fn emit_stmts(stmts: &[HandlerStmt], row: Option<&RowEnv<'_>>) -> Vec<String> {
                 lines.push(format!("state.route = {}", emit_hx(expr, row, &locals)));
             }
             HandlerStmt::Dispatch { action, arg } => {
-                let arg = emit_hx(arg, row, &locals);
                 lines.push(format!("state.{action}_pending = true"));
                 lines.push(format!("state.{action}_gen = state.{action}_gen + 1"));
-                lines.push(format!("state.{action}_arg = {arg}"));
+                match arg {
+                    HxExpr::List(_) | HxExpr::Obj(_) => {
+                        lines.push(format!(
+                            "let quinn_pack = {}",
+                            emit_hx(arg, row, &locals)
+                        ));
+                        lines.push(format!("state.{action}_arg = quinn_pack.to_json()"));
+                    }
+                    other => {
+                        let arg = emit_hx(other, row, &locals);
+                        lines.push(format!("state.{action}_arg = {arg}"));
+                    }
+                }
             }
             HandlerStmt::Refetch { job } => {
                 lines.push(format!("state.{job}_phase = \"loading\""));
@@ -2287,6 +2389,22 @@ fn emit_hx(
             .map(|part| emit_hx(part, row, locals))
             .collect::<Vec<_>>()
             .join(" + "),
+        HxExpr::List(items) => {
+            let body = items
+                .iter()
+                .map(|item| emit_hx(item, row, locals))
+                .collect::<Vec<_>>()
+                .join(", ");
+            format!("[{body}]")
+        }
+        HxExpr::Obj(fields) => {
+            let body = fields
+                .iter()
+                .map(|(key, value)| format!("{key}: {}", emit_hx(value, row, locals)))
+                .collect::<Vec<_>>()
+                .join(", ");
+            format!("{{{body}}}")
+        }
     }
 }
 
@@ -2320,7 +2438,9 @@ fn text_expr(el: &El, row: Option<&RowEnv<'_>>) -> String {
                 // A bare number is not a label string. Generations and the
                 // pending flag are numbers; prefix an empty string so `+`
                 // makes text. Row signals already take this path.
-                let numeric = name.ends_with("_gen") || name.ends_with("_pending");
+                let numeric = name == "quinn_cancelled"
+                    || name.ends_with("_gen")
+                    || name.ends_with("_pending");
                 if row.is_some() || numeric {
                     format!("\"\" + {read}")
                 } else {

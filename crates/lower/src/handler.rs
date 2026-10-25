@@ -189,9 +189,14 @@ fn rewrite_name(expr: &mut HxExpr, from: &str, to: &str) {
             rewrite_name(left, from, to);
             rewrite_name(right, from, to);
         }
-        HxExpr::Concat(parts) => {
+        HxExpr::Concat(parts) | HxExpr::List(parts) => {
             for part in parts {
                 rewrite_name(part, from, to);
+            }
+        }
+        HxExpr::Obj(fields) => {
+            for (_, value) in fields {
+                rewrite_name(value, from, to);
             }
         }
         _ => {}
@@ -457,6 +462,29 @@ fn lower_expr(expr: &Expr, signals: &[Signal]) -> Result<HxExpr, String> {
         }
         Expr::Reference(refer) => lower_expr(&refer.expr, signals),
         Expr::Paren(paren) => lower_expr(&paren.expr, signals),
+        Expr::Tuple(tuple) => {
+            let mut items = Vec::new();
+            for elem in &tuple.elems {
+                items.push(lower_expr(elem, signals)?);
+            }
+            Ok(HxExpr::List(items))
+        }
+        Expr::Struct(item) => {
+            if item.rest.is_some() {
+                return Err(reject(
+                    "that struct",
+                    "Place { city: city.get(), note: \"desk\" } with no ..rest",
+                ));
+            }
+            let mut fields = Vec::new();
+            for field in &item.fields {
+                let syn::Member::Named(name) = &field.member else {
+                    return Err(reject("that struct", "named fields"));
+                };
+                fields.push((name.to_string(), lower_expr(&field.expr, signals)?));
+            }
+            Ok(HxExpr::Obj(fields))
+        }
         other => Err(reject_expr(other)),
     }
 }

@@ -18,10 +18,13 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 pub use extract::extract_hot_script;
-pub use jobrt::{accept_gen, guard, job, lookup, panic_message, JobArg, JobRun, JobValue};
+pub use jobrt::{
+    accept_gen, cancelled_count, guard, job, lookup, panic_message, run_registered, track, JobArg,
+    JobRun, JobValue,
+};
 pub use model::{
     Act, ArgSrc, BinOp, ClassWhen, El, HandlerStmt, HxExpr, Init, ItemSeed, Job, JobKind, Model,
-    Part, Signal, StyleWhen, ViewNode,
+    PackItem, Part, Signal, StyleWhen, ViewNode,
 };
 pub use sim::Sim;
 
@@ -1024,5 +1027,94 @@ mod tests {
         "#;
         let err = parse_model(bad).unwrap_err();
         assert!(err.contains("not a signal"), "{err}");
+    }
+
+    #[test]
+    fn p3b_chain_struct_cancel_and_rejected_shapes() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let source = std::fs::read_to_string(root.join("examples/async-dashboard/view.rs")).unwrap();
+        let file = lower_file(&source, shell()).unwrap_or_else(|err| panic!("{err}"));
+        let needles = [
+            "quinn_cancelled: 0",
+            "fn quinn_set_cancelled(n)",
+            "mod.quinn_job_plan = quinn_job_plan",
+            "mod.quinn_set_cancelled = quinn_set_cancelled",
+            "\"chain:fetch_pair+decorate\"",
+            "fetch_pair@0,1;decorate@prev",
+            "quinn_pack.push(state.id)",
+            "quinn_pack.push(state.page)",
+            "state.stamp_arg = quinn_pack.to_json()",
+            "\"\" + state.quinn_cancelled",
+            "text: \"Loading the pair\"",
+            "text: \"Cancelled: \"",
+        ];
+        let missing: Vec<_> = needles
+            .into_iter()
+            .filter(|needle| !file.contains(needle))
+            .collect();
+        assert!(missing.is_empty(), "missing {missing:?}\n{file}");
+
+        let model = parse_model(&source).unwrap();
+        let pair = model.jobs.iter().find(|job| job.name == "pair").unwrap();
+        assert_eq!(pair.func, "chain:fetch_pair+decorate");
+        assert_eq!(pair.plan, "fetch_pair@0,1;decorate@prev");
+        assert_eq!(pair.deps, vec!["id".to_string(), "page".to_string()]);
+        let place = model.jobs.iter().find(|job| job.name == "place").unwrap();
+        assert!(place.plan.is_empty(), "a one-arg resource stays a single call");
+        assert_eq!(place.func, "fetch_place");
+
+        let mut sim = Sim::new(model);
+        assert!(has_label(&sim, "Loading the pair"));
+        assert!(has_label(&sim, "Cancelled: 0"));
+        assert!(sim.click("stamp"));
+        assert_eq!(
+            sim.strings["stamp_arg"],
+            r#"{"city":"Manila","note":"desk"}"#
+        );
+        let stamp_gen = sim.gen("stamp");
+        assert!(sim.complete(
+            "stamp",
+            stamp_gen,
+            crate::JobValue::from("Stamped Manila (desk)")
+        ));
+        assert!(has_label(&sim, "Stamped Manila (desk)"));
+        let pair_gen = sim.gen("pair");
+        assert!(sim.click("page_2"));
+        assert!(sim.gen("pair") > pair_gen);
+        assert_eq!(sim.strings["pair_phase"], "loading");
+        assert!(has_label(&sim, "Loading the pair"));
+
+        let branched = r#"
+            #[component]
+            fn App() -> impl IntoView {
+                let note = LocalResource::new(|| async move {
+                    if ready { fetch_note().await } else { fetch_feed().await }
+                });
+                view! { <span>{note}</span> }
+            }
+        "#;
+        let err = parse_model(branched).unwrap_err();
+        assert!(
+            err.contains("unsupported job shape: if"),
+            "{err}"
+        );
+
+        let method = r#"
+            #[component]
+            fn App() -> impl IntoView {
+                let (city, set_city) = signal("Cebu".to_string());
+                let keep = Action::new(|city: &String| async move { city.keep(city).await });
+                view! {
+                    <div>
+                        <button on:click=move |_| { keep.dispatch(city.get()); }>"Keep"</button>
+                        <span>{keep}</span>
+                    </div>
+                }
+            }
+        "#;
+        let model = parse_model(method).unwrap();
+        let keep = model.jobs.iter().find(|job| job.name == "keep").unwrap();
+        assert_eq!(keep.func, "keep");
+        assert!(keep.plan.is_empty());
     }
 }

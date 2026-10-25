@@ -27,7 +27,7 @@ impl AppMain for App {
             module_path!(),
             "Async dashboard",
             960,
-            720,
+            860,
             component,
         )
     }

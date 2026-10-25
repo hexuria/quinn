@@ -1774,9 +1774,14 @@ fn rename_expr(expr: &mut HxExpr, orig: &[Signal], prefix: &str) {
             rename_expr(left, orig, prefix);
             rename_expr(right, orig, prefix);
         }
-        HxExpr::Concat(parts) => {
+        HxExpr::Concat(parts) | HxExpr::List(parts) => {
             for part in parts {
                 rename_expr(part, orig, prefix);
+            }
+        }
+        HxExpr::Obj(fields) => {
+            for (_, value) in fields {
+                rename_expr(value, orig, prefix);
             }
         }
         HxExpr::Int(_) | HxExpr::Bool(_) | HxExpr::Str(_) => {}
@@ -1906,12 +1911,14 @@ fn try_job(local: &syn::Local) -> Result<Option<Job>, String> {
         let Some(body) = call.args.first() else {
             return Err(format!("{name} needs a closure that calls an async fn"));
         };
-        let (func, arg, deps) = parse_job_body(body, JobKind::Local)?;
+        let mut deps = Vec::new();
+        let (func, arg, plan) = parse_job_body(body, JobKind::Local, &mut deps)?;
         return Ok(Some(Job {
             name,
             kind: JobKind::Local,
             func,
             arg,
+            plan,
             deps,
         }));
     }
@@ -1920,17 +1927,13 @@ fn try_job(local: &syn::Local) -> Result<Option<Job>, String> {
             return Err(format!("{name} needs a source and a fetcher"));
         }
         let mut deps = source_deps(&call.args[0])?;
-        let (func, arg, body_deps) = parse_job_body(&call.args[1], JobKind::Resource)?;
-        for dep in body_deps {
-            if !deps.iter().any(|have| have == &dep) {
-                deps.push(dep);
-            }
-        }
+        let (func, arg, plan) = parse_job_body(&call.args[1], JobKind::Resource, &mut deps)?;
         return Ok(Some(Job {
             name,
             kind: JobKind::Resource,
             func,
             arg,
+            plan,
             deps,
         }));
     }
@@ -1938,12 +1941,14 @@ fn try_job(local: &syn::Local) -> Result<Option<Job>, String> {
         let Some(body) = call.args.first() else {
             return Err(format!("{name} needs a closure that calls an async fn"));
         };
-        let (func, arg, deps) = parse_job_body(body, JobKind::Action)?;
+        let mut deps = Vec::new();
+        let (func, arg, plan) = parse_job_body(body, JobKind::Action, &mut deps)?;
         return Ok(Some(Job {
             name,
             kind: JobKind::Action,
             func,
             arg,
+            plan,
             deps,
         }));
     }
@@ -1983,77 +1988,486 @@ fn walk_gets(expr: &Expr, deps: &mut Vec<String>) {
                 }
             }
         }
+        Expr::Tuple(tuple) => {
+            for elem in &tuple.elems {
+                walk_gets(elem, deps);
+            }
+        }
+        Expr::Paren(paren) => walk_gets(&paren.expr, deps),
+        Expr::Try(inner) => walk_gets(&inner.expr, deps),
+        Expr::Await(inner) => walk_gets(&inner.base, deps),
         _ => {}
     }
 }
 
-fn parse_job_body(expr: &Expr, kind: JobKind) -> Result<(String, ArgSrc, Vec<String>), String> {
+fn parse_job_body(
+    expr: &Expr,
+    kind: JobKind,
+    deps: &mut Vec<String>,
+) -> Result<(String, ArgSrc, String), String> {
     let (expr, params) = unwrap_job_closure(expr);
     let mut aliases = Vec::new();
-    let call = find_job_call(expr, &params, &mut aliases)?;
-    let func = call_ident(&call.func)?;
-    if call.args.len() > 1 {
-        return Err(format!(
-            "{func} takes one argument; the job lowerer passes a single value"
-        ));
+    let mut bindings = Vec::new();
+    let steps = collect_steps(expr, kind, &params, &mut aliases, &mut bindings, deps)?;
+    if steps.is_empty() {
+        return Err("a job closure has no function call".into());
     }
-    let mut deps = Vec::new();
-    let arg = match call.args.first() {
-        None => ArgSrc::None,
-        Some(arg) => classify_job_arg(arg, kind, &params, &aliases, &mut deps)?,
-    };
-    Ok((func, arg, deps))
+    lower_steps(&steps, kind, &params, deps)
 }
 
 fn unwrap_job_closure(expr: &Expr) -> (&Expr, Vec<String>) {
     if let Expr::Closure(closure) = expr {
-        let params = closure
-            .inputs
-            .iter()
-            .filter_map(|pat| match pat {
-                syn::Pat::Ident(ident) => Some(ident.ident.to_string()),
-                syn::Pat::Type(typed) => pat_ident(&typed.pat).ok(),
-                _ => None,
-            })
-            .collect();
+        let params = closure.inputs.iter().flat_map(bind_names).collect();
         return (&closure.body, params);
     }
     (expr, Vec::new())
 }
 
-fn find_job_call<'a>(
-    expr: &'a Expr,
-    params: &[String],
-    aliases: &mut Vec<(String, String)>,
-) -> Result<&'a syn::ExprCall, String> {
-    match expr {
-        Expr::Async(block) => find_job_call_block(&block.block, params, aliases),
-        Expr::Block(block) => find_job_call_block(&block.block, params, aliases),
-        Expr::Await(wait) => find_job_call(&wait.base, params, aliases),
-        Expr::Call(call) => Ok(call),
-        other => Err(format!(
-            "a job must call a compiled async fn ({})",
-            snippet(other)
-        )),
+fn bind_names(pat: &syn::Pat) -> Vec<String> {
+    match pat {
+        syn::Pat::Ident(ident) => vec![ident.ident.to_string()],
+        syn::Pat::Type(typed) => bind_names(&typed.pat),
+        syn::Pat::Reference(refer) => bind_names(&refer.pat),
+        syn::Pat::Tuple(tuple) => tuple.elems.iter().flat_map(bind_names).collect(),
+        _ => Vec::new(),
     }
 }
 
-fn find_job_call_block<'a>(
-    block: &'a syn::Block,
+struct Step {
+    func: String,
+    inputs: Vec<JobInput>,
+}
+
+enum JobInput {
+    Lit(String),
+    Signal(String),
+    Param(String),
+    Step(usize),
+    Obj(Vec<(String, JobInput)>),
+}
+
+fn collect_steps(
+    expr: &Expr,
+    kind: JobKind,
     params: &[String],
     aliases: &mut Vec<(String, String)>,
-) -> Result<&'a syn::ExprCall, String> {
-    let mut call = None;
-    for stmt in &block.stmts {
-        match stmt {
-            Stmt::Local(local) => record_job_alias(local, params, aliases)?,
-            Stmt::Expr(expr, _) => {
-                call = Some(find_job_call(expr, params, aliases)?);
-            }
-            _ => return Err("unsupported statement in a job closure".into()),
+    bindings: &mut Vec<(String, usize)>,
+    deps: &mut Vec<String>,
+) -> Result<Vec<Step>, String> {
+    match expr {
+        Expr::Async(block) => {
+            collect_block(&block.block, kind, params, aliases, bindings, deps)
+        }
+        Expr::Block(block) => collect_block(&block.block, kind, params, aliases, bindings, deps),
+        Expr::Paren(paren) => {
+            collect_steps(&paren.expr, kind, params, aliases, bindings, deps)
+        }
+        other => {
+            let step = parse_step(other, kind, params, aliases, bindings, deps)?;
+            Ok(vec![step])
         }
     }
-    call.ok_or_else(|| "a job closure has no function call".into())
+}
+
+fn collect_block(
+    block: &syn::Block,
+    kind: JobKind,
+    params: &[String],
+    aliases: &mut Vec<(String, String)>,
+    bindings: &mut Vec<(String, usize)>,
+    deps: &mut Vec<String>,
+) -> Result<Vec<Step>, String> {
+    let mut steps = Vec::new();
+    for stmt in &block.stmts {
+        match stmt {
+            Stmt::Local(local) => {
+                if await_let(local) {
+                    let syn::Pat::Ident(ident) = &local.pat else {
+                        return Err("unsupported job shape: let pattern. A job let is a name."
+                            .into());
+                    };
+                    let init = &local.init.as_ref().unwrap().expr;
+                    let step = parse_step(init, kind, params, aliases, bindings, deps)?;
+                    let index = steps.len();
+                    steps.push(step);
+                    bindings.push((ident.ident.to_string(), index));
+                } else {
+                    record_job_alias(local, params, aliases)?;
+                }
+            }
+            Stmt::Expr(expr, _) => match expr {
+                Expr::Async(_) | Expr::Block(_) | Expr::Paren(_) => {
+                    steps.extend(collect_steps(
+                        expr, kind, params, aliases, bindings, deps,
+                    )?);
+                }
+                other => steps.push(parse_step(
+                    other, kind, params, aliases, bindings, deps,
+                )?),
+            },
+            _ => {
+                return Err(
+                    "unsupported job shape: statement. A job is calls and `let name = call().await?`."
+                        .into(),
+                )
+            }
+        }
+    }
+    if steps.is_empty() {
+        return Err("a job closure has no function call".into());
+    }
+    Ok(steps)
+}
+
+fn await_let(local: &syn::Local) -> bool {
+    let Some(init) = &local.init else {
+        return false;
+    };
+    contains_await(&init.expr) || matches!(peel_call(&init.expr), Expr::Call(_))
+}
+
+fn contains_await(expr: &Expr) -> bool {
+    match expr {
+        Expr::Await(_) => true,
+        Expr::Try(inner) => contains_await(&inner.expr),
+        Expr::Paren(inner) => contains_await(&inner.expr),
+        Expr::Reference(inner) => contains_await(&inner.expr),
+        _ => false,
+    }
+}
+
+fn parse_step(
+    expr: &Expr,
+    kind: JobKind,
+    params: &[String],
+    aliases: &[(String, String)],
+    bindings: &[(String, usize)],
+    deps: &mut Vec<String>,
+) -> Result<Step, String> {
+    let peeled = peel_call(expr);
+    match peeled {
+        Expr::Call(call) => {
+            let func = call_ident(&call.func)?;
+            let mut inputs = Vec::new();
+            for arg in &call.args {
+                inputs.push(classify_input(
+                    arg, kind, params, aliases, bindings, deps,
+                )?);
+            }
+            Ok(Step { func, inputs })
+        }
+        Expr::MethodCall(call) => {
+            if call.method == "get"
+                || call.method == "clone"
+                || call.method == "to_string"
+                || call.method == "to_owned"
+            {
+                return Err(unsupported("method", &call.method.to_string()));
+            }
+            let func = call.method.to_string();
+            let mut inputs = vec![classify_input(
+                &call.receiver,
+                kind,
+                params,
+                aliases,
+                bindings,
+                deps,
+            )?];
+            for arg in &call.args {
+                inputs.push(classify_input(
+                    arg, kind, params, aliases, bindings, deps,
+                )?);
+            }
+            Ok(Step { func, inputs })
+        }
+        Expr::If(_) => Err(unsupported("if", "")),
+        Expr::Match(_) => Err(unsupported("match", "")),
+        Expr::While(_) => Err(unsupported("while", "")),
+        Expr::Loop(_) => Err(unsupported("loop", "")),
+        Expr::ForLoop(_) => Err(unsupported("for", "")),
+        Expr::Binary(_) => Err(unsupported("arithmetic", "")),
+        Expr::Closure(_) => Err(unsupported("nested closure", "")),
+        other => Err(unsupported(&shape_name(other), &snippet(other))),
+    }
+}
+
+fn peel_call(expr: &Expr) -> &Expr {
+    match expr {
+        Expr::Try(inner) => peel_call(&inner.expr),
+        Expr::Await(inner) => peel_call(&inner.base),
+        Expr::Reference(inner) => peel_call(&inner.expr),
+        Expr::Paren(inner) => peel_call(&inner.expr),
+        other => other,
+    }
+}
+
+fn unsupported(shape: &str, detail: &str) -> String {
+    let extra = if detail.is_empty() {
+        String::new()
+    } else {
+        format!(" ({detail})")
+    };
+    format!(
+        "unsupported job shape: {shape}{extra}. A job may call registered functions, method calls, and `let name = call(...).await?` chains. The async body stays in Rust."
+    )
+}
+
+fn shape_name(expr: &Expr) -> String {
+    match expr {
+        Expr::If(_) => "if".into(),
+        Expr::Match(_) => "match".into(),
+        Expr::Binary(_) => "arithmetic".into(),
+        Expr::Field(_) => "field".into(),
+        Expr::Index(_) => "index".into(),
+        Expr::Return(_) => "return".into(),
+        Expr::Assign(_) => "assign".into(),
+        other => snippet(other),
+    }
+}
+
+fn classify_input(
+    expr: &Expr,
+    kind: JobKind,
+    params: &[String],
+    aliases: &[(String, String)],
+    bindings: &[(String, usize)],
+    deps: &mut Vec<String>,
+) -> Result<JobInput, String> {
+    let expr = match expr {
+        Expr::Reference(refer) => &*refer.expr,
+        Expr::Paren(paren) => &*paren.expr,
+        other => other,
+    };
+    if let Some(text) = lit_string(expr) {
+        return Ok(JobInput::Lit(text));
+    }
+    if let Expr::Lit(lit) = expr {
+        if let syn::Lit::Int(value) = &lit.lit {
+            return Ok(JobInput::Lit(value.base10_digits().to_string()));
+        }
+        if let syn::Lit::Bool(value) = &lit.lit {
+            return Ok(JobInput::Lit(value.value.to_string()));
+        }
+    }
+    if let Expr::Struct(item) = expr {
+        if item.rest.is_some() {
+            return Err(unsupported("struct update", ""));
+        }
+        let mut fields = Vec::new();
+        for field in &item.fields {
+            let syn::Member::Named(name) = &field.member else {
+                return Err(unsupported("tuple struct", ""));
+            };
+            fields.push((
+                name.to_string(),
+                classify_input(&field.expr, kind, params, aliases, bindings, deps)?,
+            ));
+        }
+        return Ok(JobInput::Obj(fields));
+    }
+    if let Expr::MethodCall(call) = expr {
+        if call.method == "get" {
+            let name = path_ident(&call.receiver)?;
+            if kind != JobKind::Action && !deps.iter().any(|dep| dep == &name) {
+                deps.push(name.clone());
+            }
+            return Ok(JobInput::Signal(name));
+        }
+        if call.method == "clone" || call.method == "to_string" || call.method == "to_owned" {
+            return classify_input(&call.receiver, kind, params, aliases, bindings, deps);
+        }
+    }
+    if let Ok(name) = path_ident(expr) {
+        if let Some((_, index)) = bindings.iter().rev().find(|(bind, _)| bind == &name) {
+            return Ok(JobInput::Step(*index));
+        }
+        let resolved = if let Some((_, source)) = aliases.iter().rev().find(|(alias, _)| alias == &name)
+        {
+            source.clone()
+        } else {
+            name.clone()
+        };
+        if let Some((_, index)) = bindings.iter().rev().find(|(bind, _)| bind == &resolved) {
+            return Ok(JobInput::Step(*index));
+        }
+        if params.iter().any(|param| param == &resolved || param == &name)
+            || aliases.iter().any(|(alias, _)| alias == &name)
+        {
+            return Ok(JobInput::Param(resolved));
+        }
+    }
+    Err(format!(
+        "unsupported job shape: argument {}. A job argument is signal.get(), a string, a struct, the closure argument, or a previous let.",
+        snippet(expr)
+    ))
+}
+
+fn lower_steps(
+    steps: &[Step],
+    kind: JobKind,
+    params: &[String],
+    deps: &[String],
+) -> Result<(String, ArgSrc, String), String> {
+    if steps.len() == 1 {
+        let arg = single_arg(&steps[0], kind, params, deps)?;
+        return Ok((steps[0].func.clone(), arg, String::new()));
+    }
+    let mut pack = Vec::new();
+    let mut pieces = Vec::new();
+    for (index, step) in steps.iter().enumerate() {
+        let mut specs = Vec::new();
+        flatten_specs(&step.inputs, index, kind, params, deps, &mut pack, &mut specs)?;
+        if specs.is_empty() {
+            pieces.push(step.func.clone());
+        } else {
+            pieces.push(format!("{}@{}", step.func, specs.join(",")));
+        }
+    }
+    let func = format!(
+        "chain:{}",
+        steps
+            .iter()
+            .map(|step| step.func.as_str())
+            .collect::<Vec<_>>()
+            .join("+")
+    );
+    let arg = if pack.is_empty() {
+        ArgSrc::None
+    } else {
+        ArgSrc::List(pack)
+    };
+    Ok((func, arg, pieces.join(";")))
+}
+
+fn flatten_specs(
+    inputs: &[JobInput],
+    step_index: usize,
+    kind: JobKind,
+    params: &[String],
+    deps: &[String],
+    pack: &mut Vec<PackItem>,
+    specs: &mut Vec<String>,
+) -> Result<(), String> {
+    for input in inputs {
+        match input {
+            JobInput::Step(index) => {
+                if *index + 1 == step_index {
+                    specs.push("prev".into());
+                } else {
+                    specs.push(format!("s{index}"));
+                }
+            }
+            JobInput::Obj(_) => {
+                return Err(unsupported(
+                    "struct literal inside a chain",
+                    "pass the struct as the only argument of one function, or dispatch it",
+                ));
+            }
+            other => {
+                let item = input_item(other, kind, params, deps)?;
+                let slot = if let Some(found) = pack.iter().position(|have| have == &item) {
+                    found
+                } else {
+                    pack.push(item);
+                    pack.len() - 1
+                };
+                specs.push(slot.to_string());
+            }
+        }
+    }
+    Ok(())
+}
+
+fn single_arg(
+    step: &Step,
+    kind: JobKind,
+    params: &[String],
+    deps: &[String],
+) -> Result<ArgSrc, String> {
+    match step.inputs.as_slice() {
+        [] => Ok(ArgSrc::None),
+        [JobInput::Lit(text)] => Ok(ArgSrc::Lit(text.clone())),
+        [JobInput::Signal(name)] => Ok(ArgSrc::Signal(name.clone())),
+        [JobInput::Param(name)] => Ok(param_arg(name, params, deps, kind)?),
+        [JobInput::Obj(fields)] => {
+            let mut out = Vec::new();
+            for (key, value) in fields {
+                out.push((key.clone(), input_item(value, kind, params, deps)?));
+            }
+            Ok(ArgSrc::Obj(out))
+        }
+        [JobInput::Step(_)] => Err(unsupported("step", "a single call has no previous step")),
+        many => {
+            let mut items = Vec::new();
+            for input in many {
+                items.push(input_item(input, kind, params, deps)?);
+            }
+            Ok(ArgSrc::List(items))
+        }
+    }
+}
+
+fn param_arg(
+    name: &str,
+    params: &[String],
+    _deps: &[String],
+    kind: JobKind,
+) -> Result<ArgSrc, String> {
+    if params.len() == 1 {
+        return match kind {
+            JobKind::Action => Ok(ArgSrc::Dispatch),
+            JobKind::Resource => Ok(ArgSrc::Source),
+            JobKind::Local => Err(
+                "a LocalResource argument is signal.get(), not the closure parameter".into(),
+            ),
+        };
+    }
+    Err(format!(
+        "internal: parameter {name} should have been packed with the other arguments"
+    ))
+}
+
+fn input_item(
+    input: &JobInput,
+    kind: JobKind,
+    params: &[String],
+    deps: &[String],
+) -> Result<PackItem, String> {
+    match input {
+        JobInput::Lit(text) => Ok(PackItem::Lit(text.clone())),
+        JobInput::Signal(name) => Ok(PackItem::Signal(name.clone())),
+        JobInput::Param(name) => param_item(name, params, deps, kind),
+        JobInput::Obj(_) => Err(unsupported("struct literal", "use one struct argument")),
+        JobInput::Step(_) => Err(unsupported("step", "a packed argument is not a previous step")),
+    }
+}
+
+fn param_item(
+    name: &str,
+    params: &[String],
+    deps: &[String],
+    kind: JobKind,
+) -> Result<PackItem, String> {
+    if deps.iter().any(|dep| dep == name) {
+        return Ok(PackItem::Signal(name.to_string()));
+    }
+    if let Some(index) = params.iter().position(|param| param == name) {
+        if params.len() == 1 {
+            return match kind {
+                JobKind::Action => Ok(PackItem::Dispatch),
+                JobKind::Resource => Ok(PackItem::Source),
+                JobKind::Local => Err(
+                    "a LocalResource argument is signal.get(), not the closure parameter".into(),
+                ),
+            };
+        }
+        if let Some(dep) = deps.get(index) {
+            return Ok(PackItem::Signal(dep.clone()));
+        }
+    }
+    Err(format!(
+        "unsupported job shape: argument {name}. It is not a signal read or a closure parameter."
+    ))
 }
 
 fn record_job_alias(
@@ -2062,7 +2476,7 @@ fn record_job_alias(
     aliases: &mut Vec<(String, String)>,
 ) -> Result<(), String> {
     let syn::Pat::Ident(ident) = &local.pat else {
-        return Err("a job let must be a name".into());
+        return Err("unsupported job shape: let pattern. A job let is a name.".into());
     };
     let Some(init) = &local.init else {
         return Err(format!("let {} needs a value", ident.ident));
@@ -2086,7 +2500,10 @@ fn alias_source(expr: &Expr) -> Result<String, String> {
         {
             path_ident(&call.receiver)
         }
-        _ => Err("a job let must copy the closure argument".into()),
+        _ => Err(
+            "unsupported job shape: let. A job let copies the closure argument or is `let name = call().await?`."
+                .into(),
+        ),
     }
 }
 
@@ -2102,54 +2519,6 @@ fn resolve_job_name(
         return Ok(name.to_string());
     }
     Err(format!("job let {name} is not the closure argument"))
-}
-
-fn classify_job_arg(
-    expr: &Expr,
-    kind: JobKind,
-    params: &[String],
-    aliases: &[(String, String)],
-    deps: &mut Vec<String>,
-) -> Result<ArgSrc, String> {
-    let expr = match expr {
-        Expr::Reference(refer) => &*refer.expr,
-        other => other,
-    };
-    if let Some(text) = lit_string(expr) {
-        return Ok(ArgSrc::Lit(text));
-    }
-    if let Expr::MethodCall(call) = expr {
-        if call.method == "get" {
-            let name = path_ident(&call.receiver)?;
-            if !deps.iter().any(|dep| dep == &name) {
-                deps.push(name.clone());
-            }
-            return Ok(ArgSrc::Signal(name));
-        }
-        if call.method == "clone" || call.method == "to_string" || call.method == "to_owned" {
-            return classify_job_arg(&call.receiver, kind, params, aliases, deps);
-        }
-    }
-    if let Ok(name) = path_ident(expr) {
-        let is_alias = aliases.iter().any(|(alias, _)| alias == &name);
-        let resolved = if let Some((_, source)) = aliases.iter().rev().find(|(alias, _)| alias == &name)
-        {
-            source.clone()
-        } else {
-            name.clone()
-        };
-        let is_param = params.iter().any(|param| param == &resolved || param == &name);
-        if is_param || is_alias {
-            return match kind {
-                JobKind::Action => Ok(ArgSrc::Dispatch),
-                JobKind::Resource => Ok(ArgSrc::Source),
-                JobKind::Local => Err(
-                    "a LocalResource argument is signal.get(), not the closure parameter".into(),
-                ),
-            };
-        }
-    }
-    Err("a job argument must be signal.get(), a string, or the closure argument".into())
 }
 
 fn call_ident(expr: &Expr) -> Result<String, String> {
@@ -2441,6 +2810,9 @@ fn parse_interp(
         Expr::Closure(closure) => &*closure.body,
         other => other,
     };
+    if is_cancelled_count(expr) || is_cancelled_count(peeled) {
+        return Ok(Part::Sig("quinn_cancelled".into()));
+    }
     if let Expr::MethodCall(call) = peeled {
         if call.method == "get" || call.method == "value" {
             let name = path_ident(&call.receiver)?;
@@ -2468,6 +2840,19 @@ fn parse_interp(
         return parse_if_text(expr, signals);
     }
     Err(format!("unsupported interpolation {}", snippet(peeled)))
+}
+
+fn is_cancelled_count(expr: &Expr) -> bool {
+    let Expr::Call(call) = expr else {
+        return false;
+    };
+    let Expr::Path(path) = &*call.func else {
+        return false;
+    };
+    path.path
+        .segments
+        .last()
+        .is_some_and(|segment| segment.ident == "cancelled_count")
 }
 
 fn parse_if_text(expr: &syn::ExprIf, signals: &[Signal]) -> Result<Part, String> {

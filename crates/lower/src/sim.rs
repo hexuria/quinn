@@ -93,6 +93,9 @@ impl Sim {
                 strings.insert(format!("{}_arg", job.name), String::new());
             }
         }
+        if !model.jobs.is_empty() {
+            state.insert("quinn_cancelled".into(), 0);
+        }
         let mut sim = Self {
             state,
             strings,
@@ -1065,8 +1068,50 @@ impl Sim {
                     .map(|part| self.eval(part, row, locals).as_string())
                     .collect(),
             ),
+            HxExpr::List(items) => {
+                let body = items
+                    .iter()
+                    .map(|item| json_literal(&self.eval(item, row, locals)))
+                    .collect::<Vec<_>>()
+                    .join(",");
+                Val::Str(format!("[{body}]"))
+            }
+            HxExpr::Obj(fields) => {
+                let body = fields
+                    .iter()
+                    .map(|(key, value)| {
+                        format!(
+                            "\"{}\":{}",
+                            json_escape_sim(key),
+                            json_literal(&self.eval(value, row, locals))
+                        )
+                    })
+                    .collect::<Vec<_>>()
+                    .join(",");
+                Val::Str(format!("{{{body}}}"))
+            }
         }
     }
+}
+
+fn json_literal(value: &Val) -> String {
+    match value {
+        Val::Int(number) => number.to_string(),
+        Val::Str(text) => format!("\"{}\"", json_escape_sim(text)),
+    }
+}
+
+fn json_escape_sim(text: &str) -> String {
+    let mut out = String::new();
+    for ch in text.chars() {
+        match ch {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            other => out.push(other),
+        }
+    }
+    out
 }
 
 #[derive(Clone, Debug)]

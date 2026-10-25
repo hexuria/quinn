@@ -173,7 +173,9 @@ impl Surface for MakepadSurface {
         let ordered: Vec<(LiveId, WidgetRef)> = children
             .iter()
             .filter_map(|id| {
-                self.widgets.get(id).map(|slot| (LiveId(*id), slot.widget.clone()))
+                self.widgets
+                    .get(id)
+                    .map(|slot| (LiveId(*id), slot.widget.clone()))
             })
             .collect();
         if let Some(mut view) = parent_widget.as_view().borrow_mut() {
@@ -200,7 +202,10 @@ fn spawn(spec: &NodeSpec) -> WidgetRef {
     let text = script_string(&spec.text);
     let placeholder = script_string(&spec.placeholder);
     let code = match spec.tag {
-        Tag::Div => "mod.widgets.RoundedView{width:Fill height:Fit flow:Down show_bg:false new_batch:true}".to_string(),
+        Tag::Div => {
+            "mod.widgets.RoundedView{width:Fill height:Fit flow:Down show_bg:false new_batch:true}"
+                .to_string()
+        }
         Tag::Button => format!("mod.widgets.Button{{text:{text} width:Fit height:Fit}}"),
         Tag::Input => format!(
             "mod.widgets.TextInput{{text:{text} empty_text:{placeholder} width:Fill height:36.}}"
@@ -228,7 +233,10 @@ fn script_mod(code: &str) -> ScriptMod {
         file: "lume.script".into(),
         line: 1,
         column: 1,
-        code: format!("{code};"),
+        // A fresh `ScriptVm::eval` body does not inherit the app module's
+        // `use mod.prelude.widgets.*`, so `Fill`, `Fit`, and `Down` are
+        // missing unless this import is in the evaluated source.
+        code: format!("use mod.prelude.widgets.*\n{code};"),
         values: Vec::new(),
     }
 }
@@ -349,6 +357,7 @@ fn patch(widget: &WidgetRef, body: &str) {
         return;
     }
     let code = format!("__script_source__{{{body}}}");
+    let mut widget = widget.clone();
     cx().with_vm(|vm| {
         widget.script_apply_eval(vm, script_mod(&code));
     });
@@ -415,20 +424,27 @@ fn control_script(style: &Style) -> String {
         || style.padding.right.is_some()
         || style.padding.bottom.is_some()
     {
-        parts.push(format!(
-            "padding: {{left: {left} top: {top} right: {right} bottom: {bottom}}}"
-        ));
+        // A bare object is not an `Inset`. A single number applies to every
+        // side; unequal sides need the `Inset` constructor from the prelude.
+        if left == top && top == right && right == bottom {
+            parts.push(format!("padding: {left}"));
+        } else {
+            parts.push(format!(
+                "padding: Inset{{left: {left} top: {top} right: {right} bottom: {bottom}}}"
+            ));
+        }
     }
+    // `#[walk]` flattens `walk.width` to the widget property `width`.
     match style.width {
-        Some(SizeSpec::Fill) => parts.push("walk.width: Fill".into()),
-        Some(SizeSpec::Fit) => parts.push("walk.width: Fit".into()),
-        Some(SizeSpec::Px(px)) => parts.push(format!("walk.width: {px}")),
+        Some(SizeSpec::Fill) => parts.push("width: Fill".into()),
+        Some(SizeSpec::Fit) => parts.push("width: Fit".into()),
+        Some(SizeSpec::Px(px)) => parts.push(format!("width: {px}")),
         None => {}
     }
     match style.height {
-        Some(SizeSpec::Fill) => parts.push("walk.height: Fill".into()),
-        Some(SizeSpec::Fit) => parts.push("walk.height: Fit".into()),
-        Some(SizeSpec::Px(px)) => parts.push(format!("walk.height: {px}")),
+        Some(SizeSpec::Fill) => parts.push("height: Fill".into()),
+        Some(SizeSpec::Fit) => parts.push("height: Fit".into()),
+        Some(SizeSpec::Px(px)) => parts.push(format!("height: {px}")),
         None => {}
     }
     parts.join(" ")
@@ -467,7 +483,7 @@ pub fn on_actions(cx: &mut Cx, actions: &Actions) {
                 .downcast_ref::<MakepadSurface>()?;
             Some(surface.collect(actions))
         });
-        let Some(events) = events.flatten() else {
+        let Some(events) = events else {
             return;
         };
         session_slot().with(|slot| {

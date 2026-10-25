@@ -14,9 +14,9 @@ No GPUI, NSH, Electron, WebView, or JavaScript runtime is a dependency.
 
 ## Platforms
 
-Makepad's `platform/` tree contains Linux (X11 and Wayland), Windows, macOS, iOS, Android, and a wasm bridge. This milestone **runs** the Linux X11 software-GL path (`MAKEPAD_GPU=gl`, `LIBGL_ALWAYS_SOFTWARE=1`, llvmpipe under Xvfb). Other targets are source-compatible in the sense that application code does not name a platform and Makepad is the backend, but they were not executed here. A successful `cargo check` is not treated as a running UI.
+Makepad's `platform/` tree contains Linux (X11 and Wayland), Windows, macOS, iOS, Android, and a wasm bridge. This milestone **runs** the Linux X11 software-GL path (`MAKEPAD_GPU=gl`, `LIBGL_ALWAYS_SOFTWARE=1`, Mesa llvmpipe, OpenGL ES 3.2). On this VM that was display `:1` (XFCE) and, for the headless smoke runs, Xvfb. Vulkan windowing is skipped on X11 because Makepad wants Wayland for Vulkan (`X11 session: Vulkan windowing needs Wayland; rendering with OpenGL ES`). macOS, Windows, iOS, and Android were not executed. A successful `cargo check` is not a running UI.
 
-`cargo check --target wasm32-unknown-unknown` is attempted for the non-Makepad crates. The Makepad wasm target is a separate link of `makepad-wasm-bridge` and is recorded in the final report only if the command was actually run.
+`cargo check -p lm-styles -p lm-reactive -p lm-core -p lume --no-default-features --target wasm32-unknown-unknown` finished in 12.12s (dev profile, rustc 1.99.0). `cargo check -p baseline-counter --target wasm32-unknown-unknown` finished in 15.50s. Neither produced a browser session. `bumpalo` was not in the offline cache, so the framework check needed network once.
 
 ## Markup that works
 
@@ -58,3 +58,23 @@ Used as public API: `script_from_value`, `ScriptVm::eval`, `ScriptMod`, `View.ch
 `script_apply_eval` is a public trait method. Passing a hand-built `ScriptMod` whose code is `__script_source__{...}` matches what the `script_apply_eval!` macro generates (`platform/script/derive/src/script.rs`). It is the update path for private fields (button face, input chrome, rounded-view color).
 
 Editing `View.children` is relying on a public field, not an unstable private one, but it is not a dedicated "reorder" API. If Makepad later stops walking `children`, this is the line that has to move.
+
+## Measurements
+
+Host: Linux x86_64, kernel 6.12.94, rustc 1.99.0 (`b940084d7`), 4 cores, XFCE on X11, Mesa llvmpipe (LLVM 20.1.2), OpenGL ES 3.2. `MAKEPAD_GPU=gl`, `LIBGL_ALWAYS_SOFTWARE=1`. Release profile is `optimized` (Cargo default, no extra lto). Debug file sizes include debuginfo and were taken before a later `cargo clean -p`.
+
+| What | Result |
+| --- | --- |
+| Cold `cargo build -p counter --release` (Makepad not yet built for release) | 1m 15s (cargo), 76s wall |
+| `cargo build -p baseline-counter --release` after that (only the example crate) | 1.41s |
+| Release rebuild after `touch examples/counter/src/main.rs` | 1.21s |
+| Release binary size, counter | 27,567,424 bytes |
+| Release binary size, baseline | 27,025,872 bytes |
+| Release counter, spawn to `LUME_READY` (tree mounted) | 95 ms |
+| Release baseline, spawn to the `Makepad GL` log line | 133 ms |
+| Release counter idle, 3s sample of `/proc/stat` ticks | 0.33% CPU, RSS 232,080 KiB |
+| Release baseline idle, 2s sample | 0.0% CPU, RSS 210,880 KiB |
+| `MemorySurface`, 1000 signal updates + flush, debug test | 4.312 ms (4.3 µs each) |
+| `MemorySurface`, create 1 div + 200 labels | 621 µs |
+
+The memory-surface numbers are not GPU present latency. Clicks were observed to change the on-screen label; the frame time was not instrumented. Debug binaries were about 266–267 MiB (baseline, probe) and 279 MiB (framework examples) with debuginfo. A `cargo clean -p` afterwards did not produce a useful rebuild time (Cargo reported the packages fresh), so that sample is omitted.

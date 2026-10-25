@@ -5,7 +5,7 @@
 //! not the DOM.
 
 use proc_macro::TokenStream;
-use proc_macro2::{Ident, Punct, Spacing, Span, TokenStream as TokenStream2, TokenTree};
+use proc_macro2::{Ident, TokenStream as TokenStream2};
 use quote::{quote, ToTokens};
 use rstml::node::{Node, NodeAttribute, NodeBlock, NodeElement, NodeName};
 use syn::{parse_macro_input, Expr, ExprClosure, ItemFn, LitInt, LitStr};
@@ -64,43 +64,41 @@ pub fn run(input: TokenStream) -> TokenStream {
         root,
         ..
     } = parse_macro_input!(input as RunArgs);
-    let hash = Punct::new('#', Spacing::Alone);
-    let mut page_color = TokenStream2::new();
-    page_color.extend([
-        TokenTree::Punct(Punct::new('#', Spacing::Joint)),
-        TokenTree::Ident(Ident::new("xf4f0e6", Span::call_site())),
-    ]);
+    // `script_mod!` reconstructs source from token spans. Tokens produced by
+    // `quote!` share the call site, so identifiers would be concatenated
+    // (`usemod`, `Fillflow`). The shell is therefore a string, with `#(0)`
+    // bound to `App::script_component`.
+    let title_script = title.value().replace('\\', "\\\\").replace('"', "\\\"");
+    let width_digits = width.base10_digits();
+    let height_digits = height.base10_digits();
+    let shell = format!(
+        r#"use mod.prelude.widgets.*
+startup() do #(0) {{
+    ui: Root {{
+        main_window := Window {{
+            window.inner_size: vec2({width_digits}, {height_digits})
+            window.title: "{title_script}"
+            body +: {{
+                host := RoundedView {{
+                    width: Fill
+                    height: Fill
+                    flow: Down
+                    padding: 16.
+                    show_bg: true
+                    new_batch: true
+                    draw_bg.color: #xf4f0e6
+                }}
+            }}
+        }}
+    }}
+}}
+"#
+    );
     quote! {
         pub use ::lume::makepad_widgets;
         use ::lume::makepad_widgets::*;
 
         app_main!(App);
-
-        script_mod! {
-            use mod.prelude.widgets.*
-            startup() do #hash (App::script_component(vm)) {
-                ui: Root {
-                    on_startup: || {
-                        ui.host.render()
-                    }
-                    main_window := Window {
-                        window.inner_size: vec2(#width, #height)
-                        window.title: #title
-                        body +: {
-                            host := RoundedView {
-                                width: Fill
-                                height: Fill
-                                flow: Down
-                                padding: 16.
-                                show_bg: true
-                                new_batch: true
-                                draw_bg.color: #page_color
-                            }
-                        }
-                    }
-                }
-            }
-        }
 
         #[derive(Script, ScriptHook)]
         pub struct App {
@@ -121,7 +119,17 @@ pub fn run(input: TokenStream) -> TokenStream {
         impl AppMain for App {
             fn script_mod(vm: &mut ScriptVm) -> ScriptValue {
                 crate::makepad_widgets::script_mod(vm);
-                self::script_mod(vm)
+                let shell = #shell;
+                let component = App::script_component(vm);
+                vm.eval(::lume::makepad_widgets::makepad_script::ScriptMod {
+                    cargo_manifest_path: String::new(),
+                    module_path: module_path!().to_string(),
+                    file: file!().to_string(),
+                    line: line!() as usize,
+                    column: column!() as usize,
+                    code: shell.to_string(),
+                    values: vec![component],
+                })
             }
 
             fn handle_event(&mut self, cx: &mut Cx, event: &Event) {
@@ -209,7 +217,9 @@ fn expand_tag(element: &NodeElement<rstml::Infallible>, name: &str) -> TokenStre
                 if let Some(lit) = attr.value_literal_string() {
                     style_lit = Some(lit);
                 } else {
-                    return quote!(compile_error!("dynamic style strings are not in this milestone; bind class instead"));
+                    return quote!(compile_error!(
+                        "dynamic style strings are not in this milestone; bind class instead"
+                    ));
                 }
             }
             "placeholder" => {

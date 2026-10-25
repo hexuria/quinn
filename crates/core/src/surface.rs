@@ -85,7 +85,7 @@ pub struct NodeSpec {
 }
 
 /// Renderer operations. Implementations run on the UI thread.
-pub trait Surface: Send {
+pub trait Surface {
     fn create(&mut self, parent: Option<u64>, spec: &NodeSpec) -> u64;
     fn remove(&mut self, id: u64);
     fn set_text(&mut self, id: u64, text: &str);

@@ -56,7 +56,7 @@ Without Xvfb, drop `xvfb-run -a` if `DISPLAY` is already a real X server.
 - `crates/macros` — `view!`, `#[component]`, `run!`
 - `crates/makepad` — the only renderer
 - `crates/lume` — what applications import
-- `examples/` — counter, conditional, keyed list, form, and an unmodified-shape Makepad baseline
+- `examples/` — counter, conditional, keyed list, form, and a Makepad baseline. The baseline follows the upstream counter, with `height: Fit` on the main view so the button is not given zero space in a 220px window, and an explicit dark label color.
 - `probes/widget-lifecycle` — the Makepad tree experiment
 - `docs/` — research, architecture, decisions, compatibility
 

@@ -4,9 +4,7 @@ use std::sync::Arc;
 use lm_reactive::prelude::*;
 use lm_reactive::{on_cleanup, Owner};
 
-use crate::{
-    el, for_each, scope_owner, show, MemorySurface, Runtime, Tag,
-};
+use crate::{el, for_each, scope_owner, show, MemorySurface, Runtime, Tag};
 
 fn runtime() -> (Owner, Runtime) {
     let owner = Owner::new();
@@ -26,9 +24,7 @@ fn signal_updates_text_without_recreating_a_sibling() {
                     .text_fixed("Counter: ")
                     .text_dyn(move || count.get().to_string()),
             )
-            .child(
-                el(Tag::Span).text_dyn(move || other.get().to_string()),
-            )
+            .child(el(Tag::Span).text_dyn(move || other.get().to_string()))
             .child(el(Tag::Button).text_fixed("Increment").on_click(move || {
                 set_count.update(|n| *n += 1);
             }));
@@ -141,9 +137,18 @@ fn keyed_list_preserves_identity_of_untouched_rows() {
     }
     let (items, set_items) = owner.with(|| {
         signal(vec![
-            Item { id: 1, name: "Alpha" },
-            Item { id: 2, name: "Beta" },
-            Item { id: 3, name: "Gamma" },
+            Item {
+                id: 1,
+                name: "Alpha",
+            },
+            Item {
+                id: 2,
+                name: "Beta",
+            },
+            Item {
+                id: 3,
+                name: "Gamma",
+            },
         ])
     });
     let root = owner.with(|| {
@@ -157,9 +162,11 @@ fn keyed_list_preserves_identity_of_untouched_rows() {
                     row_owner,
                     el(Tag::Div)
                         .child(el(Tag::Span).text_fixed(item.name))
-                        .child(el(Tag::Button).text_dyn(move || n.get().to_string()).on_click(
-                            move || set_n.update(|v| *v += 1),
-                        )),
+                        .child(
+                            el(Tag::Button)
+                                .text_dyn(move || n.get().to_string())
+                                .on_click(move || set_n.update(|v| *v += 1)),
+                        ),
                 )
             },
         );
@@ -256,4 +263,40 @@ fn input_updates_reactive_state_and_skips_identical_text() {
     rt.flush();
     assert_eq!(writes(&rt, input), writes_before);
     assert_eq!(rt.text(input), "Ada");
+}
+
+/// Prints real timings. Not a pass/fail budget.
+#[test]
+fn measured_memory_surface_update_and_create() {
+    let (owner, mut rt) = runtime();
+    let (count, set_count) = owner.with(|| signal(0i32));
+    let root = owner.with(|| {
+        let view = el(Tag::Span).text_dyn(move || count.get().to_string());
+        rt.mount_view(scope_owner(owner.clone(), view))
+    });
+    let start = std::time::Instant::now();
+    for i in 0..1_000 {
+        set_count.set(i);
+        rt.flush();
+    }
+    let elapsed = start.elapsed();
+    eprintln!(
+        "MEMORY_SURFACE 1000 signal flushes: {elapsed:?} ({:.1} us/update)",
+        elapsed.as_secs_f64() * 1e6 / 1000.0
+    );
+    assert_eq!(rt.text(root), "999");
+
+    let start = std::time::Instant::now();
+    let (owner, mut rt) = runtime();
+    owner.with(|| {
+        let mut parent = el(Tag::Div);
+        for i in 0..200 {
+            parent = parent.child(el(Tag::Span).text_fixed(format!("row {i}")));
+        }
+        rt.mount_view(scope_owner(owner.clone(), parent));
+    });
+    eprintln!(
+        "MEMORY_SURFACE create 1 div + 200 labels: {:?}",
+        start.elapsed()
+    );
 }

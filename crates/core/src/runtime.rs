@@ -258,9 +258,7 @@ impl Runtime {
         let Some(show) = self.nodes.get(&id).and_then(|n| n.show.as_ref()) else {
             return;
         };
-        let on = show
-            .flag
-            .load(std::sync::atomic::Ordering::SeqCst);
+        let on = show.flag.load(std::sync::atomic::Ordering::SeqCst);
         let child = show.child;
         if on && child.is_none() {
             let owner = self.nodes.get(&id).map(|n| n.owner.clone());

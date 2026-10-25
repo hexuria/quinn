@@ -16,9 +16,12 @@ script_mod! {
                 window.inner_size: vec2(420, 220)
                 window.title: "Makepad baseline counter"
                 body +: {
+                    // Upstream uses height: Fill, which consumes the 220px window
+                    // and leaves the Increment button with no visible space.
+                    // Fit keeps this the same counter and puts the button on screen.
                     main_view := View{
                         width: Fill
-                        height: Fill
+                        height: Fit
                         flow: Down
                         spacing: 12
                         align: Center

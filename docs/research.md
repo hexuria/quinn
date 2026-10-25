@@ -37,6 +37,8 @@ No `ra_jit` / `ra-jit` symbol exists in the tree.
 
 The executable probe is `probes/widget-lifecycle`. It performs create, insert, `set_text` (same uid), insert a sibling, remove, reorder, attach/fire/remove a Rust handler, and `redraw_all` while recording the `Window` uid.
 
+Run on this machine (X11, `MAKEPAD_GPU=gl`, `LIBGL_ALWAYS_SOFTWARE=1`, Mesa llvmpipe, OpenGL ES 3.2) it logged `PROBE_OK`: window uid 3 stayed 3 across `redraw_all`, the first label uid was stable across `set_text`, the sibling uid survived reorder, the handler fired once and not after it was cleared, and the removed widget left `View.children`. A hand-built `ScriptMod` does **not** inherit the app module's `use mod.prelude.widgets.*`. `Fill` and `Fit` are identifiers spread from `mod.turtle` (`draw/src/turtle.rs`, `..me.Size`). Without that import, eval reports `variable Fill not found in scope` and the property stays at the prototype default; a number still becomes `Size::Fixed` (`ScriptHook for Size`). `lume` prefixes generated scripts with the import. `script_mod!` inside `quote!` also drops spaces, because the macro rebuilds source from token spans and `quote!` tokens share the call site, so `run!` emits the shell as a string with `#(0)` bound to `App::script_component`.
+
 ## Probe B — Leptos
 
 `tachys/src/renderer/mod.rs` still declares `trait Renderer`, and the module comment says the generic renderer was removed before 0.7 because of compile times and linker errors. `pub type Rndr = dom::Dom`. DOM aliases and `web_sys` are hard-wired. `leptos_macro` expands `view!` to `::leptos::tachys::html::element::...`. Implementing `Renderer` does not reach Makepad.

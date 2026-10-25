@@ -13,10 +13,12 @@ pub use makepad_widgets;
 
 use std::cell::RefCell;
 
-use lm_core::{IntoView, Owner, Runtime};
+use lm_core::{Owner, Runtime};
 
 pub struct Session {
     pub runtime: Runtime,
+    /// Kept alive so component signals survive for the process.
+    #[allow(dead_code)]
     owner: Owner,
 }
 

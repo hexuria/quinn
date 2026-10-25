@@ -18,7 +18,6 @@ script_mod! {
     use mod.prelude.widgets.*
     startup() do #(App::script_component(vm)) {
         ui: Root {
-            on_startup: || { ui.host.render() }
             main_window := Window {
                 window.inner_size: vec2(520, 360)
                 window.title: "Widget lifecycle probe"
@@ -83,7 +82,10 @@ impl Probe {
         self.window_uid = window_uid;
         self.note(format!("window_uid {window_uid}"));
 
-        let first = spawn(cx, r#"mod.widgets.Label{text:"first" width:Fill height:Fit draw_text.color:#x1c1917 draw_text.text_style.font_size:18}"#);
+        let first = spawn(
+            cx,
+            r#"mod.widgets.Label{text:"first" width:Fill height:Fit draw_text.color:#x1c1917 draw_text.text_style.font_size:18}"#,
+        );
         let first_uid = first.widget_uid().0;
         self.note(format!(
             "1 create uid={first_uid} empty={}",
@@ -100,7 +102,10 @@ impl Probe {
             first.text()
         ));
 
-        let second = spawn(cx, r#"mod.widgets.Label{text:"second" width:Fill height:Fit draw_text.color:#x1c1917 draw_text.text_style.font_size:18}"#);
+        let second = spawn(
+            cx,
+            r#"mod.widgets.Label{text:"second" width:Fill height:Fit draw_text.color:#x1c1917 draw_text.text_style.font_size:18}"#,
+        );
         let second_uid = second.widget_uid().0;
         insert(cx, host, &second);
         self.note(format!("4 second uid={second_uid}"));
@@ -110,12 +115,18 @@ impl Probe {
         let still_there = child_uids(host).contains(&first_uid);
         self.note(format!("5 removed first still_in_parent={still_there}"));
 
-        let third = spawn(cx, r#"mod.widgets.Label{text:"third" width:Fill height:Fit draw_text.color:#x1c1917 draw_text.text_style.font_size:18}"#);
+        let third = spawn(
+            cx,
+            r#"mod.widgets.Label{text:"third" width:Fill height:Fit draw_text.color:#x1c1917 draw_text.text_style.font_size:18}"#,
+        );
         let third_uid = third.widget_uid().0;
         insert(cx, host, &third);
         reorder(cx, host, &[third_uid, second_uid]);
         let order = child_uids(host);
-        self.note(format!("6 order={order:?} second_uid_stable={}", order.contains(&second_uid)));
+        self.note(format!(
+            "6 order={order:?} second_uid_stable={}",
+            order.contains(&second_uid)
+        ));
 
         let clicks = self.clicks.clone();
         self.handler = Some(Box::new(move || {
@@ -145,9 +156,18 @@ impl Probe {
             second.text()
         ));
 
-        self.status = spawn(cx, r#"mod.widgets.H1{text:"Probe" width:Fill height:Fit draw_text.color:#x1c1917 draw_text.text_style.font_size:28}"#);
-        self.counter = spawn(cx, r#"mod.widgets.Label{text:"Clicks: 0" width:Fill height:Fit draw_text.color:#x1c1917 draw_text.text_style.font_size:20}"#);
-        self.button = spawn(cx, r#"mod.widgets.Button{text:"Increment" width:Fit height:Fit}"#);
+        self.status = spawn(
+            cx,
+            r#"mod.widgets.H1{text:"Probe" width:Fill height:Fit draw_text.color:#x1c1917 draw_text.text_style.font_size:28}"#,
+        );
+        self.counter = spawn(
+            cx,
+            r#"mod.widgets.Label{text:"Clicks: 0" width:Fill height:Fit draw_text.color:#x1c1917 draw_text.text_style.font_size:20}"#,
+        );
+        self.button = spawn(
+            cx,
+            r#"mod.widgets.Button{text:"Increment" width:Fit height:Fit draw_bg.color:#x1c1917 draw_bg.color_hover:#x1c1917 draw_bg.color_down:#x1c1917 draw_text.color:#xf6f3ec draw_text.color_hover:#xf6f3ec draw_text.color_down:#xf6f3ec}"#,
+        );
         clear_children(host);
         insert(cx, host, &self.status);
         insert(cx, host, &self.counter);
@@ -171,7 +191,10 @@ impl Probe {
             && self.log.iter().any(|l| l.contains("still_in_parent=false"))
             && self.log.iter().any(|l| l.contains("once=1 after_remove=1"))
             && self.log.iter().any(|l| l.contains("same_window=true"))
-            && self.log.iter().any(|l| l.contains("unchanged_sibling=true"))
+            && self
+                .log
+                .iter()
+                .any(|l| l.contains("unchanged_sibling=true"))
             && self.log.iter().all(|l| !l.contains("empty=true"))
     }
 
@@ -183,7 +206,11 @@ impl Probe {
         }
         let mut body = self.log.join("\n");
         body.push('\n');
-        body.push_str(if self.passed() { "PROBE_OK\n" } else { "PROBE_FAIL\n" });
+        body.push_str(if self.passed() {
+            "PROBE_OK\n"
+        } else {
+            "PROBE_FAIL\n"
+        });
         let _ = fs::write(&path, &body);
         let _ = fs::write("/opt/cursor/artifacts/probe-widget-lifecycle.log", &body);
         let _ = fs::write("/tmp/lume-probe.log", &body);
@@ -210,9 +237,7 @@ impl MatchEvent for App {
                 *n += 1;
                 *n
             };
-            self.probe
-                .counter
-                .set_text(cx, &format!("Clicks: {next}"));
+            self.probe.counter.set_text(cx, &format!("Clicks: {next}"));
             self.probe.counter.redraw(cx);
             cx.redraw_all();
         }
@@ -239,7 +264,7 @@ fn spawn(cx: &mut Cx, code: &str) -> WidgetRef {
             file: "probe.script".into(),
             line: 1,
             column: 1,
-            code: format!("{code};"),
+            code: format!("use mod.prelude.widgets.*\n{code};"),
             values: Vec::new(),
         };
         let value = vm.eval(script);
@@ -273,9 +298,10 @@ fn reorder(cx: &mut Cx, parent: &WidgetRef, order: &[u64]) {
         let existing: Vec<(LiveId, WidgetRef)> = view.children.iter().cloned().collect();
         view.children.clear();
         for uid in order {
-            if let Some((_, widget)) = existing.iter().find(|(name, widget)| {
-                name.0 == *uid || widget.widget_uid().0 == *uid
-            }) {
+            if let Some((_, widget)) = existing
+                .iter()
+                .find(|(name, widget)| name.0 == *uid || widget.widget_uid().0 == *uid)
+            {
                 view.children.push((LiveId(*uid), widget.clone()));
             }
         }
@@ -295,7 +321,11 @@ fn child_uids(parent: &WidgetRef) -> Vec<u64> {
     parent
         .as_view()
         .borrow()
-        .map(|view| view.children.iter().map(|(_, w)| w.widget_uid().0).collect())
+        .map(|view| {
+            view.children
+                .iter()
+                .map(|(_, w)| w.widget_uid().0)
+                .collect()
+        })
         .unwrap_or_default()
 }
-

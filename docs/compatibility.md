@@ -30,19 +30,25 @@ Also: nested elements, string literals and `{expr}` / `{move || value}` text, `o
 
 ## Style subset
 
-Utilities (later tokens win): `flex`, `flex-row`, `flex-col`, `gap-N` (N×4 px, `gap-px` = 1), `p-` / `px-` / `py-` / `pt-` / `pr-` / `pb-` / `pl-` and the `m*` forms on the same scale, `items-start|center|end`, `justify-start|center|end`, `w-full`, `w-fit`, `h-full`, `h-fit`, `text-xs` through `text-3xl`, `rounded`, `rounded-sm|md|lg|full`, `border`, `border-2`, and a short palette (`white`, `black`, `slate-900|600|100`, `stone-900|100`, `amber-700|600|100`) on `bg-`, `text-`, and `border-`.
+Utilities (later tokens win): `flex`, `flex-row`, `flex-col`, `flex-wrap`, `flex-nowrap`, `flex-1`, `flex-none`, `grow`, `shrink`, `shrink-0`, `grow-N`, `shrink-N`, `basis-N`, `gap-N`, `gap-x-N`, `gap-y-N` (N×4 px, `gap-px` = 1), `p-` / `px-` / `py-` / `pt-` / `pr-` / `pb-` / `pl-` and the `m*` forms on the same scale, `items-start|center|end|stretch`, `self-start|center|end|stretch`, `justify-start|center|end|between|around|evenly`, `w-full`, `w-fit`, `w-screen`, `h-full`, `h-fit`, `h-screen`, `w-1/2` and the other `n/d` fractions, `min-w-*`, `max-w-*`, `min-h-*`, `max-h-*` (`full` is `"100%"`), `text-xs` through `text-3xl`, `rounded`, `rounded-sm|md|lg|full`, `border`, `border-2`, `disabled`, and a short palette (`white`, `black`, `slate-900|600|100`, `stone-900|100`, `amber-700|600|100`) on `bg-`, `text-`, and `border-`.
+
+Arbitrary values: `w-[13px]`, `h-[13px]`, `min-w-[8px]`, `max-w-[40px]`, `min-h-[0px]`, `max-h-[16px]`, `p-[10px]` and the per-side `p*` / `m*` forms, `gap-[8px]`, `basis-[16px]`, `bg-[#1e293b]`, `text-[#fff]`, `text-[13px]`. A 3-digit hex expands. An 8-digit hex uses the first six.
+
+`class:token=move || flag.get()` toggles that one utility. `style:prop=move || if flag.get() { "120px" } else { "40px" }` switches a literal. A runtime string in `style:` is a compile error.
+
+On a row, `items-*` is `RowAlign` and `justify-start|center|end` is `Align` on the main axis. `justify-between|around|evenly` is `Distribute` and does not also set `Align`. `items-stretch` gives children `Fill` on the cross axis when their class did not set that size. `self-start|center|end` wraps the child; `self-stretch` is cross-axis `Fill`. `flex-wrap` is `Flow.Right { wrap: true }` plus `wrap_spacing` from `gap-y`. A column cannot wrap: `Flow::Down` has no wrap field.
+
+`hover:bg-*`, `hover:text-*`, `active:bg-*`, `active:text-*`, `disabled:bg-*`, and `disabled:text-*` set the button animator colors. They are not copied from the face color. A bare `disabled` sets `enabled: false` and the disabled mix to 1. `hover:` on a `div` does not animate. `focus:` is not mapped.
 
 Inline: `color`, `background`, `font-size`, `padding`, `margin`, `gap`, `radius`, `border`, `width`, `height` with `fill`, `fit`, or a pixel number.
-
-Alignment is Makepad `Align { x, y }`: a fraction of leftover space, not per-item flex. For a column, `justify-*` is `y` and `items-*` is `x`. For a row they swap.
 
 ## Not supported
 
 These are absent on purpose, not partially implemented:
 
-- CSS inheritance, specificity, the cascade beyond source order, media queries, pseudo-classes, `em`/`rem`/`%` except `width: 100%` as fill
-- `justify-between`, `items-stretch`, `flex-grow`, `flex-wrap`, grid, absolute/fixed positioning
-- Hover/focus utility classes (Makepad still has its own button hover animation)
+- CSS inheritance, specificity, the cascade beyond source order, media queries, `em`/`rem`
+- `focus:` utilities, `align-content`, `z-index`, grid, absolute/fixed positioning
+- Hover on a plain `div` (the button animator is the only hover Quinn drives)
 - HTML forms as a DOM (`<form>`, submit, labels-for), contenteditable, rich text, SVG, images
 - Slots / `children` on custom components
 - Upstream `#[component]` props syntax (`prop: impl Fn()` etc.)

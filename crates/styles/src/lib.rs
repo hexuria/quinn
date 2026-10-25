@@ -1,6 +1,6 @@
 //! A closed style subset. Values map onto Makepad `Walk`, `Layout`, and draw
-//! fields. This is not CSS: there is no inheritance, cascade beyond
-//! source-order utility classes, flex-grow, grid, or positioning.
+//! fields. This is not a CSS cascade: later utilities in one class string win,
+//! and there is no inheritance.
 
 /// sRGB color. Alpha is kept for script patches; Makepad hex form is `#xRRGGBB`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -53,11 +53,78 @@ impl AlignSpec {
     }
 }
 
+/// Cross-axis alignment. On a row this is Makepad `RowAlign`. `Stretch` is
+/// not a `RowAlign` variant; the emitter turns an unset cross size into `Fill`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CrossAlign {
+    Start,
+    Center,
+    End,
+    Stretch,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DistributeSpec {
+    Between,
+    Around,
+    Evenly,
+}
+
+impl DistributeSpec {
+    pub fn script(self) -> &'static str {
+        match self {
+            Self::Between => "SpaceBetween",
+            Self::Around => "SpaceAround",
+            Self::Evenly => "SpaceEvenly",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RelBase {
+    Parent,
+    Vw,
+    Vh,
+}
+
+impl RelBase {
+    pub fn script(self) -> &'static str {
+        match self {
+            Self::Parent => "Base.Parent",
+            Self::Vw => "Base.Vw",
+            Self::Vh => "Base.Vh",
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum SizeSpec {
     Fill,
     Fit,
     Px(f64),
+    Rel { base: RelBase, factor: f64 },
+    /// `Size::Fill { weight, shrink, basis }` with basis in pixels.
+    Flex { weight: f64, shrink: f64, basis: f64 },
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Bound {
+    Px(f64),
+    Full,
+}
+
+/// Grow / shrink / basis applied on the parent's main axis at emit time.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct FlexSpec {
+    pub grow: Option<f64>,
+    pub shrink: Option<f64>,
+    pub basis: Option<f64>,
+}
+
+impl FlexSpec {
+    pub fn is_empty(self) -> bool {
+        self.grow.is_none() && self.shrink.is_none() && self.basis.is_none()
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -76,6 +143,10 @@ impl Edges {
             right: Some(v),
             bottom: Some(v),
         }
+    }
+
+    pub fn any(self) -> bool {
+        self.left.is_some() || self.top.is_some() || self.right.is_some() || self.bottom.is_some()
     }
 
     pub fn merge(&mut self, over: Edges) {
@@ -108,16 +179,38 @@ impl Edges {
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Style {
     pub flow: Option<FlowSpec>,
+    pub wrap: bool,
+    /// Shorthand `gap-*`: both axes, unless `gap_x` / `gap_y` override.
     pub gap: Option<f64>,
+    pub gap_x: Option<f64>,
+    pub gap_y: Option<f64>,
     pub padding: Edges,
     pub margin: Edges,
     pub main_align: Option<AlignSpec>,
-    pub cross_align: Option<AlignSpec>,
+    pub cross_align: Option<CrossAlign>,
+    pub align_self: Option<CrossAlign>,
+    pub distribute: Option<DistributeSpec>,
     pub width: Option<SizeSpec>,
     pub height: Option<SizeSpec>,
+    /// The class string set this axis. Tag defaults do not.
+    pub width_explicit: bool,
+    pub height_explicit: bool,
+    pub min_width: Option<Bound>,
+    pub max_width: Option<Bound>,
+    pub min_height: Option<Bound>,
+    pub max_height: Option<Bound>,
+    pub flex: FlexSpec,
     pub color: Option<Rgba>,
     pub font_size: Option<f64>,
     pub background: Option<Rgba>,
+    pub hover_bg: Option<Rgba>,
+    pub active_bg: Option<Rgba>,
+    pub disabled_bg: Option<Rgba>,
+    pub hover_fg: Option<Rgba>,
+    pub active_fg: Option<Rgba>,
+    pub disabled_fg: Option<Rgba>,
+    /// Bare `disabled` class: the button starts in the disabled animator state.
+    pub disabled: bool,
     pub border_width: Option<f64>,
     pub border_color: Option<Rgba>,
     pub radius: Option<f64>,
@@ -128,8 +221,17 @@ impl Style {
         if over.flow.is_some() {
             self.flow = over.flow;
         }
+        if over.wrap {
+            self.wrap = true;
+        }
         if over.gap.is_some() {
             self.gap = over.gap;
+        }
+        if over.gap_x.is_some() {
+            self.gap_x = over.gap_x;
+        }
+        if over.gap_y.is_some() {
+            self.gap_y = over.gap_y;
         }
         self.padding.merge(over.padding);
         self.margin.merge(over.margin);
@@ -139,11 +241,44 @@ impl Style {
         if over.cross_align.is_some() {
             self.cross_align = over.cross_align;
         }
+        if over.align_self.is_some() {
+            self.align_self = over.align_self;
+        }
+        if over.distribute.is_some() {
+            self.distribute = over.distribute;
+        }
         if over.width.is_some() {
             self.width = over.width;
         }
+        if over.width_explicit {
+            self.width_explicit = true;
+        }
         if over.height.is_some() {
             self.height = over.height;
+        }
+        if over.height_explicit {
+            self.height_explicit = true;
+        }
+        if over.min_width.is_some() {
+            self.min_width = over.min_width;
+        }
+        if over.max_width.is_some() {
+            self.max_width = over.max_width;
+        }
+        if over.min_height.is_some() {
+            self.min_height = over.min_height;
+        }
+        if over.max_height.is_some() {
+            self.max_height = over.max_height;
+        }
+        if over.flex.grow.is_some() {
+            self.flex.grow = over.flex.grow;
+        }
+        if over.flex.shrink.is_some() {
+            self.flex.shrink = over.flex.shrink;
+        }
+        if over.flex.basis.is_some() {
+            self.flex.basis = over.flex.basis;
         }
         if over.color.is_some() {
             self.color = over.color;
@@ -154,6 +289,27 @@ impl Style {
         if over.background.is_some() {
             self.background = over.background;
         }
+        if over.hover_bg.is_some() {
+            self.hover_bg = over.hover_bg;
+        }
+        if over.active_bg.is_some() {
+            self.active_bg = over.active_bg;
+        }
+        if over.disabled_bg.is_some() {
+            self.disabled_bg = over.disabled_bg;
+        }
+        if over.hover_fg.is_some() {
+            self.hover_fg = over.hover_fg;
+        }
+        if over.active_fg.is_some() {
+            self.active_fg = over.active_fg;
+        }
+        if over.disabled_fg.is_some() {
+            self.disabled_fg = over.disabled_fg;
+        }
+        if over.disabled {
+            self.disabled = true;
+        }
         if over.border_width.is_some() {
             self.border_width = over.border_width;
         }
@@ -163,6 +319,14 @@ impl Style {
         if over.radius.is_some() {
             self.radius = over.radius;
         }
+    }
+
+    pub fn main_gap(&self) -> Option<f64> {
+        self.gap_x.or(self.gap)
+    }
+
+    pub fn cross_gap(&self) -> Option<f64> {
+        self.gap_y.or(self.gap)
     }
 }
 
@@ -190,19 +354,66 @@ pub fn parse_inline(input: &str) -> Style {
 }
 
 fn apply_token(style: &mut Style, token: &str) {
+    if let Some(rest) = token.strip_prefix("hover:") {
+        apply_variant(style, Variant::Hover, rest);
+        return;
+    }
+    if let Some(rest) = token.strip_prefix("active:") {
+        apply_variant(style, Variant::Active, rest);
+        return;
+    }
+    if let Some(rest) = token.strip_prefix("disabled:") {
+        apply_variant(style, Variant::Disabled, rest);
+        return;
+    }
+    if let Some((prefix, value)) = arbitrary(token) {
+        apply_arbitrary(style, prefix, value);
+        return;
+    }
     match token {
         "flex" | "flex-row" => style.flow = Some(FlowSpec::Row),
         "flex-col" => style.flow = Some(FlowSpec::Column),
-        "items-start" => style.cross_align = Some(AlignSpec::Start),
-        "items-center" => style.cross_align = Some(AlignSpec::Center),
-        "items-end" => style.cross_align = Some(AlignSpec::End),
+        "flex-nowrap" => style.wrap = false,
+        "flex-wrap" => {
+            style.wrap = true;
+            if style.flow.is_none() {
+                style.flow = Some(FlowSpec::Row);
+            }
+        }
+        "flex-1" => {
+            style.flex.grow = Some(1.0);
+            style.flex.shrink = Some(1.0);
+            style.flex.basis = Some(0.0);
+        }
+        "flex-none" => {
+            style.flex.grow = Some(0.0);
+            style.flex.shrink = Some(0.0);
+        }
+        "grow" => style.flex.grow = Some(1.0),
+        "shrink" => style.flex.shrink = Some(1.0),
+        "shrink-0" => style.flex.shrink = Some(0.0),
+        "items-start" => style.cross_align = Some(CrossAlign::Start),
+        "items-center" => style.cross_align = Some(CrossAlign::Center),
+        "items-end" => style.cross_align = Some(CrossAlign::End),
+        "items-stretch" => style.cross_align = Some(CrossAlign::Stretch),
+        "self-auto" => style.align_self = None,
+        "self-start" => style.align_self = Some(CrossAlign::Start),
+        "self-center" => style.align_self = Some(CrossAlign::Center),
+        "self-end" => style.align_self = Some(CrossAlign::End),
+        "self-stretch" => style.align_self = Some(CrossAlign::Stretch),
         "justify-start" => style.main_align = Some(AlignSpec::Start),
         "justify-center" => style.main_align = Some(AlignSpec::Center),
         "justify-end" => style.main_align = Some(AlignSpec::End),
-        "w-full" => style.width = Some(SizeSpec::Fill),
-        "w-fit" => style.width = Some(SizeSpec::Fit),
-        "h-full" => style.height = Some(SizeSpec::Fill),
-        "h-fit" => style.height = Some(SizeSpec::Fit),
+        "justify-between" => style.distribute = Some(DistributeSpec::Between),
+        "justify-around" => style.distribute = Some(DistributeSpec::Around),
+        "justify-evenly" => style.distribute = Some(DistributeSpec::Evenly),
+        "w-full" => set_width(style, SizeSpec::Fill),
+        "w-fit" => set_width(style, SizeSpec::Fit),
+        "w-screen" => set_width(style, SizeSpec::Rel { base: RelBase::Vw, factor: 1.0 }),
+        "h-full" => set_height(style, SizeSpec::Fill),
+        "h-fit" => set_height(style, SizeSpec::Fit),
+        "h-screen" => set_height(style, SizeSpec::Rel { base: RelBase::Vh, factor: 1.0 }),
+        "disabled" => style.disabled = true,
         "rounded" | "rounded-md" => style.radius = Some(8.0),
         "rounded-sm" => style.radius = Some(4.0),
         "rounded-lg" => style.radius = Some(12.0),
@@ -226,63 +437,256 @@ fn apply_token(style: &mut Style, token: &str) {
         "text-xl" => style.font_size = Some(20.0),
         "text-2xl" => style.font_size = Some(24.0),
         "text-3xl" => style.font_size = Some(30.0),
-        _ => {
-            if let Some(rest) = token.strip_prefix("gap-") {
-                if let Some(px) = spacing(rest) {
-                    style.gap = Some(px);
-                }
-            } else if let Some(rest) = token.strip_prefix("p-") {
-                if let Some(px) = spacing(rest) {
-                    style.padding = Edges::all(px);
-                }
-            } else if let Some(rest) = token.strip_prefix("px-") {
-                if let Some(px) = spacing(rest) {
-                    style.padding.left = Some(px);
-                    style.padding.right = Some(px);
-                }
-            } else if let Some(rest) = token.strip_prefix("py-") {
-                if let Some(px) = spacing(rest) {
-                    style.padding.top = Some(px);
-                    style.padding.bottom = Some(px);
-                }
-            } else if let Some(rest) = token.strip_prefix("pt-") {
-                if let Some(px) = spacing(rest) {
-                    style.padding.top = Some(px);
-                }
-            } else if let Some(rest) = token.strip_prefix("pr-") {
-                if let Some(px) = spacing(rest) {
-                    style.padding.right = Some(px);
-                }
-            } else if let Some(rest) = token.strip_prefix("pb-") {
-                if let Some(px) = spacing(rest) {
-                    style.padding.bottom = Some(px);
-                }
-            } else if let Some(rest) = token.strip_prefix("pl-") {
-                if let Some(px) = spacing(rest) {
-                    style.padding.left = Some(px);
-                }
-            } else if let Some(rest) = token.strip_prefix("m-") {
-                if let Some(px) = spacing(rest) {
-                    style.margin = Edges::all(px);
-                }
-            } else if let Some(rest) = token.strip_prefix("mx-") {
-                if let Some(px) = spacing(rest) {
-                    style.margin.left = Some(px);
-                    style.margin.right = Some(px);
-                }
-            } else if let Some(rest) = token.strip_prefix("my-") {
-                if let Some(px) = spacing(rest) {
-                    style.margin.top = Some(px);
-                    style.margin.bottom = Some(px);
-                }
-            } else if let Some(color) = token.strip_prefix("bg-").and_then(palette) {
-                style.background = Some(color);
-            } else if let Some(color) = token.strip_prefix("text-").and_then(palette) {
-                style.color = Some(color);
-            } else if let Some(color) = token.strip_prefix("border-").and_then(palette) {
-                style.border_color = Some(color);
+        _ => apply_prefixed(style, token),
+    }
+}
+
+fn set_width(style: &mut Style, size: SizeSpec) {
+    style.width = Some(size);
+    style.width_explicit = true;
+}
+
+fn set_height(style: &mut Style, size: SizeSpec) {
+    style.height = Some(size);
+    style.height_explicit = true;
+}
+
+fn apply_prefixed(style: &mut Style, token: &str) {
+    if let Some(rest) = token.strip_prefix("w-") {
+        if let Some(factor) = fraction(rest) {
+            set_width(style, SizeSpec::Rel { base: RelBase::Parent, factor });
+        }
+    } else if let Some(rest) = token.strip_prefix("h-") {
+        if let Some(factor) = fraction(rest) {
+            set_height(style, SizeSpec::Rel { base: RelBase::Parent, factor });
+        }
+    } else if let Some(rest) = token.strip_prefix("gap-x-") {
+        if let Some(px) = spacing(rest) {
+            style.gap_x = Some(px);
+        }
+    } else if let Some(rest) = token.strip_prefix("gap-y-") {
+        if let Some(px) = spacing(rest) {
+            style.gap_y = Some(px);
+        }
+    } else if let Some(rest) = token.strip_prefix("gap-") {
+        if let Some(px) = spacing(rest) {
+            style.gap = Some(px);
+        }
+    } else if let Some(rest) = token.strip_prefix("basis-") {
+        if let Some(px) = spacing(rest) {
+            style.flex.basis = Some(px);
+        }
+    } else if let Some(rest) = token.strip_prefix("grow-") {
+        if let Some(n) = rest.parse::<f64>().ok() {
+            style.flex.grow = Some(n);
+        }
+    } else if let Some(rest) = token.strip_prefix("shrink-") {
+        if let Some(n) = rest.parse::<f64>().ok() {
+            style.flex.shrink = Some(n);
+        }
+    } else if let Some(rest) = token.strip_prefix("min-w-") {
+        style.min_width = bound_token(rest);
+    } else if let Some(rest) = token.strip_prefix("max-w-") {
+        style.max_width = bound_token(rest);
+    } else if let Some(rest) = token.strip_prefix("min-h-") {
+        style.min_height = bound_token(rest);
+    } else if let Some(rest) = token.strip_prefix("max-h-") {
+        style.max_height = bound_token(rest);
+    } else if let Some(rest) = strip_edge(token, "p") {
+        apply_padding(style, rest.0, rest.1);
+    } else if let Some(rest) = strip_edge(token, "m") {
+        apply_margin(style, rest.0, rest.1);
+    } else if let Some(color) = token.strip_prefix("bg-").and_then(palette) {
+        style.background = Some(color);
+    } else if let Some(color) = token.strip_prefix("text-").and_then(palette) {
+        style.color = Some(color);
+    } else if let Some(color) = token.strip_prefix("border-").and_then(palette) {
+        style.border_color = Some(color);
+    }
+}
+
+fn strip_edge<'a>(token: &'a str, prefix: &str) -> Option<(&'a str, &'a str)> {
+    let rest = token.strip_prefix(prefix)?;
+    if let Some(n) = rest.strip_prefix("x-") {
+        return Some(("x", n));
+    }
+    if let Some(n) = rest.strip_prefix("y-") {
+        return Some(("y", n));
+    }
+    if let Some(n) = rest.strip_prefix("t-") {
+        return Some(("t", n));
+    }
+    if let Some(n) = rest.strip_prefix("r-") {
+        return Some(("r", n));
+    }
+    if let Some(n) = rest.strip_prefix("b-") {
+        return Some(("b", n));
+    }
+    if let Some(n) = rest.strip_prefix("l-") {
+        return Some(("l", n));
+    }
+    let n = rest.strip_prefix('-')?;
+    Some(("", n))
+}
+
+fn apply_padding(style: &mut Style, edge: &str, token: &str) {
+    let Some(px) = spacing(token) else {
+        return;
+    };
+    paint_edge(&mut style.padding, edge, px);
+}
+
+fn apply_margin(style: &mut Style, edge: &str, token: &str) {
+    let Some(px) = spacing(token) else {
+        return;
+    };
+    paint_edge(&mut style.margin, edge, px);
+}
+
+fn paint_edge(edges: &mut Edges, edge: &str, px: f64) {
+    match edge {
+        "" => *edges = Edges::all(px),
+        "x" => {
+            edges.left = Some(px);
+            edges.right = Some(px);
+        }
+        "y" => {
+            edges.top = Some(px);
+            edges.bottom = Some(px);
+        }
+        "t" => edges.top = Some(px),
+        "r" => edges.right = Some(px),
+        "b" => edges.bottom = Some(px),
+        "l" => edges.left = Some(px),
+        _ => {}
+    }
+}
+
+fn bound_token(token: &str) -> Option<Bound> {
+    match token {
+        "0" => Some(Bound::Px(0.0)),
+        "full" => Some(Bound::Full),
+        other => spacing(other).map(Bound::Px),
+    }
+}
+
+fn fraction(token: &str) -> Option<f64> {
+    let (num, den) = token.split_once('/')?;
+    let num: f64 = num.parse().ok()?;
+    let den: f64 = den.parse().ok()?;
+    if den == 0.0 {
+        return None;
+    }
+    Some(num / den)
+}
+
+#[derive(Clone, Copy)]
+enum Variant {
+    Hover,
+    Active,
+    Disabled,
+}
+
+fn apply_variant(style: &mut Style, variant: Variant, token: &str) {
+    let mut painted = Style::default();
+    apply_token(&mut painted, token);
+    match variant {
+        Variant::Hover => {
+            if painted.background.is_some() {
+                style.hover_bg = painted.background;
+            }
+            if painted.color.is_some() {
+                style.hover_fg = painted.color;
             }
         }
+        Variant::Active => {
+            if painted.background.is_some() {
+                style.active_bg = painted.background;
+            }
+            if painted.color.is_some() {
+                style.active_fg = painted.color;
+            }
+        }
+        Variant::Disabled => {
+            if painted.background.is_some() {
+                style.disabled_bg = painted.background;
+            }
+            if painted.color.is_some() {
+                style.disabled_fg = painted.color;
+            }
+        }
+    }
+}
+
+fn arbitrary<'a>(token: &'a str) -> Option<(&'a str, &'a str)> {
+    let (prefix, rest) = token.split_once("-[")?;
+    let value = rest.strip_suffix(']')?;
+    if prefix.is_empty() || value.is_empty() {
+        return None;
+    }
+    Some((prefix, value))
+}
+
+fn apply_arbitrary(style: &mut Style, prefix: &str, value: &str) {
+    match prefix {
+        "w" => {
+            if let Some(px) = parse_px(value) {
+                set_width(style, SizeSpec::Px(px));
+            }
+        }
+        "h" => {
+            if let Some(px) = parse_px(value) {
+                set_height(style, SizeSpec::Px(px));
+            }
+        }
+        "min-w" => style.min_width = parse_px(value).map(Bound::Px),
+        "max-w" => style.max_width = parse_px(value).map(Bound::Px),
+        "min-h" => style.min_height = parse_px(value).map(Bound::Px),
+        "max-h" => style.max_height = parse_px(value).map(Bound::Px),
+        "p" | "px" | "py" | "pt" | "pr" | "pb" | "pl" => {
+            if let Some(px) = parse_px(value) {
+                let edge = match prefix {
+                    "px" => "x",
+                    "py" => "y",
+                    "pt" => "t",
+                    "pr" => "r",
+                    "pb" => "b",
+                    "pl" => "l",
+                    _ => "",
+                };
+                paint_edge(&mut style.padding, edge, px);
+            }
+        }
+        "m" | "mx" | "my" | "mt" | "mr" | "mb" | "ml" => {
+            if let Some(px) = parse_px(value) {
+                let edge = match prefix {
+                    "mx" => "x",
+                    "my" => "y",
+                    "mt" => "t",
+                    "mr" => "r",
+                    "mb" => "b",
+                    "ml" => "l",
+                    _ => "",
+                };
+                paint_edge(&mut style.margin, edge, px);
+            }
+        }
+        "gap" => style.gap = parse_px(value),
+        "gap-x" => style.gap_x = parse_px(value),
+        "gap-y" => style.gap_y = parse_px(value),
+        "basis" => style.flex.basis = parse_px(value),
+        "rounded" => style.radius = parse_px(value),
+        "border" => style.border_width = parse_px(value),
+        "text" => {
+            if value.starts_with('#') {
+                style.color = parse_color(value);
+            } else {
+                style.font_size = parse_px(value);
+            }
+        }
+        "bg" => style.background = parse_color(value),
+        "border-color" => style.border_color = parse_color(value),
+        _ => {}
     }
 }
 
@@ -328,8 +732,16 @@ fn apply_inline(style: &mut Style, key: &str, value: &str) {
                 style.margin = Edges::all(px);
             }
         }
-        "width" => style.width = parse_size(value),
-        "height" => style.height = parse_size(value),
+        "width" => {
+            if let Some(size) = parse_size(value) {
+                set_width(style, size);
+            }
+        }
+        "height" => {
+            if let Some(size) = parse_size(value) {
+                set_height(style, size);
+            }
+        }
         _ => {}
     }
 }
@@ -352,16 +764,28 @@ fn parse_color(value: &str) -> Option<Rgba> {
         return Some(color);
     }
     let hex = value.trim().trim_start_matches('#');
+    if hex.len() == 3 {
+        let chars: Vec<char> = hex.chars().collect();
+        let expanded: String = chars.iter().flat_map(|ch| [*ch, *ch]).collect();
+        return parse_hex6(&expanded);
+    }
     if hex.len() == 6 {
-        if let (Ok(r), Ok(g), Ok(b)) = (
-            u8::from_str_radix(&hex[0..2], 16),
-            u8::from_str_radix(&hex[2..4], 16),
-            u8::from_str_radix(&hex[4..6], 16),
-        ) {
-            return Some(Rgba::new(r, g, b));
-        }
+        return parse_hex6(hex);
+    }
+    if hex.len() == 8 {
+        return parse_hex6(&hex[..6]);
     }
     None
+}
+
+fn parse_hex6(hex: &str) -> Option<Rgba> {
+    if hex.len() != 6 {
+        return None;
+    }
+    let r = u8::from_str_radix(&hex[0..2], 16).ok()?;
+    let g = u8::from_str_radix(&hex[2..4], 16).ok()?;
+    let b = u8::from_str_radix(&hex[4..6], 16).ok()?;
+    Some(Rgba::new(r, g, b))
 }
 
 #[cfg(test)]
@@ -388,5 +812,107 @@ mod tests {
         assert_eq!(style.color, Some(Rgba::new(0x1c, 0x19, 0x17)));
         assert_eq!(style.font_size, Some(20.0));
         assert_eq!(style.width, Some(SizeSpec::Fill));
+    }
+
+    #[test]
+    fn p0_layout_utilities() {
+        let style = parse_classes(
+            "flex flex-wrap gap-2 gap-y-4 justify-between items-center self-end flex-1 shrink-0 basis-4 min-w-8 max-w-full min-h-0 max-h-16 w-1/2 h-screen",
+        );
+        assert_eq!(style.flow, Some(FlowSpec::Row));
+        assert!(style.wrap);
+        assert_eq!(style.gap, Some(8.0));
+        assert_eq!(style.gap_y, Some(16.0));
+        assert_eq!(style.distribute, Some(DistributeSpec::Between));
+        assert_eq!(style.cross_align, Some(CrossAlign::Center));
+        assert_eq!(style.align_self, Some(CrossAlign::End));
+        assert_eq!(style.flex.grow, Some(1.0));
+        assert_eq!(style.flex.shrink, Some(0.0));
+        assert_eq!(style.flex.basis, Some(16.0));
+        assert_eq!(style.min_width, Some(Bound::Px(32.0)));
+        assert_eq!(style.max_width, Some(Bound::Full));
+        assert_eq!(style.min_height, Some(Bound::Px(0.0)));
+        assert_eq!(style.max_height, Some(Bound::Px(64.0)));
+        assert_eq!(
+            style.width,
+            Some(SizeSpec::Rel { base: RelBase::Parent, factor: 0.5 })
+        );
+        assert_eq!(
+            style.height,
+            Some(SizeSpec::Rel { base: RelBase::Vh, factor: 1.0 })
+        );
+        assert!(style.width_explicit && style.height_explicit);
+    }
+
+    #[test]
+    fn per_side_spacing_and_arbitrary_values() {
+        let style = parse_classes("px-4 py-2 mt-1 mr-3 ml-2 mb-5 mx-1");
+        assert_eq!(style.padding.left, Some(16.0));
+        assert_eq!(style.padding.right, Some(16.0));
+        assert_eq!(style.padding.top, Some(8.0));
+        assert_eq!(style.padding.bottom, Some(8.0));
+        assert_eq!(style.margin.top, Some(4.0));
+        assert_eq!(style.margin.bottom, Some(20.0));
+        assert_eq!(style.margin.left, Some(4.0));
+        assert_eq!(style.margin.right, Some(4.0));
+        let arb = parse_classes("w-[13px] bg-[#1e293b] text-[#fff] p-[10px] m-[6px]");
+        assert_eq!(arb.width, Some(SizeSpec::Px(13.0)));
+        assert_eq!(arb.background, Some(Rgba::new(0x1e, 0x29, 0x3b)));
+        assert_eq!(arb.color, Some(Rgba::new(255, 255, 255)));
+        assert_eq!(arb.padding, Edges::all(10.0));
+        assert_eq!(arb.margin, Edges::all(6.0));
+    }
+
+    #[test]
+    fn hover_active_and_disabled_colors_stay_separate() {
+        let style = parse_classes("bg-stone-900 hover:bg-amber-600 active:bg-amber-700 disabled:bg-slate-100 disabled:text-slate-600 hover:text-white");
+        assert_eq!(style.background, Some(Rgba::new(28, 25, 23)));
+        assert_eq!(style.hover_bg, Some(Rgba::new(217, 119, 6)));
+        assert_eq!(style.active_bg, Some(Rgba::new(180, 83, 9)));
+        assert_eq!(style.disabled_bg, Some(Rgba::new(241, 245, 249)));
+        assert_eq!(style.disabled_fg, Some(Rgba::new(71, 85, 105)));
+        assert_eq!(style.hover_fg, Some(Rgba::new(255, 255, 255)));
+        assert!(!style.disabled);
+        assert!(parse_classes("disabled").disabled);
+    }
+
+    #[test]
+    fn wrap_column_grow_and_the_other_distributes() {
+        let column = parse_classes("flex-col flex-wrap");
+        assert_eq!(column.flow, Some(FlowSpec::Column));
+        assert!(column.wrap);
+        assert!(!parse_classes("flex-wrap flex-nowrap").wrap);
+        let around = parse_classes("justify-around");
+        assert_eq!(around.distribute, Some(DistributeSpec::Around));
+        let evenly = parse_classes("justify-evenly");
+        assert_eq!(evenly.distribute, Some(DistributeSpec::Evenly));
+        let cross = parse_classes("items-stretch items-end self-stretch");
+        assert_eq!(cross.cross_align, Some(CrossAlign::End));
+        assert_eq!(cross.align_self, Some(CrossAlign::Stretch));
+        assert_eq!(parse_classes("self-start").align_self, Some(CrossAlign::Start));
+        assert_eq!(parse_classes("self-center").align_self, Some(CrossAlign::Center));
+        let grow = parse_classes("grow shrink w-screen gap-x-3");
+        assert_eq!(grow.flex.grow, Some(1.0));
+        assert_eq!(grow.flex.shrink, Some(1.0));
+        assert_eq!(
+            grow.width,
+            Some(SizeSpec::Rel {
+                base: RelBase::Vw,
+                factor: 1.0
+            })
+        );
+        assert_eq!(grow.gap_x, Some(12.0));
+        assert_eq!(grow.main_gap(), Some(12.0));
+        assert_eq!(parse_classes("gap-y-1").cross_gap(), Some(4.0));
+    }
+
+    #[test]
+    fn three_digit_hex_and_fractions() {
+        let style = parse_classes("bg-[#abc] w-2/3 w-1/4");
+        assert_eq!(style.background, Some(Rgba::new(0xaa, 0xbb, 0xcc)));
+        assert_eq!(
+            style.width,
+            Some(SizeSpec::Rel { base: RelBase::Parent, factor: 0.25 })
+        );
     }
 }

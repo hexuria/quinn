@@ -9,6 +9,7 @@ struct Item {
 #[component]
 fn Row(item: Item) -> impl IntoView {
     let (count, set_count) = signal(0i32);
+    let (open, set_open) = signal(false);
     let label = item.label;
     view! {
         <div class="flex flex-row gap-4 items-center">
@@ -16,6 +17,10 @@ fn Row(item: Item) -> impl IntoView {
             <button on:click=move |_| { set_count.update(|n| *n += 1); }>
                 {move || count.get()}
             </button>
+            <button on:click=move |_| { set_open.update(|v| *v = !*v); }>"Note"</button>
+            <Show when=move || open.get()>
+                <h2 class="text-sm text-amber-700">"row note"</h2>
+            </Show>
         </div>
     }
 }

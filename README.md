@@ -42,7 +42,7 @@ export LIBGL_ALWAYS_SOFTWARE=1
 cargo run -p counter --release -- --hot
 ```
 
-Edit `examples/counter/view.rs` while that process is up. The same command works for `conditional`, `keyed-list`, `form`, and `retain`. Saving `src/main.rs` still rebuilds. `baseline-counter` and `probe-widget-lifecycle` are hand-written Makepad programs; they have no `view.rs`.
+Edit `examples/counter/view.rs` while that process is up. The same command works for `conditional`, `keyed-list`, `form`, `retain`, and `tailwind-gallery`. Saving `src/main.rs` still rebuilds. `baseline-counter` and `probe-widget-lifecycle` are hand-written Makepad programs; they have no `view.rs`.
 
 `xvfb-run -a cargo run -p counter --release` still starts a window when you are not reloading. Drop `xvfb-run -a` if `DISPLAY` is already a real X server. On macOS, leave both GPU variables unset and follow [docs/TESTING_ON_MACOS.md](docs/TESTING_ON_MACOS.md).
 
@@ -68,7 +68,7 @@ Other harness variables, read by `counter` and `baseline-counter`:
 - `crates/macros` — `view!`, `#[component]`, `run!`
 - `crates/makepad` — the only renderer
 - `crates/quinn` — what applications import
-- `examples/` — counter, conditional, keyed list, form, retain, and a Makepad baseline. The baseline keeps the button and the label inside a `height: Fill` client view, with light text on a dark button, so neither sits in the title band.
+- `examples/` — counter, conditional, keyed list, form, retain, Tailwind gallery, and a Makepad baseline. The gallery is the P0 utilities (wrap, distribute, row align, flex weight, fractions, per-side spacing, arbitrary values, `class:`, button hover, and a show inside a row). The baseline keeps the button and the label inside a `height: Fill` client view, with light text on a dark button, so neither sits in the title band.
 - `probes/widget-lifecycle` — the Makepad tree experiment
 - `docs/` — research, architecture, decisions, compatibility, benchmarks, roadmap, macOS checklist
 

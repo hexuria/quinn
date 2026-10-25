@@ -7,6 +7,7 @@
 
 mod emit;
 mod extract;
+mod handler;
 mod model;
 mod parse;
 mod sim;
@@ -16,7 +17,10 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 pub use extract::extract_hot_script;
-pub use model::{Act, El, Init, ItemSeed, Model, Part, Signal, ViewNode};
+pub use model::{
+    Act, BinOp, ClassWhen, El, HandlerStmt, HxExpr, Init, ItemSeed, Model, Part, Signal, StyleWhen,
+    ViewNode,
+};
 pub use sim::Sim;
 
 #[derive(Clone, Copy, Debug)]
@@ -420,6 +424,8 @@ mod tests {
             ("examples/keyed-list/view.rs", "fn quinn_row(id, label)"),
             ("examples/form/view.rs", "state.name = text"),
             ("examples/retain/view.rs", "fn quinn_retain_step"),
+            ("examples/tailwind-gallery/view.rs", "Distribute.SpaceBetween"),
+            ("examples/keyed-list/view.rs", "row_quinn_show_open_1"),
         ];
         for (rel, needle) in cases {
             let source = std::fs::read_to_string(root.join(rel))
@@ -433,5 +439,201 @@ mod tests {
             assert!(extracted.code.contains("#(0)"), "{rel}");
             assert_eq!(extracted.code.matches("script_mod").count(), 0);
         }
+    }
+
+    const P0: &str = r#"
+        struct Item { id: u64, label: String, }
+        #[component]
+        fn Row(item: Item) -> impl IntoView {
+            let (count, set_count) = signal(0i32);
+            let (open, set_open) = signal(false);
+            let label = item.label;
+            view! {
+                <div class="flex flex-row items-center gap-2">
+                    <span>{label}</span>
+                    <button on:click=move |_| { set_open.update(|v| *v = !*v); }>"Note"</button>
+                    <Show when=move || open.get()>
+                        <h2>"open"</h2>
+                    </Show>
+                    <button on:click=move |_| { set_count.update(|n| *n += 1); }>
+                        {move || count.get()}
+                    </button>
+                </div>
+            }
+        }
+        #[component]
+        fn Gallery() -> impl IntoView {
+            let (count, set_count) = signal(0);
+            let (flag, set_flag) = signal(false);
+            let (name, set_name) = signal(String::new());
+            let (items, set_items) = signal(vec![
+                Item { id: 1, label: "Alpha".into() },
+                Item { id: 2, label: "Beta".into() },
+            ]);
+            let (next_id, set_next) = signal(3u64);
+            view! {
+                <div class="flex flex-col gap-2 p-2">
+                    <div class="flex flex-row flex-wrap gap-x-3 gap-y-4 justify-between items-center">
+                        <span class="self-end w-1/2 min-w-8 max-w-full">"half"</span>
+                        <span class="flex-1 shrink-0 basis-4">"basis"</span>
+                        <span class="grow">"grow"</span>
+                    </div>
+                    <div class="flex flex-col justify-around items-stretch">
+                        <span class="self-center">"mid"</span>
+                        <span class="self-start w-screen min-h-0 max-h-16">"screen"</span>
+                        <span>"stretched"</span>
+                    </div>
+                    <div class="justify-evenly px-4 py-2 pt-1 pr-2 pb-3 pl-4 mx-1 my-2 mt-1 mr-2 mb-3 ml-4">
+                        <div class="w-[13px] h-[13px] bg-[#1e293b] p-[10px] m-[6px]"><span class="text-[#fff]">"arb"</span></div>
+                    </div>
+                    <span class="h-screen">"tall"</span>
+                    <button class="bg-stone-900 hover:bg-amber-600 active:bg-amber-700 hover:text-white" on:click=move |_| {
+                        set_count.update(|n| *n += 2);
+                        set_count.update(|n| *n -= 1);
+                        set_count.update(|n| *n *= 3);
+                        set_count.update(|n| *n /= 2);
+                        set_flag.update(|v| *v = !*v);
+                        set_name.set("Ada".to_string());
+                    }>"Paint"</button>
+                    <button class="disabled disabled:bg-slate-100 disabled:text-slate-600">"Off"</button>
+                    <div class:bg-amber-100=move || flag.get() style:width=move || if flag.get() { "120px" } else { "40px" }>"swatch"</div>
+                    <For each=move || items.get() key=|item| item.id let:item>
+                        <Row item=item />
+                    </For>
+                    <button on:click=move |_| {
+                        let id = next_id.get();
+                        set_next.set(id + 1);
+                        set_items.update(|rows| { rows.push(Item { id, label: format!("Item {id}") }); });
+                    }>"Add"</button>
+                    <button on:click=move |_| { set_items.update(|rows| { rows.pop(); }); }>"Pop"</button>
+                    <button on:click=move |_| { set_items.update(|rows| { rows.reverse(); }); }>"Reverse"</button>
+                    <button on:click=move |_| { set_items.update(|rows| { rows.swap(1, 2); }); }>"Swap"</button>
+                    <button on:click=move |_| { set_items.update(|rows| { rows.remove(2); }); }>"Remove"</button>
+                    <button on:click=move |_| {
+                        set_items.update(|rows| { rows.push(Item { id: 2, label: "Beta".into() }); });
+                    }>"Readd"</button>
+                </div>
+            }
+        }
+    "#;
+
+    #[test]
+    fn p0_utilities_and_handlers_lower_to_script() {
+        let file = lower_file(P0, shell()).unwrap_or_else(|err| panic!("{err}"));
+        let needles = [
+            "Flow.Right{wrap: true row_align: RowAlign.Center}",
+            "wrap_spacing: 16.",
+            "spacing: 12.",
+            "distribute: Distribute.SpaceBetween",
+            "distribute: Distribute.SpaceAround",
+            "distribute: Distribute.SpaceEvenly",
+            "RowAlign.Bottom",
+            "align: Align{x: 0.5 y: 0.}",
+            "Fill{weight: 1. shrink: 0. basis: 16.}",
+            "Fill{weight: 1. shrink: 0. basis: 0.}",
+            "Rel{base: Base.Parent factor: 0.5}",
+            "Rel{base: Base.Vw factor: 1.}",
+            "Rel{base: Base.Vh factor: 1.}",
+            "min_width: 32.",
+            "max_width: \"100%\"",
+            "min_height: 0.",
+            "max_height: 64.",
+            "Inset{left: 16. top: 4. right: 8. bottom: 12.}",
+            "width: 13.",
+            "height: 13.",
+            "padding: 10.",
+            "margin: 6.",
+            "draw_bg.color: #x1e293b",
+            "draw_text.color: #xffffff",
+            "draw_bg.color_hover: #xd97706",
+            "draw_bg.color_down: #xb45309",
+            "draw_text.color_hover: #xffffff",
+            "enabled: false",
+            "draw_bg.disabled: 1.",
+            "draw_bg.color_disabled:",
+            "draw_text.color_disabled:",
+            "if state.flag { #xfef3c7 } else { #x000000 }",
+            "if state.flag { 120. } else { 40. }",
+            "state.count = state.count + 2",
+            "state.count = state.count - 1",
+            "state.count = state.count * 3",
+            "state.count = state.count / 2",
+            "state.flag = !state.flag",
+            "state.name = \"Ada\"",
+            "quinn_row_reset(",
+            "state.items.pop()",
+            "fn quinn_reverse",
+            "quinn_swap_key(state.items, 1, 2)",
+            "quinn_remove_key(state.items, 2)",
+            "fn quinn_row(id, label)",
+            "fn row_quinn_show_open_1(id, label)",
+            "state.r_open[key] = state.r_open[key] != true",
+            "quinn_row_bump(id)",
+            "r_open: {}",
+            "r_show_open_live: {}",
+        ];
+        for needle in needles {
+            assert!(file.contains(needle), "missing {needle}:\n{file}");
+        }
+        assert_eq!(file.matches("color_hover").count(), 2);
+        assert!(!file.contains("draw_bg.color_hover: #x1c1917"));
+    }
+
+    #[test]
+    fn show_inside_a_row_resets_when_the_row_is_readded() {
+        let mut sim = Sim::new(parse_model(P0).unwrap());
+        assert_eq!(sim.item_ids(), vec![1, 2]);
+        assert!(!sim.visible("row:2:h2"));
+        assert!(sim.click("row:2:toggle"));
+        assert!(sim.visible("row:2:h2"));
+        assert!(sim.click_row(2));
+        assert_eq!(sim.row_count(2), 1);
+        assert!(sim.click("row:2:toggle"));
+        assert!(!sim.visible("row:2:h2"));
+        assert_eq!(sim.row_count(2), 1);
+        assert!(sim.click("swap"));
+        assert_eq!(sim.item_ids(), vec![2, 1]);
+        assert_eq!(sim.row_count(2), 1);
+        assert!(sim.click("remove"));
+        assert_eq!(sim.item_ids(), vec![1]);
+        assert!(!sim.click_row(2));
+        assert_eq!(sim.row_count(2), 1);
+        assert!(sim.click("readd"));
+        assert_eq!(sim.item_ids(), vec![1, 2]);
+        assert_eq!(sim.row_count(2), 0);
+        assert!(!sim.visible("row:2:h2"));
+        assert!(sim.click("paint"));
+        assert_eq!(sim.state["count"], 1);
+        assert_eq!(sim.state["flag"], 1);
+        assert_eq!(sim.strings["name"], "Ada");
+        assert!(sim.click("pop"));
+        assert_eq!(sim.item_ids(), vec![1]);
+        assert!(sim.click("reverse"));
+        assert_eq!(sim.item_ids(), vec![1]);
+        assert!(sim.click("add"));
+        assert_eq!(sim.item_label(3), "Item 3");
+        assert_eq!(sim.row_count(3), 0);
+    }
+
+    #[test]
+    fn handler_outside_the_closed_set_is_a_compile_error() {
+        let source = r#"
+            #[component]
+            fn Bad() -> impl IntoView {
+                let (count, set_count) = signal(0);
+                let (items, set_items) = signal(vec![Item { id: 1, label: "Alpha".into() }]);
+                view! {
+                    <div>
+                        <button on:click=move |_| { set_count.update(|n| { n.pow(2); }); }>"Bad"</button>
+                        <button on:click=move |_| { set_items.update(|rows| { rows.clear(); }); }>"Clear"</button>
+                    </div>
+                }
+            }
+        "#;
+        let err = parse_model(source).unwrap_err();
+        assert!(
+            err.contains("cannot lower"),
+            "{err}"
+        );
     }
 }

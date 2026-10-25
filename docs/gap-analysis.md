@@ -1,6 +1,6 @@
 # Gap analysis
 
-Analysis only. Nothing here is implemented. Status is against the running UI: `view.rs` lowered to Makepad script (`hot/ui.rs`, `mod.state`, `on_render`). The headless Rust graph (`quinn-core`, `MemorySurface`, `reactive_graph`) is named when it can do something the window cannot.
+P0 from section 4 is implemented. P1 and P2 are not. Status is against the running UI: `view.rs` lowered to Makepad script (`hot/ui.rs`, `mod.state`, `on_render`). The headless Rust graph (`quinn-core`, `MemorySurface`, `reactive_graph`) is named when it can do something the window cannot.
 
 Sources checked in this tree and in the pinned Makepad checkout `44ecb822`:
 
@@ -11,7 +11,7 @@ Sources checked in this tree and in the pinned Makepad checkout `44ecb822`:
 - Text and draw: `draw/src/shader/draw_text.rs` (`TextStyle`, `FontMember.weight`), `widgets/core/src/button.rs` (hover/down animator uniforms)
 - Leptos 0.8.0 release notes (https://github.com/leptos-rs/leptos/releases/tag/v0.8.0). 0.8 keeps the 0.7 authoring model. The additions that matter here are store fields implementing `IntoClass` / `IntoStyle` / `AttributeValue`, `Suspend::new` accepting `IntoFuture`, and websocket server functions. Quinn's `reactive_graph` pin is `5ca3a9bf` (`docs/compatibility.md`), the 0.7-era graph, and the examples do not execute it.
 
-`docs/research.md` describes an earlier turtle (row, column, spacing, padding, `Align`, `Fill`/`Fit`/`Fixed`). The pin is past that. Wrap, overlay, `abs_pos`, fill weight/shrink/basis, `Distribute`, min/max, relative sizes, and a `Grid` widget are in `44ecb822`. Quinn does not emit them.
+`docs/research.md` describes an earlier turtle (row, column, spacing, padding, `Align`, `Fill`/`Fit`/`Fixed`). The pin is past that. Wrap, overlay, `abs_pos`, fill weight/shrink/basis, `Distribute`, min/max, relative sizes, and a `Grid` widget are in `44ecb822`. Quinn now emits the P0 slice of that (wrap on a row, `Distribute`, `RowAlign`, fill weight/shrink/basis, min/max, `Size::Rel`). Overlay, `abs_pos`, and the `Grid` widget are still not emitted.
 
 ## 1. Leptos syntax parity
 
@@ -43,7 +43,7 @@ Legend: **supported** means a `view.rs` the lowerer accepts and a running exampl
 
 | Feature | Status | On a script runtime |
 | --- | --- | --- |
-| `<Show when>` | Partial | Works at the host: two functions, `_on` returns the child, `_off` returns `0` (`emit.rs`). A statement `if` in `on_render` unbalances the script stack, which is why it is functions. Fallback is the off branch, not a `<Show fallback>`. A `<Show>` inside a `<For>` row is parsed and emitted wrong: the row function uses an empty show cursor (`emit.rs`). Fixing that is medium (show sites per row, resets keyed by row id). |
+| `<Show when>` | Partial | Works at the host and inside a `<For>` row. Two functions: `_on` returns the child, `_off` returns `0`. A statement `if` in `on_render` unbalances the script stack, which is why it is functions. Fallback is the off branch, not a `<Show fallback>`. A row show is `row_quinn_show_<signal>_<n>(id, …)` and its flag lives on `state.r_<flag>["k"+id]`. Removing a row does not clear that id; pushing the id again calls `quinn_row_reset`. |
 | `<For each key let>` | Partial | Keyed counts live on `state.counts["k"+id]` because anonymous children match by index (`docs/architecture.md`). The row template is one element. Add, pop, and reverse are hard-coded actions. A general `each()` closure is not. Indexed `For` without a key would be the same loop and would lose per-row state on reorder, which is the turtle's behavior, not a bug to paper over. |
 | `<Suspense>` / `<Transition>` | Missing | Needs the resource bridge above. The widget can be a `<Show>` on a loaded flag. The async part is the large piece. |
 | `<ErrorBoundary>` | Missing | A script error aborts the render (`View::render` discards a failed `on_render`). Catching that and drawing a fallback is a host change around `script_eval` / `render`, not a component the lowerer can fake. Medium, and it will not catch a Rust panic in the shell. |
@@ -54,9 +54,9 @@ Legend: **supported** means a `view.rs` the lowerer accepts and a running exampl
 
 | Feature | Status | On a script runtime |
 | --- | --- | --- |
-| `class="..."` and `style="..."` | Partial | Static strings only. Unknown utilities are ignored (`crates/styles/src/lib.rs`). `class:` and `style:` (the reactive forms) are rejected as unknown attributes (`parse.rs`). A boolean class is `if state.flag { "bg-white" } else { "" }` inside the class string the lowerer already parses, then the same `parse_classes` result. Small. |
+| `class="..."` and `style="..."` | Partial | Static strings, `class:token=move \|\| flag.get()`, and `style:prop=move \|\| if flag.get() { "a" } else { "b" }`. Unknown utilities are ignored. `class:` toggles one utility against the static style. `style:` requires two literals; a runtime string is a compile error. |
 | `prop:` / `attr:` | Missing | There is no DOM attribute map. A known prop (`placeholder`, `value`) is already a dedicated attribute. Anything else needs a named script field on that widget. Per-widget allowlist, small for each widget, not a general `attr:` namespace. |
-| `on:` with event types | Partial | `on:click`, `on:input`, and `on:change` only, and the closure body must be one of increment, toggle, clear, pop, reverse, push, or row increment (`parse.rs`). `MouseEvent` does not exist. Makepad gives the button no event object; `TextInput` passes the string. New gestures (keyboard, pointer position) need a Makepad handler that exists on that widget, then a lowerer pattern. Medium per gesture. |
+| `on:` with event types | Partial | `on:click`, `on:input`, and `on:change` only. A click body may be several statements: set or update a signal with `+ - * /`, boolean not, or a string, and push, pop, reverse, swap, or remove a list by item id. Anything else is a compile error (`cannot lower`). `MouseEvent` does not exist. Makepad gives the button no event object; `TextInput` passes the string. |
 | `bind:value` | Partial | The form is `value=` plus `on:input` writing the same signal (`examples/form/view.rs`). `on_change` calls `root.render()` because `TextInput` uses `vm.call` with no widget uid (`docs/decisions.md`). The string survives. The caret can jump because `render()` rewrites `text`. A true bind that does not call `render` on each keystroke needs a way to set the heading without reapplying the input. Medium, and it is a Makepad text API question. |
 | `node_ref` | Missing | Script widgets already have names (`h1 := H1`). A ref is that name, read back with `script_eval!` as `ui.host.h1`. Exposing it as a Rust `NodeRef` crosses back into the shell and does not hot-reload. Small as a script name; a Rust ref is the wrong direction. |
 | Spread `{..attrs}` | Missing | No attribute bag. Would be a script object merged into the widget literal. Medium, and only keys the lowerer knows survive. |
@@ -74,15 +74,15 @@ Legend: **supported** means a `view.rs` the lowerer accepts and a running exampl
 
 Quinn's parser is a closed utility list (`crates/styles/src/lib.rs`). "Supported" means that list emits something today. "Feasible" means `44ecb822` can do it and Quinn does not emit it. "New capability" means it is not a turtle walk, not the `Grid` widget, and not an existing draw uniform.
 
-`flex` / `flex-row` emit `flow: Right`. `flex-col` emits `flow: Down` (`emit.rs` `flow_line`). `items-*` and `justify-*` both become `align: Align{x y}` (`align_line`). That `Align` is one fraction of leftover space added to every walk (`turtle.rs` `Align`, around line 2939). It is not per-item `align-items`. `RowAlign` (`turtle.rs` line 3009) is the per-item cross-axis and is what `items-center` on a row should use. Quinn never emits it.
+`flex` / `flex-row` emit `flow: Right`. `flex-col` emits `flow: Down`. `justify-start|center|end` is `Align{x y}` on the main axis. `items-center|start|end` on a row is `RowAlign` (`turtle.rs` line 3009), not `Align.y`. `Align` is still one fraction of leftover space (`turtle.rs` around line 2939) and is what a column uses for `items-*`.
 
 | Category | Status | Maps to | What it would take |
 | --- | --- | --- | --- |
 | Layout: row and column | Supported | `Layout.flow` `Flow::Right` / `Flow::Down` (`turtle.rs` 2959) | Already emitted. |
-| Layout: wrap | Feasible | `Flow::Right { wrap: true }`, `Layout.wrap_spacing` (`flow_right_wrap`, line 2785) | Parser plus one script field. No new engine. |
-| Layout: flex grow / shrink / basis | Feasible | `Size::Fill { weight, basis, shrink, min, max }` (`turtle.rs` 311). Quinn's `Fill` is the bare identifier, default weight 100, shrink 0. | Emit the fields. Equal `w-full` siblings already share weight 100, which is a crude `flex-grow: 1` for every fill child, not a per-item factor. |
-| Layout: space-between / around / evenly | Feasible | `Distribute` (`turtle.rs` 3036): `SpaceBetween`, `SpaceAround`, `SpaceEvenly`. Quinn has no `justify-between`. | One `Layout.distribute` field. This is main-axis slack between walks, not a second flex pass. |
-| Layout: per-item cross alignment | Feasible, current mapping is wrong for mixed heights | `RowAlign::Center` / `Bottom` / `Baseline` | Stop using `Align.y` as `items-center`. Emit `flow: Right { row_align: Center, wrap: false }`. |
+| Layout: wrap | Supported on a row | `Flow::Right { wrap: true }`, `Layout.wrap_spacing` (`flow_right_wrap`, line 2785) | Emitted. `Flow::Down` has no wrap, so a column does not wrap. |
+| Layout: flex grow / shrink / basis | Supported | `Size::Fill { weight, basis, shrink, min, max }` (`turtle.rs` 311). Bare `Fill` is still weight 100, shrink 0. `flex-1` / `grow` / `shrink` / `basis-*` emit the fields. | Done for the main axis. |
+| Layout: space-between / around / evenly | Supported | `Distribute` (`turtle.rs` 3036): `SpaceBetween`, `SpaceAround`, `SpaceEvenly`. | Emitted. Main-axis slack between walks, not a second flex pass. |
+| Layout: per-item cross alignment | Supported for start/center/end | `RowAlign::Center` / `Bottom` / `Top` | Emitted on rows. Stretch is cross-axis `Fill`, because `RowAlign` has no stretch. |
 | Layout: grid | Feasible, not on the turtle | `widgets/core/src/grid.rs`: `columns` / `rows` as `TrackLen::Px`, `Pct`, `Fr`, gaps, `auto_flow`, `areas`, `justify_items`, `align_items`. `Walk.cell` is ignored by other flows (`turtle.rs` line 125). | Lower a grid container to `Grid { ... }`. The widget is in `makepad-widgets`, which Quinn already links. Subgrid and masonry are not on that struct. |
 | Layout: absolute / inset | Feasible for a point, not the CSS inset box | `Walk.abs_pos: Option<Vec2d>` (`turtle.rs` 96). Tests place a walk at a point (around line 831). | `left`/`top` can set `abs_pos`. All four insets (stretch between left and right) are not one field. That is a size computation in the lowerer, or a missing layout rule. |
 | Layout: z-index | New capability | Paint order is child order. `Flow::Overlay` stacks walks (`flow_overlay`, line 2803). No z field was found on `Walk` or `Layout`. | Reorder children, or overlay. A numeric z-index that sorts independently of source order is new. |
@@ -101,7 +101,7 @@ Quinn's parser is a closed utility list (`crates/styles/src/lib.rs`). "Supported
 | Shadows | Feasible in a shader | `draw_vector.rs` `shadow_rounded_rect` (gaussian SDF). Not wired to `RoundedView`. | A shadow utility is a shader on the view, or an extra draw behind it. It is not layout. Medium because the view prototype Quinn emits has no shadow input. |
 | Transforms | New capability for CSS transforms | No `transform` field on `Walk`. Overlay and `abs_pos` move a walk. Scale and rotate are draw-matrix work (`draw_text.rs` has a mat helper near line 3530 used by glyphs, not a widget transform). | `translate` can be `abs_pos` or a margin. `scale` / `rotate` need a draw transform inherited by children. That is new. |
 | Transitions, animation | Feasible for widget animators | `Button` ramps `hover` and `down` with `anim_time` (`widgets/core/src/button.rs` around 362). `View` has an `Animator` (`view.rs`). | A duration utility can drive an animator Quinn does not currently set. CSS `@keyframes` and transition-all are not that animator. |
-| States: hover, focus, active, disabled | Feasible on widgets that already have them | Button `color_hover`, `color_down`, `disabled` (`button.rs`). Quinn copies one color into all four button states so the face does not change (`emit.rs` button colors). | Stop flattening those uniforms. `hover:` as a class means a second color in the widget's animator, not a CSS pseudo-class on a `div`. A plain `RoundedView` hover needs the view animator turned on. Medium. |
+| States: hover, focus, active, disabled | Partial | Button `color_hover`, `color_down`, `color_disabled` (`button.rs`). Quinn emits them when `hover:` / `active:` / `disabled:` is present and does not copy the face color. A bare `disabled` sets the disabled mix. | `focus:` is still unset. A `div` hover still needs the view animator. |
 | Responsive breakpoints | New capability as CSS, feasible as a signal | No media-query type in the turtle. `Size::Rel` viewport units are not breakpoints. | `state.wide` set from the window size in the shell, then the same `if` the lowerer uses for text. The shell does not report size today. Medium, and it is not `md:`. |
 | Dark mode | Feasible as a signal | No color scheme in the turtle. | `state.dark` picked by the shell, two colors in the class string. Small once `class:` exists. It will not follow the OS unless the shell reads it. |
 | Arbitrary values `w-[13px]`, `bg-[#abc]` | Missing | The inline parser already accepts `width: 13px` and `#rrggbb` (`parse_inline`). | Accept `w-[13px]` in `apply_token`. Small. `bg-[url(...)]` is not a color and stays missing. |
@@ -115,7 +115,7 @@ Quinn does not use Taffy.
 - `Cargo.lock` has no `taffy` dependency.
 - `docs/architecture.md`: "No Taffy".
 - `docs/decisions.md` records leptos-native's Taffy and rejects it because the turtle covered the milestone's subset.
-- Emitted layout is `flow: Down` or `flow: Right`, `spacing`, `padding`, and `Align{x y}` (`emit.rs`).
+- Emitted layout is flow, spacing, wrap spacing, padding and margin as `Inset` or a number, `Align`, `Distribute`, `RowAlign`, and walk size (`emit.rs`).
 
 The turtle is the layout engine. It walks children in one pass and resolves `Size` (`draw/src/turtle.rs`, the comment at `Layout` line 2733: "Specifies how walks should be laid out with respect to each other").
 
@@ -123,10 +123,10 @@ What the turtle cannot do, from the fields that exist and the ones that do not:
 
 | CSS / Tailwind | In the pin? |
 | --- | --- |
-| `flex-wrap` | Yes. `Flow::Right { wrap: true }`. Quinn does not emit it. |
-| `flex-grow` / `flex-shrink` / `flex-basis` | Yes, as `Size::Fill`'s `weight`, `shrink`, and `basis`. Not per-child in Quinn's output. |
-| `justify-between` and the space-* distributions | Yes, as `Distribute`. Not emitted. |
-| `align-items` for mixed heights | Yes, as `RowAlign`. Quinn's `Align` fraction is a weaker substitute. |
+| `flex-wrap` | Yes. Emitted as `Flow::Right { wrap: true }` and `wrap_spacing`. Not on `Flow::Down`. |
+| `flex-grow` / `flex-shrink` / `flex-basis` | Yes. Emitted as `Fill { weight, shrink, basis }` on the main axis. |
+| `justify-between` and the space-* distributions | Yes. Emitted as `Distribute`. |
+| `align-items` for mixed heights | Yes. Emitted as `RowAlign` on a row. Stretch is cross-axis `Fill`. |
 | `align-content` (packing wrapped lines on the cross axis) | No field on `Layout`. `wrap_spacing` is a constant gap, not `align-content: space-between`. |
 | CSS grid | Not a turtle flow. `Walk.cell` is ignored unless a grid consumer reads it. `widgets/core` `Grid` is a separate widget with `fr` tracks, spans, and named areas. No subgrid, no `minmax()` as a first-class track (tracks are px, percent, fr, or a size expression). |
 | Absolute positioning with a containing block and all four insets | `abs_pos` is one point. There is no `position: absolute; left: 0; right: 0` rule. |
@@ -147,16 +147,27 @@ Extending the turtle upstream is justified only for the holes: `align-content` o
 
 Sizes are scope, not a schedule. Small: parser and emitter, turtle fields that already exist. Medium: new script patterns, tests, and a widget the lowerer does not emit yet. Large: a runtime beside the script VM, or an upstream turtle change.
 
-### P0 — the utilities and syntax the current examples are already asking for
+### P0 — done
 
-| Item | Size | Why first |
-| --- | --- | --- |
-| Emit turtle features the pin already has: wrap, `Distribute`, `RowAlign`, fill weight/shrink/basis, min/max, `Size::Rel` for fractions and viewport | Small | Corrects `items-center` and unlocks `flex-wrap`, `justify-between`, `w-1/2`, `flex-grow` without a new engine. |
-| Per-side `Inset` padding and margin (today non-uniform padding is dropped) | Small | `px-4` is parsed and then thrown away. |
-| `class:` / `style:` as script `if` expressions, plus arbitrary `w-[13px]` and hex colors | Small | Static classes already hot-reload. Dynamic ones are the same parser. |
-| Wider but still closed handler bodies (set a field, toggle a sibling, not only inc/pop/reverse) | Medium | `on:click` rejects anything that is not one of seven actions. This is the difference between the examples and a form that is not hard-coded. |
-| `<Show>` inside a row, with resets keyed by row id | Medium | The known emitter bug. Keyed identity is already `state.counts`. |
-| Stop copying one color into button hover/down/disabled; map `hover:` and `disabled:` onto the uniforms `Button` already animates | Small | The widget does this. Quinn erases it. |
+Shipped in `quinn-styles`, `quinn-lower`, and `examples/tailwind-gallery`. `examples/keyed-list` has a `<Show>` inside each row.
+
+| Item | What landed |
+| --- | --- |
+| Wrap, `Distribute`, `RowAlign`, fill weight/shrink/basis, min/max, `Size::Rel` | `flex-wrap` sets `Flow.Right { wrap, row_align }` and `wrap_spacing` from `gap-y` (or `gap`). `justify-between/around/evenly` set `Distribute` and do not also set `Align`. `items-center/start/end` on a row are `RowAlign`. `flex-1`, `grow`, `shrink`, `basis-*` become `Fill { weight, shrink, basis }` on the parent's main axis unless that axis is an explicit px or `Rel`. `min-*` / `max-*` are walk bounds (`max-w-full` is `"100%"`). `w-1/2` and the other fractions are `Rel { base: Base.Parent }`. `w-screen` / `h-screen` are `Base.Vw` / `Base.Vh`. |
+| Per-side padding and margin | `px` `py` `pt` `pr` `pb` `pl` and the `m*` forms emit `Inset { left top right bottom }` when the sides differ, and a bare number when they match. `p-4` no longer replaces a later `px-*` inside one class string; later tokens still win per side. |
+| `class:` / `style:` and arbitrary values | `class:token=move \|\| flag.get()` is a script `if` around the properties that token changes. `style:prop` must be `if signal.get() { "literal" } else { "literal" }`. `w-[13px]`, `bg-[#1e293b]`, `text-[#fff]`, `p-[10px]` and the other arbitrary spacing, size, and color forms parse. 3-digit hex expands. |
+| Closed handler bodies | Several statements lower to script: arithmetic, boolean not, string assign, and list `push` / `pop` / `reverse` / `swap(id, id)` / `remove(id)` / `retain(\|row\| row.id != id)`. A handler outside that set fails with `cannot lower`. |
+| `<Show>` inside `<For>` | Row shows are separate functions (`row_quinn_show_…`) and do not consume the host show cursor. The first integer row signal stays `state.counts["k"+id]` (`quinn_row_bump`). Every other row signal and the show's live flag is `state.r_<name>["k"+id]`. `quinn_row_reset` runs on push, including a re-add of an id that left. Pop does not clear the id, so a removed row's count is still there until that id is pushed again. |
+| Button hover, down, disabled | `hover:bg-*` / `hover:text-*` set `color_hover`. `active:` sets `color_down`. `disabled:` sets `color_disabled`. A bare `disabled` also sets `enabled: false` and `draw_bg.disabled` / `draw_text.disabled` to `1`, because `enabled: false` alone does not start the disabled animator. The face color is not copied into hover, down, or focus. |
+
+Limits that are still true after P0:
+
+- `self-start` / `self-center` / `self-end` are a wrapper `RoundedView`. The turtle has no per-item `RowAlign`, and `Walk.cell` is read by the `Grid` widget only.
+- `items-stretch` and `self-stretch` set `Fill` on the cross size when the class did not set that axis. `RowAlign` has no stretch variant.
+- `flex-wrap` is a row. `Flow::Down` has no `wrap` field, so `flex-col flex-wrap` stays a column and does not wrap.
+- `hover:` and `active:` are button animator colors. A `div` does not run that animator, so `hover:bg-*` on a `RoundedView` does not change the face.
+- `focus:` is not mapped. The theme focus color is left alone.
+- `align-content`, a four-side inset stretch, `z-index`, and Taffy are still out. Taffy is still not recommended.
 
 ### P1 — practical parity for an app that is more than the four examples
 

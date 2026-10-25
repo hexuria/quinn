@@ -28,6 +28,12 @@ pub struct Sim {
     model: Model,
     next_ids: HashMap<String, i64>,
     item_signals: Vec<String>,
+    /// Non-count row signals, keyed by `(row id, signal)`.
+    row_vars: HashMap<(i64, String), i64>,
+    row_strings: HashMap<(i64, String), String>,
+    row_live: HashMap<(i64, String), i64>,
+    count_signal: Option<String>,
+    row_signal_names: Vec<String>,
 }
 
 impl Sim {
@@ -67,9 +73,41 @@ impl Sim {
             model,
             next_ids,
             item_signals,
+            row_vars: HashMap::new(),
+            row_strings: HashMap::new(),
+            row_live: HashMap::new(),
+            count_signal: None,
+            row_signal_names: Vec::new(),
         };
+        sim.refresh_row_meta();
         sim.render();
         sim
+    }
+
+    fn refresh_row_meta(&mut self) {
+        let mut names = Vec::new();
+        let mut count = None;
+        fn walk(nodes: &[ViewNode], names: &mut Vec<String>, count: &mut Option<String>) {
+            for node in nodes {
+                match node {
+                    ViewNode::For { row_signals, .. } => {
+                        for signal in row_signals {
+                            if !names.iter().any(|name| name == &signal.read) {
+                                names.push(signal.read.clone());
+                            }
+                            if count.is_none() && matches!(signal.init, Init::Int(_)) {
+                                *count = Some(signal.read.clone());
+                            }
+                        }
+                    }
+                    ViewNode::El(el) => walk(&el.children, names, count),
+                    ViewNode::Show { child, .. } => walk(std::slice::from_ref(child), names, count),
+                }
+            }
+        }
+        walk(&self.model.nodes, &mut names, &mut count);
+        self.row_signal_names = names;
+        self.count_signal = count;
     }
 
     pub fn render(&mut self) {
@@ -113,52 +151,144 @@ impl Sim {
                     }
                 }
             }
-            ViewNode::For { child, .. } => {
+            ViewNode::For {
+                child, row_signals, ..
+            } => {
+                let signals = row_signals.clone();
                 for (index, item) in self.items.clone().into_iter().enumerate() {
-                    self.render_row(child, index, &item, live);
+                    self.render_row(child, index, &item, &signals, live);
                 }
             }
         }
     }
 
-    fn render_row(&mut self, el: &El, index: usize, item: &ItemSeed, live: &mut Vec<String>) {
-        let count = self.counts.get(&item.id).copied().unwrap_or(0);
+    fn render_row(
+        &mut self,
+        el: &El,
+        index: usize,
+        item: &ItemSeed,
+        signals: &[Signal],
+        live: &mut Vec<String>,
+    ) {
         let name = format!("{}#{index}", el.name);
-        let root_text = row_text(el, item, count);
-        let root_click = el.click.clone();
-        let root_input = el.input.clone();
-        self.place(&name, &root_text, root_click, root_input, live);
-        let children: Vec<(String, String, Option<Act>, Option<String>)> = el
-            .children
-            .iter()
-            .filter_map(|child| {
-                let ViewNode::El(child) = child else {
-                    return None;
-                };
-                Some((
-                    child.name.clone(),
-                    row_text(child, item, count),
-                    child.click.clone(),
-                    child.input.clone(),
-                ))
-            })
-            .collect();
-        for (child_name, text, click, input) in children {
-            self.place(
-                &format!("{name}/{child_name}"),
-                &text,
-                click.clone(),
-                input.clone(),
-                live,
-            );
-            self.place(
-                &format!("row:{}:{child_name}", item.id),
-                &text,
-                click,
-                input,
-                live,
-            );
+        let root_text = self.row_text(el, item, signals);
+        self.place(&name, &root_text, el.click.clone(), el.input.clone(), live);
+        for child in &el.children.clone() {
+            self.render_row_child(child, &name, item, signals, live);
         }
+    }
+
+    fn render_row_child(
+        &mut self,
+        node: &ViewNode,
+        prefix: &str,
+        item: &ItemSeed,
+        signals: &[Signal],
+        live: &mut Vec<String>,
+    ) {
+        match node {
+            ViewNode::El(el) => {
+                let text = self.row_text(el, item, signals);
+                let path = format!("{prefix}/{}", el.name);
+                self.place(&path, &text, el.click.clone(), el.input.clone(), live);
+                self.place(
+                    &format!("row:{}:{}", item.id, el.name),
+                    &text,
+                    el.click.clone(),
+                    el.input.clone(),
+                    live,
+                );
+                for child in &el.children.clone() {
+                    self.render_row_child(child, &path, item, signals, live);
+                }
+            }
+            ViewNode::Show {
+                signal,
+                live_flag,
+                reset,
+                child,
+            } => {
+                let open = self.row_int(item.id, signal) != 0;
+                let was = self
+                    .row_live
+                    .get(&(item.id, live_flag.clone()))
+                    .copied()
+                    .unwrap_or(0);
+                if open {
+                    if was != 1 {
+                        self.zero_row_fields(item.id, reset);
+                    }
+                    self.row_live.insert((item.id, live_flag.clone()), 1);
+                    self.render_row_child(child, prefix, item, signals, live);
+                } else {
+                    self.row_live.insert((item.id, live_flag.clone()), 0);
+                    self.zero_row_fields(item.id, reset);
+                }
+            }
+            ViewNode::For { .. } => {}
+        }
+    }
+
+    fn row_int(&self, id: i64, signal: &str) -> i64 {
+        if self.count_signal.as_deref() == Some(signal) {
+            return self.counts.get(&id).copied().unwrap_or(0);
+        }
+        self.row_vars
+            .get(&(id, signal.to_string()))
+            .copied()
+            .unwrap_or(0)
+    }
+
+    fn zero_row_fields(&mut self, id: i64, fields: &[String]) {
+        for name in fields {
+            if self.count_signal.as_deref() == Some(name.as_str()) {
+                self.counts.insert(id, 0);
+            } else {
+                self.row_vars.insert((id, name.clone()), 0);
+                self.row_strings.remove(&(id, name.clone()));
+            }
+        }
+    }
+
+    fn reset_row(&mut self, id: i64) {
+        self.counts.insert(id, 0);
+        self.row_vars.retain(|(row, _), _| *row != id);
+        self.row_strings.retain(|(row, _), _| *row != id);
+        self.row_live.retain(|(row, _), _| *row != id);
+    }
+
+    fn row_text(&self, el: &El, item: &ItemSeed, signals: &[Signal]) -> String {
+        let mut out = String::new();
+        for part in &el.parts {
+            match part {
+                Part::Lit(text) => out.push_str(text),
+                Part::Param(name) if name == "label" || name == "item" => out.push_str(&item.label),
+                Part::Param(_) => out.push_str(&item.label),
+                Part::Sig(name) => {
+                    if let Some(text) = self.row_strings.get(&(item.id, name.clone())) {
+                        out.push_str(text);
+                    } else if signals.iter().any(|signal| signal.read == *name)
+                        || self.row_signal_names.iter().any(|signal| signal == name)
+                    {
+                        out.push_str(&self.row_int(item.id, name).to_string());
+                    } else if let Some(text) = self.strings.get(name) {
+                        out.push_str(text);
+                    } else {
+                        out.push_str(&self.state.get(name).copied().unwrap_or(0).to_string());
+                    }
+                }
+                Part::IfBool { signal, yes, no } => {
+                    let on = if signals.iter().any(|item| item.read == *signal) {
+                        self.row_int(item.id, signal) != 0
+                    } else {
+                        self.state.get(signal).copied().unwrap_or(0) != 0
+                    };
+                    out.push_str(if on { yes } else { no });
+                }
+                Part::IfEmpty { .. } => {}
+            }
+        }
+        out
     }
 
     fn render_el(&mut self, el: &El, live: &mut Vec<String>) {
@@ -252,15 +382,23 @@ impl Sim {
         let Some(act) = self.ids.get(name).and_then(|slot| slot.click.clone()) else {
             return false;
         };
-        self.apply(act, None)
+        let row = name.strip_prefix("row:").and_then(|rest| {
+            rest.split(':').next().and_then(|id| id.parse::<i64>().ok())
+        });
+        self.apply(act, row)
     }
 
     pub fn click_row(&mut self, id: i64) -> bool {
+        let count = self.count_signal.clone();
         let key = self
             .ids
             .iter()
             .find(|(name, slot)| {
-                name.starts_with(&format!("row:{id}:")) && matches!(slot.click, Some(Act::RowInc))
+                name.starts_with(&format!("row:{id}:"))
+                    && slot
+                        .click
+                        .as_ref()
+                        .is_some_and(|act| bumps_row_count(act, count.as_deref()))
             })
             .map(|(name, _)| name.clone());
         let Some(key) = key else {
@@ -303,6 +441,7 @@ impl Sim {
 
     pub fn reload(&mut self, model: Model) {
         self.model = model;
+        self.refresh_row_meta();
         self.render();
     }
 
@@ -343,6 +482,7 @@ impl Sim {
                         .unwrap_or(1);
                     self.next_ids.insert(next.clone(), id + 1);
                     self.state.insert(next, id + 1);
+                    self.reset_row(id);
                     self.items.push(ItemSeed {
                         id,
                         label: format!("Item {id}"),
@@ -358,24 +498,197 @@ impl Sim {
                 }
                 *self.counts.entry(id).or_insert(0) += 1;
             }
+            Act::Body(stmts) => self.exec(&stmts, None),
+            Act::Row(stmts) => {
+                let Some(id) = row else {
+                    return false;
+                };
+                if !self.items.iter().any(|item| item.id == id) {
+                    return false;
+                }
+                self.exec(&stmts, Some(id));
+            }
         }
         self.render();
         true
     }
-}
 
-fn row_text(el: &El, item: &ItemSeed, count: i64) -> String {
-    let mut out = String::new();
-    for part in &el.parts {
-        match part {
-            Part::Lit(text) => out.push_str(text),
-            Part::Param(name) if name == "label" || name == "item" => out.push_str(&item.label),
-            Part::Param(_) => out.push_str(&item.label),
-            Part::Sig(_) => out.push_str(&count.to_string()),
-            Part::IfBool { .. } | Part::IfEmpty { .. } => {}
+    fn exec(&mut self, stmts: &[HandlerStmt], row: Option<i64>) {
+        let mut locals = HashMap::new();
+        for stmt in stmts {
+            match stmt {
+                HandlerStmt::Let { name, expr } => {
+                    let value = self.eval(expr, row, &locals);
+                    locals.insert(name.clone(), value);
+                }
+                HandlerStmt::Set { signal, expr } => {
+                    let value = self.eval(expr, row, &locals);
+                    self.write_signal(signal, value, row);
+                }
+                HandlerStmt::Push { items, id, label } => {
+                    if self.item_signals.iter().any(|name| name == items) {
+                        let id = self.eval(id, row, &locals).as_int();
+                        let label = self.eval(label, row, &locals).as_string();
+                        self.reset_row(id);
+                        self.items.push(ItemSeed { id, label });
+                    }
+                }
+                HandlerStmt::Pop { items } => {
+                    if self.item_signals.iter().any(|name| name == items) {
+                        self.items.pop();
+                    }
+                }
+                HandlerStmt::Reverse { items } => {
+                    if self.item_signals.iter().any(|name| name == items) {
+                        self.items.reverse();
+                    }
+                }
+                HandlerStmt::RemoveKey { items, key } => {
+                    if self.item_signals.iter().any(|name| name == items) {
+                        let key = self.eval(key, row, &locals).as_int();
+                        self.items.retain(|item| item.id != key);
+                    }
+                }
+                HandlerStmt::SwapKey { items, a, b } => {
+                    if self.item_signals.iter().any(|name| name == items) {
+                        let a = self.eval(a, row, &locals).as_int();
+                        let b = self.eval(b, row, &locals).as_int();
+                        if let (Some(left), Some(right)) = (
+                            self.items.iter().position(|item| item.id == a),
+                            self.items.iter().position(|item| item.id == b),
+                        ) {
+                            self.items.swap(left, right);
+                        }
+                    }
+                }
+            }
         }
     }
-    out
+
+    fn write_signal(&mut self, name: &str, value: Val, row: Option<i64>) {
+        if let Some(id) = row {
+            if self.row_signal_names.iter().any(|signal| signal == name) {
+                if self.count_signal.as_deref() == Some(name) {
+                    self.counts.insert(id, value.as_int());
+                } else if let Val::Str(text) = value {
+                    self.row_strings.insert((id, name.to_string()), text);
+                } else {
+                    self.row_vars.insert((id, name.to_string()), value.as_int());
+                }
+                return;
+            }
+        }
+        match value {
+            Val::Str(text) => {
+                self.strings.insert(name.to_string(), text);
+            }
+            other => {
+                self.state.insert(name.to_string(), other.as_int());
+            }
+        }
+    }
+
+    fn eval(&self, expr: &HxExpr, row: Option<i64>, locals: &HashMap<String, Val>) -> Val {
+        match expr {
+            HxExpr::Int(value) => Val::Int(*value),
+            HxExpr::Bool(value) => Val::Int(if *value { 1 } else { 0 }),
+            HxExpr::Str(value) => Val::Str(value.clone()),
+            HxExpr::Name(name) => {
+                if let Some(value) = locals.get(name) {
+                    return value.clone();
+                }
+                if name == "id" {
+                    if let Some(id) = row {
+                        return Val::Int(id);
+                    }
+                }
+                if let Some(id) = row {
+                    if self.row_signal_names.iter().any(|signal| signal == name) {
+                        if let Some(text) = self.row_strings.get(&(id, name.clone())) {
+                            return Val::Str(text.clone());
+                        }
+                        return Val::Int(self.row_int(id, name));
+                    }
+                }
+                if let Some(text) = self.strings.get(name) {
+                    return Val::Str(text.clone());
+                }
+                Val::Int(self.state.get(name).copied().unwrap_or(0))
+            }
+            HxExpr::Not(inner) => {
+                let value = self.eval(inner, row, locals);
+                Val::Int(if value.as_int() == 0 { 1 } else { 0 })
+            }
+            HxExpr::Binary(op, left, right) => {
+                let left = self.eval(left, row, locals).as_int();
+                let right = self.eval(right, row, locals).as_int();
+                let value = match op {
+                    BinOp::Add => left + right,
+                    BinOp::Sub => left - right,
+                    BinOp::Mul => left * right,
+                    BinOp::Div => {
+                        if right == 0 {
+                            0
+                        } else {
+                            left / right
+                        }
+                    }
+                };
+                Val::Int(value)
+            }
+            HxExpr::Concat(parts) => Val::Str(
+                parts
+                    .iter()
+                    .map(|part| self.eval(part, row, locals).as_string())
+                    .collect(),
+            ),
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+enum Val {
+    Int(i64),
+    Str(String),
+}
+
+impl Val {
+    fn as_int(&self) -> i64 {
+        match self {
+            Self::Int(value) => *value,
+            Self::Str(value) => value.parse().unwrap_or(0),
+        }
+    }
+
+    fn as_string(&self) -> String {
+        match self {
+            Self::Int(value) => value.to_string(),
+            Self::Str(value) => value.clone(),
+        }
+    }
+}
+
+fn bumps_row_count(act: &Act, count: Option<&str>) -> bool {
+    let Some(count) = count else {
+        return matches!(act, Act::RowInc);
+    };
+    match act {
+        Act::RowInc => true,
+        Act::Row(stmts) => stmts.iter().any(|stmt| match stmt {
+            HandlerStmt::Set { signal, expr } if signal == count => is_add_one(expr, signal),
+            _ => false,
+        }),
+        _ => false,
+    }
+}
+
+fn is_add_one(expr: &HxExpr, signal: &str) -> bool {
+    matches!(
+        expr,
+        HxExpr::Binary(BinOp::Add, left, right)
+            if matches!(left.as_ref(), HxExpr::Name(name) if name == signal)
+                && matches!(right.as_ref(), HxExpr::Int(1))
+    )
 }
 
 fn remove_named(nodes: &mut Vec<ViewNode>, name: &str) -> bool {

@@ -1253,6 +1253,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "tailwind-gallery"
+version = "0.1.0"
+dependencies = [
+ "quinn",
+]
+
+[[package]]
 name = "thiserror"
 version = "2.0.18"
 source = "git+https://github.com/makepad/makepad?rev=44ecb822b48106fa76bde4dfd309e5a8a7ff1932#44ecb822b48106fa76bde4dfd309e5a8a7ff1932"

@@ -24,6 +24,8 @@ struct Build {
     comps: HashMap<String, Comp>,
     used: HashSet<String>,
     fns: u32,
+    /// Signals of components lowered while inside a `<For>` row.
+    pending_row_signals: Vec<Signal>,
 }
 
 pub fn parse_model(source: &str) -> Result<Model, String> {
@@ -52,6 +54,7 @@ pub fn parse_model(source: &str) -> Result<Model, String> {
         comps,
         used: HashSet::new(),
         fns: 0,
+        pending_row_signals: Vec::new(),
     };
     let root = build
         .comps
@@ -74,7 +77,7 @@ pub fn parse_model(source: &str) -> Result<Model, String> {
             continue;
         }
         let node = build.lower_node(child, &signals, false)?;
-        if matches!(node, ViewNode::For { .. }) {
+        if contains_for(&node) {
             keyed = true;
         }
         children.push(node);
@@ -89,6 +92,14 @@ pub fn parse_model(source: &str) -> Result<Model, String> {
         keyed,
         retain,
     })
+}
+
+fn contains_for(node: &ViewNode) -> bool {
+    match node {
+        ViewNode::For { .. } => true,
+        ViewNode::El(el) => el.children.iter().any(contains_for),
+        ViewNode::Show { child, .. } => contains_for(child),
+    }
 }
 
 fn collect_resets(nodes: &[ViewNode], signals: &mut Vec<Signal>) {
@@ -288,6 +299,7 @@ impl Build {
         if body.len() != 1 {
             return Err("<For> needs one child".into());
         }
+        self.pending_row_signals.clear();
         let child = self.lower_node(body[0], signals, true)?;
         let ViewNode::El(el) = child else {
             return Err("<For> child must be one element".into());
@@ -299,12 +311,14 @@ impl Build {
             format!("quinn_row{}", self.fns)
         };
         let params = row_params(&el);
+        let row_signals = std::mem::take(&mut self.pending_row_signals);
         Ok(ViewNode::For {
             items,
             var,
             key_field,
             fn_name,
             params,
+            row_signals,
             child: el,
         })
     }
@@ -377,6 +391,17 @@ impl Build {
                 .collect();
         }
         let _ = (renamed, local);
+        if in_row {
+            for signal in &comp.signals {
+                if !self
+                    .pending_row_signals
+                    .iter()
+                    .any(|have| have.read == signal.read)
+                {
+                    self.pending_row_signals.push(signal.clone());
+                }
+            }
+        }
         if let ViewNode::El(el) = &mut node {
             if el.name.starts_with("div") || el.name == "div" {
                 el.name = self.fresh(&prefix);
@@ -394,6 +419,9 @@ impl Build {
     ) -> Result<ViewNode, String> {
         let tag = element.name().to_string();
         let class = class_of(element).unwrap_or_default();
+        let mut class_when = Vec::new();
+        let mut style_when = Vec::new();
+        let mut inline_style = String::new();
         let mut parts = Vec::new();
         let mut placeholder = None;
         let mut value = None;
@@ -407,18 +435,44 @@ impl Build {
             if key == "class" || key.starts_with("let:") {
                 continue;
             }
+            if let Some(token) = key.strip_prefix("class:") {
+                let Some(expr) = attr.value() else {
+                    return Err(format!("class:{token} needs a bool signal"));
+                };
+                class_when.push(ClassWhen {
+                    token: token.to_string(),
+                    signal: bool_signal(expr, signals)?,
+                });
+                continue;
+            }
+            if let Some(prop) = key.strip_prefix("style:") {
+                let Some(expr) = attr.value() else {
+                    return Err(format!("style:{prop} needs a value"));
+                };
+                let (signal, yes, no) = style_branches(expr, signals)?;
+                style_when.push(StyleWhen {
+                    prop: prop.to_string(),
+                    signal,
+                    yes,
+                    no,
+                });
+                continue;
+            }
             let Some(expr) = attr.value() else {
                 return Err(format!("<{tag} {key}> needs a value"));
             };
             match key.as_str() {
-                "on:click" => click = Some(parse_click_block(expr, signals, in_row)?),
+                "on:click" => click = Some(crate::handler::parse_handler(expr, signals, in_row)?),
                 "on:input" | "on:change" => {
-                    input = Some(parse_input(expr, signals)?);
+                    input = Some(crate::handler::parse_input_signal(expr, signals)?);
                 }
                 "placeholder" => {
                     placeholder = Some(lit_string(expr).unwrap_or_else(|| expr_snippet(expr)));
                 }
                 "value" => value = Some(signal_get(expr, signals)?),
+                "style" => {
+                    inline_style = lit_string(expr).ok_or("style must be a string literal")?;
+                }
                 "item" => {}
                 other => return Err(format!("unsupported attribute `{other}` on <{tag}>")),
             }
@@ -456,6 +510,9 @@ impl Build {
             name,
             tag,
             class,
+            style: inline_style,
+            class_when,
+            style_when,
             parts,
             placeholder,
             value,
@@ -508,6 +565,12 @@ fn rename_signals(node: &mut ViewNode, orig: &[Signal], prefix: &str) {
             if let Some(click) = &mut el.click {
                 rename_act(click, orig, prefix);
             }
+            for when in &mut el.class_when {
+                when.signal = prefixed(&when.signal, orig, prefix);
+            }
+            for when in &mut el.style_when {
+                when.signal = prefixed(&when.signal, orig, prefix);
+            }
             for child in &mut el.children {
                 rename_signals(child, orig, prefix);
             }
@@ -538,6 +601,12 @@ fn rename_el_signals(el: &mut El, orig: &[Signal], prefix: &str) {
     if let Some(click) = &mut el.click {
         rename_act(click, orig, prefix);
     }
+    for when in &mut el.class_when {
+        when.signal = prefixed(&when.signal, orig, prefix);
+    }
+    for when in &mut el.style_when {
+        when.signal = prefixed(&when.signal, orig, prefix);
+    }
     for child in &mut el.children {
         rename_signals(child, orig, prefix);
     }
@@ -562,6 +631,51 @@ fn rename_act(act: &mut Act, orig: &[Signal], prefix: &str) {
             *items = prefixed(items, orig, prefix);
         }
         Act::RowInc => {}
+        Act::Body(stmts) | Act::Row(stmts) => {
+            for stmt in stmts {
+                match stmt {
+                    HandlerStmt::Set { signal, expr } => {
+                        *signal = prefixed(signal, orig, prefix);
+                        rename_expr(expr, orig, prefix);
+                    }
+                    HandlerStmt::Let { expr, .. } => rename_expr(expr, orig, prefix),
+                    HandlerStmt::Push { items, id, label } => {
+                        *items = prefixed(items, orig, prefix);
+                        rename_expr(id, orig, prefix);
+                        rename_expr(label, orig, prefix);
+                    }
+                    HandlerStmt::Pop { items } | HandlerStmt::Reverse { items } => {
+                        *items = prefixed(items, orig, prefix);
+                    }
+                    HandlerStmt::RemoveKey { items, key } => {
+                        *items = prefixed(items, orig, prefix);
+                        rename_expr(key, orig, prefix);
+                    }
+                    HandlerStmt::SwapKey { items, a, b } => {
+                        *items = prefixed(items, orig, prefix);
+                        rename_expr(a, orig, prefix);
+                        rename_expr(b, orig, prefix);
+                    }
+                }
+            }
+        }
+    }
+}
+
+fn rename_expr(expr: &mut HxExpr, orig: &[Signal], prefix: &str) {
+    match expr {
+        HxExpr::Name(name) => *name = prefixed(name, orig, prefix),
+        HxExpr::Not(inner) => rename_expr(inner, orig, prefix),
+        HxExpr::Binary(_, left, right) => {
+            rename_expr(left, orig, prefix);
+            rename_expr(right, orig, prefix);
+        }
+        HxExpr::Concat(parts) => {
+            for part in parts {
+                rename_expr(part, orig, prefix);
+            }
+        }
+        HxExpr::Int(_) | HxExpr::Bool(_) | HxExpr::Str(_) => {}
     }
 }
 
@@ -578,9 +692,9 @@ fn show_resets(node: &ViewNode) -> Vec<String> {
     fn walk(node: &ViewNode, out: &mut Vec<String>) {
         match node {
             ViewNode::El(el) => {
-                if let Some(Act::Inc(name) | Act::Toggle(name) | Act::Clear(name)) = &el.click {
+                for name in act_reset_names(el.click.as_ref()) {
                     if !out.contains(&name) {
-                        out.push(name.clone());
+                        out.push(name);
                     }
                 }
                 for part in &el.parts {
@@ -604,7 +718,7 @@ fn show_resets(node: &ViewNode) -> Vec<String> {
 
 fn row_params(el: &El) -> Vec<String> {
     let mut out = Vec::new();
-    fn walk(el: &El, out: &mut Vec<String>) {
+    fn walk_el(el: &El, out: &mut Vec<String>) {
         for part in &el.parts {
             if let Part::Param(name) = part {
                 if !out.contains(&name) {
@@ -613,12 +727,17 @@ fn row_params(el: &El) -> Vec<String> {
             }
         }
         for child in &el.children {
-            if let ViewNode::El(child) = child {
-                walk(child, out);
-            }
+            walk_node(child, out);
         }
     }
-    walk(el, &mut out);
+    fn walk_node(node: &ViewNode, out: &mut Vec<String>) {
+        match node {
+            ViewNode::El(el) => walk_el(el, out),
+            ViewNode::Show { child, .. } => walk_node(child, out),
+            ViewNode::For { .. } => {}
+        }
+    }
+    walk_el(el, &mut out);
     out
 }
 
@@ -745,102 +864,6 @@ fn parse_item(expr: &Expr) -> Result<ItemSeed, String> {
     })
 }
 
-fn stringish(expr: &Expr) -> Result<String, String> {
-    if let Some(text) = lit_string(expr) {
-        return Ok(text);
-    }
-    if let Expr::MethodCall(call) = expr {
-        if call.method == "into" || call.method == "to_string" {
-            if let Some(text) = lit_string(&call.receiver) {
-                return Ok(text);
-            }
-        }
-    }
-    Err("item label must be a string".into())
-}
-
-fn parse_frame(expr: &Expr, signals: &[Signal]) -> Result<String, String> {
-    let Expr::Call(call) = expr else {
-        return Err("set_frame_driver must be a call".into());
-    };
-    let Some(arg) = call.args.first() else {
-        return Err("set_frame_driver needs a closure".into());
-    };
-    let Expr::Closure(closure) = arg else {
-        return Err("set_frame_driver needs a closure".into());
-    };
-    let body = closure_stmts(closure)?;
-    if body.len() != 1 {
-        return Err("the frame driver must be a single signal update".into());
-    }
-    match parse_one(&body[0], signals, false)? {
-        Act::Inc(name) => Ok(name),
-        _ => Err("the frame driver must increment a signal".into()),
-    }
-}
-
-fn parse_click(expr: &Expr, signals: &[Signal], in_row: bool) -> Result<Act, String> {
-    let Expr::Closure(closure) = expr else {
-        return Err("on:click must be a closure".into());
-    };
-    let body = closure_stmts(closure)?;
-    if body.len() != 1 {
-        return Err("on:click must be one update, or the add-row sequence".into());
-    }
-    parse_one(&body[0], signals, in_row)
-}
-
-fn parse_one(expr: &Expr, signals: &[Signal], in_row: bool) -> Result<Act, String> {
-    if let Some(name) = inc_signal(expr, signals)? {
-        if in_row {
-            return Ok(Act::RowInc);
-        }
-        return Ok(Act::Inc(name.to_string()));
-    }
-    if let Some(name) = toggle_signal(expr, signals)? {
-        return Ok(Act::Toggle(name.to_string()));
-    }
-    if let Some(name) = clear_signal(expr, signals)? {
-        return Ok(Act::Clear(name.to_string()));
-    }
-    if let Some(name) = list_method(expr, signals, "pop")? {
-        return Ok(Act::Pop(name.to_string()));
-    }
-    if let Some(name) = list_method(expr, signals, "reverse")? {
-        return Ok(Act::Reverse(name.to_string()));
-    }
-    Err(format!("unsupported handler {}", snippet(expr)))
-}
-
-fn parse_input(expr: &Expr, signals: &[Signal]) -> Result<String, String> {
-    let Expr::Closure(closure) = expr else {
-        return Err("on:input must be a closure".into());
-    };
-    let body = closure_stmts(closure)?;
-    if body.len() != 1 {
-        return Err("on:input must be one set".into());
-    }
-    let Expr::MethodCall(call) = &body[0] else {
-        return Err("on:input must call .set".into());
-    };
-    if call.method != "set" {
-        return Err("on:input must call .set".into());
-    }
-    let Expr::Path(path) = &*call.receiver else {
-        return Err("on:input receiver must be the setter".into());
-    };
-    let write = path
-        .path
-        .get_ident()
-        .ok_or("on:input receiver must be a local")?
-        .to_string();
-    let signal = signals
-        .iter()
-        .find(|signal| signal.write == write)
-        .ok_or_else(|| format!("unknown setter {write}"))?;
-    Ok(signal.read.clone())
-}
-
 fn parse_interp(block: &NodeBlock, signals: &[Signal], in_row: bool) -> Result<Part, String> {
     let NodeBlock::ValidBlock(block) = block else {
         return Err("invalid interpolation block".into());
@@ -868,9 +891,6 @@ fn parse_interp(block: &NodeBlock, signals: &[Signal], in_row: bool) -> Result<P
         Expr::MethodCall(call) if call.method == "get" => {
             let name = path_ident(&call.receiver)?;
             if signals.iter().any(|signal| signal.read == name) {
-                if in_row {
-                    return Ok(Part::Sig(name));
-                }
                 return Ok(Part::Sig(name));
             }
             Err(format!("unknown signal {name}"))
@@ -972,210 +992,94 @@ fn key_field_of(expr: &Expr) -> Option<(String, String)> {
     Some((var, member.to_string()))
 }
 
-fn inc_signal<'a>(expr: &Expr, signals: &'a [Signal]) -> Result<Option<&'a str>, String> {
-    let Expr::MethodCall(call) = expr else {
-        return Ok(None);
-    };
-    if call.method != "update" {
-        return Ok(None);
+fn stringish(expr: &Expr) -> Result<String, String> {
+    if let Some(text) = lit_string(expr) {
+        return Ok(text);
     }
-    let Some(Expr::Closure(closure)) = call.args.first() else {
-        return Ok(None);
-    };
-    let Expr::Binary(binary) = &*closure.body else {
-        return Ok(None);
-    };
-    if !matches!(binary.op, syn::BinOp::AddAssign(_)) {
-        return Ok(None);
+    if let Expr::MethodCall(call) = expr {
+        if call.method == "into" || call.method == "to_string" {
+            if let Some(text) = lit_string(&call.receiver) {
+                return Ok(text);
+            }
+        }
     }
-    let Expr::Lit(lit) = &*binary.right else {
-        return Err("update must add a literal".into());
-    };
-    let syn::Lit::Int(value) = &lit.lit else {
-        return Err("update must add an integer".into());
-    };
-    if value.base10_parse::<i64>().map_err(|err| err.to_string())? != 1 {
-        return Err("update must add 1".into());
-    }
-    let write = path_ident(&call.receiver)?;
-    let signal = signals
-        .iter()
-        .find(|signal| signal.write == write)
-        .ok_or_else(|| format!("unknown setter {write}"))?;
-    Ok(Some(signal.read.as_str()))
+    Err("item label must be a string".into())
 }
 
-fn toggle_signal<'a>(expr: &Expr, signals: &'a [Signal]) -> Result<Option<&'a str>, String> {
-    let Expr::MethodCall(call) = expr else {
-        return Ok(None);
+fn parse_frame(expr: &Expr, signals: &[Signal]) -> Result<String, String> {
+    let Expr::Call(call) = expr else {
+        return Err("set_frame_driver must be a call".into());
     };
-    if call.method != "update" {
-        return Ok(None);
-    }
-    let Some(Expr::Closure(closure)) = call.args.first() else {
-        return Ok(None);
-    };
-    let Expr::Assign(assign) = &*closure.body else {
-        return Ok(None);
-    };
-    let Expr::Unary(not) = &*assign.right else {
-        return Ok(None);
-    };
-    if !matches!(not.op, syn::UnOp::Not(_)) {
-        return Ok(None);
-    }
-    let write = path_ident(&call.receiver)?;
-    let signal = signals
-        .iter()
-        .find(|signal| signal.write == write)
-        .ok_or_else(|| format!("unknown setter {write}"))?;
-    Ok(Some(signal.read.as_str()))
-}
-
-fn clear_signal<'a>(expr: &Expr, signals: &'a [Signal]) -> Result<Option<&'a str>, String> {
-    let Expr::MethodCall(call) = expr else {
-        return Ok(None);
-    };
-    if call.method != "set" {
-        return Ok(None);
-    }
     let Some(arg) = call.args.first() else {
-        return Ok(None);
+        return Err("set_frame_driver needs a closure".into());
     };
-    let empty = match arg {
-        Expr::Lit(lit) => matches!(&lit.lit, syn::Lit::Str(text) if text.value().is_empty()),
-        Expr::Call(inner) => path_ends(&inner.func, &["String", "new"]) && inner.args.is_empty(),
-        _ => false,
-    };
-    if !empty {
-        return Ok(None);
+    if !matches!(arg, Expr::Closure(_)) {
+        return Err("set_frame_driver needs a closure".into());
     }
-    let write = path_ident(&call.receiver)?;
-    let signal = signals
-        .iter()
-        .find(|signal| signal.write == write)
-        .ok_or_else(|| format!("unknown setter {write}"))?;
-    Ok(Some(signal.read.as_str()))
-}
-
-fn list_method<'a>(
-    expr: &Expr,
-    signals: &'a [Signal],
-    method: &str,
-) -> Result<Option<&'a str>, String> {
-    let Expr::MethodCall(call) = expr else {
-        return Ok(None);
+    let act = crate::handler::parse_handler(arg, signals, false)?;
+    let Act::Body(stmts) = act else {
+        return Err("the frame driver must increment a signal".into());
     };
-    if call.method != "update" {
-        return Ok(None);
-    }
-    let Some(Expr::Closure(closure)) = call.args.first() else {
-        return Ok(None);
-    };
-    let body = closure_stmts(closure)?;
-    if body.len() != 1 {
-        return Ok(None);
-    }
-    let Expr::MethodCall(inner) = &body[0] else {
-        return Ok(None);
-    };
-    if inner.method != method {
-        return Ok(None);
-    }
-    let write = path_ident(&call.receiver)?;
-    let signal = signals
-        .iter()
-        .find(|signal| signal.write == write)
-        .ok_or_else(|| format!("unknown setter {write}"))?;
-    Ok(Some(signal.read.as_str()))
-}
-
-/// The add button is a block with a `let`, so it never arrives as three exprs.
-/// Detect it from the raw closure before statements are flattened.
-pub fn parse_click_block(expr: &Expr, signals: &[Signal], in_row: bool) -> Result<Act, String> {
-    let Expr::Closure(closure) = expr else {
-        return parse_click(expr, signals, in_row);
-    };
-    if let Expr::Block(block) = &*closure.body {
-        if block.block.stmts.len() == 3 {
-            if let Some(act) = push_from_stmts(&block.block.stmts, signals)? {
-                return Ok(act);
+    if stmts.len() == 1 {
+        if let HandlerStmt::Set {
+            signal,
+            expr: HxExpr::Binary(BinOp::Add, _, right),
+        } = &stmts[0]
+        {
+            if matches!(right.as_ref(), HxExpr::Int(1)) {
+                return Ok(signal.clone());
             }
         }
     }
-    parse_click(expr, signals, in_row)
+    Err("the frame driver must increment a signal".into())
 }
 
-fn push_from_stmts(stmts: &[Stmt], signals: &[Signal]) -> Result<Option<Act>, String> {
-    let Stmt::Local(local) = &stmts[0] else {
-        return Ok(None);
+fn bool_signal(expr: &Expr, signals: &[Signal]) -> Result<String, String> {
+    let expr = match expr {
+        Expr::Closure(closure) => &*closure.body,
+        other => other,
     };
-    let syn::Pat::Ident(ident) = &local.pat else {
-        return Ok(None);
-    };
-    if ident.ident != "id" {
-        return Ok(None);
+    if let Ok(name) = signal_get(expr, signals) {
+        return Ok(name);
     }
-    let Some(init) = &local.init else {
-        return Ok(None);
-    };
-    let Expr::MethodCall(get) = &*init.expr else {
-        return Ok(None);
-    };
-    if get.method != "get" {
-        return Ok(None);
-    }
-    let next_read = path_ident(&get.receiver)?;
-    let next = signals
-        .iter()
-        .find(|signal| signal.read == next_read)
-        .ok_or_else(|| format!("unknown signal {next_read}"))?;
-    let Stmt::Expr(set_expr, _) = &stmts[1] else {
-        return Ok(None);
-    };
-    let Expr::MethodCall(set) = set_expr else {
-        return Ok(None);
-    };
-    if set.method != "set" || path_ident(&set.receiver)? != next.write {
-        return Ok(None);
-    }
-    let Stmt::Expr(update_expr, _) = &stmts[2] else {
-        return Ok(None);
-    };
-    let Expr::MethodCall(update) = update_expr else {
-        return Ok(None);
-    };
-    if update.method != "update" {
-        return Ok(None);
-    }
-    let items_write = path_ident(&update.receiver)?;
-    let items = signals
-        .iter()
-        .find(|signal| signal.write == items_write)
-        .ok_or_else(|| format!("unknown setter {items_write}"))?;
-    Ok(Some(Act::Push {
-        next: next.read.clone(),
-        items: items.read.clone(),
-    }))
-}
-
-fn closure_stmts(closure: &syn::ExprClosure) -> Result<Vec<Expr>, String> {
-    match &*closure.body {
-        Expr::Block(block) => {
-            let mut out = Vec::new();
-            for stmt in &block.block.stmts {
-                match stmt {
-                    Stmt::Expr(expr, _) => out.push(expr.clone()),
-                    Stmt::Local(_) => {
-                        return Err("this closure shape is handled before flattening".into());
-                    }
-                    _ => return Err("closure body must be expressions".into()),
-                }
+    if let Expr::Path(path) = expr {
+        if let Some(ident) = path.path.get_ident() {
+            let name = ident.to_string();
+            if signals.iter().any(|signal| signal.read == name) {
+                return Ok(name);
             }
-            Ok(out)
         }
-        other => Ok(vec![other.clone()]),
     }
+    Err("class: value must be a bool signal, written as move || flag.get()".into())
+}
+
+fn style_branches(expr: &Expr, signals: &[Signal]) -> Result<(String, String, String), String> {
+    let expr = match expr {
+        Expr::Closure(closure) => &*closure.body,
+        other => other,
+    };
+    let Expr::If(iff) = expr else {
+        return Err(
+            "style:prop must be `if signal.get() { \"value\" } else { \"value\" }`, not a runtime string"
+                .into(),
+        );
+    };
+    if iff.else_branch.is_none() {
+        return Err("style:prop needs an else branch with a literal".into());
+    }
+    let signal = signal_get(&iff.cond, signals)?;
+    let literal = |expr: &Expr| {
+        stringish(expr).map_err(|_| {
+            "style:prop branches must be string literals, not a runtime string".to_string()
+        })
+    };
+    let yes = literal(&block_expr(&iff.then_branch)?)?;
+    let (_, else_expr) = iff.else_branch.as_ref().unwrap();
+    let no = match &**else_expr {
+        Expr::Block(block) => literal(&block_expr(&block.block)?)?,
+        other => literal(other)?,
+    };
+    Ok((signal, yes, no))
 }
 
 fn single_root(nodes: &[Node]) -> Result<&NodeElement<rstml::Infallible>, String> {
@@ -1285,11 +1189,28 @@ fn lit_string(expr: &Expr) -> Option<String> {
     Some(value.value())
 }
 
+fn act_reset_names(act: Option<&Act>) -> Vec<String> {
+    let Some(act) = act else {
+        return Vec::new();
+    };
+    match act {
+        Act::Inc(name) | Act::Toggle(name) | Act::Clear(name) => vec![name.clone()],
+        Act::Body(stmts) | Act::Row(stmts) => stmts
+            .iter()
+            .filter_map(|stmt| match stmt {
+                HandlerStmt::Set { signal, .. } => Some(signal.clone()),
+                _ => None,
+            })
+            .collect(),
+        _ => Vec::new(),
+    }
+}
+
 fn widget_base(tag: &str, parts: &[Part], click: Option<&Act>) -> String {
-    if let Some(Act::Toggle(_)) = click {
+    if act_is_toggle(click) {
         return "toggle".into();
     }
-    if let Some(Act::Clear(_)) = click {
+    if act_is_clear(click) {
         return "clear".into();
     }
     if tag == "button" {
@@ -1304,6 +1225,34 @@ fn widget_base(tag: &str, parts: &[Part], click: Option<&Act>) -> String {
         return "field".into();
     }
     tag.to_string()
+}
+
+fn act_is_toggle(act: Option<&Act>) -> bool {
+    match act {
+        Some(Act::Toggle(_)) => true,
+        Some(Act::Body(stmts) | Act::Row(stmts)) => matches!(
+            stmts.as_slice(),
+            [HandlerStmt::Set {
+                expr: HxExpr::Not(_),
+                ..
+            }]
+        ),
+        _ => false,
+    }
+}
+
+fn act_is_clear(act: Option<&Act>) -> bool {
+    match act {
+        Some(Act::Clear(_)) => true,
+        Some(Act::Body(stmts) | Act::Row(stmts)) => matches!(
+            stmts.as_slice(),
+            [HandlerStmt::Set {
+                expr: HxExpr::Str(text),
+                ..
+            }] if text.is_empty()
+        ),
+        _ => false,
+    }
 }
 
 fn slug(text: &str) -> String {

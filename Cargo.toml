@@ -15,6 +15,7 @@ members = [
     "examples/keyed-list",
     "examples/form",
     "examples/retain",
+    "examples/tailwind-gallery",
 ]
 
 [workspace.package]

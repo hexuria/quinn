@@ -37,6 +37,40 @@ pub enum Part {
     Param(String),
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BinOp {
+    Add,
+    Sub,
+    Mul,
+    Div,
+}
+
+/// A value a handler can compute. Names are signals, `let` bindings, or the
+/// input closure's parameter.
+#[derive(Clone, Debug, PartialEq)]
+pub enum HxExpr {
+    Int(i64),
+    Bool(bool),
+    Str(String),
+    Name(String),
+    Not(Box<HxExpr>),
+    Binary(BinOp, Box<HxExpr>, Box<HxExpr>),
+    Concat(Vec<HxExpr>),
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum HandlerStmt {
+    Let { name: String, expr: HxExpr },
+    Set { signal: String, expr: HxExpr },
+    Push { items: String, id: HxExpr, label: HxExpr },
+    Pop { items: String },
+    Reverse { items: String },
+    /// Drop the item whose `id` equals `key`.
+    RemoveKey { items: String, key: HxExpr },
+    /// Exchange the two items whose `id`s equal `a` and `b`.
+    SwapKey { items: String, a: HxExpr, b: HxExpr },
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub enum Act {
     Inc(String),
@@ -47,6 +81,25 @@ pub enum Act {
     Push { next: String, items: String },
     /// Increment the keyed row count captured by `id`.
     RowInc,
+    /// Host handler: statements against `mod.state`.
+    Body(Vec<HandlerStmt>),
+    /// Row handler: signal writes are per-row, keyed by `id`.
+    Row(Vec<HandlerStmt>),
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct ClassWhen {
+    pub token: String,
+    pub signal: String,
+}
+
+/// `style:prop = if signal { "yes" } else { "no" }`.
+#[derive(Clone, Debug, PartialEq)]
+pub struct StyleWhen {
+    pub prop: String,
+    pub signal: String,
+    pub yes: String,
+    pub no: String,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -54,6 +107,10 @@ pub struct El {
     pub name: String,
     pub tag: String,
     pub class: String,
+    /// Static `style="..."`. Merged after classes.
+    pub style: String,
+    pub class_when: Vec<ClassWhen>,
+    pub style_when: Vec<StyleWhen>,
     pub parts: Vec<Part>,
     pub placeholder: Option<String>,
     pub value: Option<String>,
@@ -80,6 +137,8 @@ pub enum ViewNode {
         fn_name: String,
         /// Item fields passed after `id`, in order.
         params: Vec<String>,
+        /// Signals declared on the row component. They live under `state.r_<name>`.
+        row_signals: Vec<Signal>,
         child: El,
     },
 }

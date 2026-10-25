@@ -29,9 +29,9 @@ A missing `mod.state` is an error, not nil. The seed is `if ok{mod.state} == nil
 
 `<Show>` is not an inline `if` in `on_render`. A statement `if` whose branches are different shapes unbalances the script stack. The lowerer emits two functions, `quinn_show_<signal>_<n>_on` (returns the child widget) and `_off` (returns `0`, which a view skips). `on_render` calls `quinn_show_<signal>_<n>()`. That function records whether the condition was already true and, on a fresh mount, zeroes the signals that belong to the child. A sibling's fields are not touched. Hiding clears the child's fields so a remount does not keep the old clicks.
 
-`<For>` emits `fn quinn_row(...)` and `for item in state.items { quinn_row(item.id, item.label) }`. Anonymous children match by index, so a row's own count cannot live on the widget. It lives on `state.counts` under the string key `"k"+id`, which survives reorder, slot reuse, and reload. There is no script `reverse`; the lowerer emits `quinn_reverse`.
+`<For>` emits `fn quinn_row(...)` and `for item in state.items { quinn_row(item.id, item.label) }`. Anonymous children match by index, so a row's own count cannot live on the widget. The first integer signal on the row lives on `state.counts` under the string key `"k"+id`, which survives reorder, slot reuse, and reload. Other row signals and a row show's live flag live on `state.r_<name>["k"+id]`. Pushing an id calls `quinn_row_reset`, so a removed row that is added again starts clean. Pop does not clear that id. There is no script `reverse`; the lowerer emits `quinn_reverse`. Swap and remove-by-id are `quinn_swap_key` and `quinn_remove_key`.
 
-A `Show` inside a row is not lowered correctly. The row function does not allocate show sites. None of the examples do that.
+A `<Show>` inside a row is its own function pair, `row_quinn_show_<signal>_<n>(id, …)`. Those sites are not the host show cursor. `examples/keyed-list` and `examples/tailwind-gallery` both use one.
 
 `TextInput.on_change` is invoked with `vm.call`, which has no widget uid, so `ui.host` from that closure cannot see the app. `on_render` runs on the host, captures it (`let root = ui`), and the closure calls `root.render()`. `Button.on_click` goes through `widget_to_script_call`, which flood-searches from the button, so buttons still call `ui.host.render()`. `render()` applies children with `Apply::Reload`, which rewrites `TextInput.text` from `state.name`. The string survives a reload. The caret can jump.
 
@@ -48,13 +48,12 @@ cargo run -p counter --release -- --hot
 # edit examples/counter/view.rs
 ```
 
-The same command works for `conditional`, `keyed-list`, `form`, and `retain`. `./target/release/<bin> --hot` is the same watcher without Cargo as a parent. Saving `src/main.rs` or `src/ops.rs` still rebuilds and, under `cargo run`, starts a new process.
+The same command works for `conditional`, `keyed-list`, `form`, `retain`, and `tailwind-gallery`. `./target/release/<bin> --hot` is the same watcher without Cargo as a parent. Saving `src/main.rs` or `src/ops.rs` still rebuilds and, under `cargo run`, starts a new process.
 
 ## What still needs a rebuild
 
 - Anything in `src/` (the shell, `ops.rs`, a new probe).
 - A `view.rs` edit the lowerer rejects.
-- A `Show` nested in a `For` row.
 - The baseline counter, which is hand-written Makepad script, not a `view.rs`.
 
 ## Headless graph

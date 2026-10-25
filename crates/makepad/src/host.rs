@@ -377,10 +377,29 @@ fn apply_view(widget: &WidgetRef, style: &Style) {
         let flow = style.flow.unwrap_or(FlowSpec::Column);
         view.layout.flow = match flow {
             FlowSpec::Column => Flow::Down,
-            FlowSpec::Row => Flow::right(),
+            FlowSpec::Row => {
+                let row_align = match style.cross_align {
+                    Some(quinn_styles::CrossAlign::Center) => turtle::RowAlign::Center,
+                    Some(quinn_styles::CrossAlign::End) => turtle::RowAlign::Bottom,
+                    _ => turtle::RowAlign::Top,
+                };
+                Flow::Right {
+                    wrap: style.wrap,
+                    row_align,
+                }
+            }
         };
-        if let Some(gap) = style.gap {
+        let spacing = match flow {
+            FlowSpec::Row => style.main_gap(),
+            FlowSpec::Column => style.cross_gap(),
+        };
+        if let Some(gap) = spacing {
             view.layout.spacing = gap;
+        }
+        if style.wrap {
+            if let Some(gap) = style.cross_gap() {
+                view.layout.wrap_spacing = gap;
+            }
         }
         let (left, top, right, bottom) = style.padding.resolve();
         view.layout.padding = Inset {
@@ -389,11 +408,22 @@ fn apply_view(widget: &WidgetRef, style: &Style) {
             right,
             bottom,
         };
+        if let Some(dist) = style.distribute {
+            view.layout.distribute = match dist {
+                quinn_styles::DistributeSpec::Between => Distribute::SpaceBetween,
+                quinn_styles::DistributeSpec::Around => Distribute::SpaceAround,
+                quinn_styles::DistributeSpec::Evenly => Distribute::SpaceEvenly,
+            };
+        }
         let main = style.main_align.unwrap_or(AlignSpec::Start).fraction();
-        let cross = style.cross_align.unwrap_or(AlignSpec::Start).fraction();
+        let cross = match style.cross_align {
+            Some(quinn_styles::CrossAlign::Center) => 0.5,
+            Some(quinn_styles::CrossAlign::End) => 1.0,
+            _ => 0.0,
+        };
         let (x, y) = match flow {
             FlowSpec::Column => (cross, main),
-            FlowSpec::Row => (main, cross),
+            FlowSpec::Row => (main, 0.0),
         };
         view.layout.align = Align { x, y };
         apply_walk(&mut view.walk, style);
@@ -434,6 +464,28 @@ fn apply_walk(walk: &mut Walk, style: &Style) {
             bottom,
         };
     }
+    if let Some(bound) = style.min_width {
+        walk.min_width = Some(bound_of(bound));
+    }
+    if let Some(bound) = style.max_width {
+        walk.max_width = Some(bound_of(bound));
+    }
+    if let Some(bound) = style.min_height {
+        walk.min_height = Some(bound_of(bound));
+    }
+    if let Some(bound) = style.max_height {
+        walk.max_height = Some(bound_of(bound));
+    }
+}
+
+fn bound_of(bound: quinn_styles::Bound) -> FitBound {
+    match bound {
+        quinn_styles::Bound::Px(px) => FitBound::Abs(px),
+        quinn_styles::Bound::Full => FitBound::Rel {
+            base: Base::Full,
+            factor: 1.0,
+        },
+    }
 }
 
 fn size_of(size: SizeSpec) -> Size {
@@ -441,6 +493,21 @@ fn size_of(size: SizeSpec) -> Size {
         SizeSpec::Fill => Size::fill(),
         SizeSpec::Fit => Size::fit(),
         SizeSpec::Px(px) => Size::Fixed(px),
+        SizeSpec::Rel { base, factor } => Size::Rel {
+            base: match base {
+                quinn_styles::RelBase::Parent => Base::Parent,
+                quinn_styles::RelBase::Vw => Base::Vw,
+                quinn_styles::RelBase::Vh => Base::Vh,
+            },
+            factor,
+        },
+        SizeSpec::Flex { weight, shrink, basis } => Size::Fill {
+            weight,
+            basis: FitBound::Abs(basis),
+            shrink,
+            min: None,
+            max: None,
+        },
     }
 }
 
@@ -488,15 +555,29 @@ fn control_script(style: &Style) -> String {
     let mut parts = Vec::new();
     if let Some(color) = style.background {
         let hex = color.hex_script();
-        parts.push(format!(
-            "draw_bg.color: {hex} draw_bg.color_hover: {hex} draw_bg.color_down: {hex} draw_bg.color_focus: {hex}"
-        ));
+        parts.push(format!("draw_bg.color: {hex}"));
+        if let Some(hover) = style.hover_bg {
+            parts.push(format!("draw_bg.color_hover: {}", hover.hex_script()));
+        }
+        if let Some(active) = style.active_bg {
+            parts.push(format!("draw_bg.color_down: {}", active.hex_script()));
+        }
+        if let Some(disabled) = style.disabled_bg {
+            parts.push(format!("draw_bg.color_disabled: {}", disabled.hex_script()));
+        }
     }
     if let Some(color) = style.color {
         let hex = color.hex_script();
-        parts.push(format!(
-            "draw_text.color: {hex} draw_text.color_hover: {hex} draw_text.color_down: {hex} draw_text.color_focus: {hex}"
-        ));
+        parts.push(format!("draw_text.color: {hex}"));
+        if let Some(hover) = style.hover_fg {
+            parts.push(format!("draw_text.color_hover: {}", hover.hex_script()));
+        }
+        if let Some(active) = style.active_fg {
+            parts.push(format!("draw_text.color_down: {}", active.hex_script()));
+        }
+        if let Some(disabled) = style.disabled_fg {
+            parts.push(format!("draw_text.color_disabled: {}", disabled.hex_script()));
+        }
     }
     if let Some(size) = style.font_size {
         parts.push(format!("draw_text.text_style.font_size: {size}"));
@@ -528,18 +609,33 @@ fn control_script(style: &Style) -> String {
     }
     // `#[walk]` flattens `walk.width` to the widget property `width`.
     match style.width {
-        Some(SizeSpec::Fill) => parts.push("width: Fill".into()),
-        Some(SizeSpec::Fit) => parts.push("width: Fit".into()),
-        Some(SizeSpec::Px(px)) => parts.push(format!("width: {px}")),
+        Some(size) => parts.push(format!("width: {}", size_script_host(size))),
         None => {}
     }
     match style.height {
-        Some(SizeSpec::Fill) => parts.push("height: Fill".into()),
-        Some(SizeSpec::Fit) => parts.push("height: Fit".into()),
-        Some(SizeSpec::Px(px)) => parts.push(format!("height: {px}")),
+        Some(size) => parts.push(format!("height: {}", size_script_host(size))),
         None => {}
     }
     parts.join(" ")
+}
+
+fn size_script_host(size: SizeSpec) -> String {
+    match size {
+        SizeSpec::Fill => "Fill".into(),
+        SizeSpec::Fit => "Fit".into(),
+        SizeSpec::Px(px) => px.to_string(),
+        SizeSpec::Rel { base, factor } => {
+            let base = match base {
+                quinn_styles::RelBase::Parent => "Base.Parent",
+                quinn_styles::RelBase::Vw => "Base.Vw",
+                quinn_styles::RelBase::Vh => "Base.Vh",
+            };
+            format!("Rel{{base: {base} factor: {factor}}}")
+        }
+        SizeSpec::Flex { weight, shrink, basis } => {
+            format!("Fill{{weight: {weight} shrink: {shrink} basis: {basis}}}")
+        }
+    }
 }
 
 /// Mark-sweep the Makepad script heap and return spare capacity to the

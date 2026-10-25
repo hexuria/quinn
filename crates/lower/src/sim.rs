@@ -7,6 +7,7 @@
 
 use std::collections::HashMap;
 
+use crate::jobrt::{accept_gen, JobValue};
 use crate::model::*;
 
 #[derive(Clone, Debug)]
@@ -35,6 +36,10 @@ pub struct Sim {
     count_signal: Option<String>,
     row_signal_names: Vec<String>,
     ctx: HashMap<String, String>,
+    /// Rows of a job list, keyed by `{name}_value`.
+    field_rows: HashMap<String, Vec<HashMap<String, String>>>,
+    /// Fields of the job row currently being painted.
+    active_fields: HashMap<String, String>,
 }
 
 impl Sim {
@@ -79,17 +84,9 @@ impl Sim {
             strings.insert(format!("{}_value", job.name), String::new());
             strings.insert(format!("{}_error", job.name), String::new());
             state.insert(format!("{}_gen", job.name), 1);
-            if let Some(source) = &job.source {
-                let init = model
-                    .signal(source)
-                    .map(|signal| match &signal.init {
-                        Init::Str(text) => text.clone(),
-                        Init::Int(value) => value.to_string(),
-                        Init::Bool(value) => value.to_string(),
-                        _ => String::new(),
-                    })
-                    .unwrap_or_default();
-                strings.insert(format!("{}_source", job.name), init);
+            if !job.deps.is_empty() {
+                let deps = job.deps.clone();
+                strings.insert(format!("{}_source", job.name), deps_init(&model, &deps));
             }
             if matches!(job.kind, JobKind::Action) {
                 state.insert(format!("{}_pending", job.name), 0);
@@ -112,6 +109,8 @@ impl Sim {
             count_signal: None,
             row_signal_names: Vec::new(),
             ctx,
+            field_rows: HashMap::new(),
+            active_fields: HashMap::new(),
         };
         sim.refresh_row_meta();
         sim.render();
@@ -200,11 +199,33 @@ impl Sim {
                 }
             }
             ViewNode::For {
-                child, row_signals, ..
+                items,
+                child,
+                row_signals,
+                ..
             } => {
                 let signals = row_signals.clone();
-                for (index, item) in self.items.clone().into_iter().enumerate() {
-                    self.render_row(child, index, &item, &signals, live);
+                if items.ends_with("_value") {
+                    let rows = self.field_rows.get(items).cloned().unwrap_or_default();
+                    for (index, fields) in rows.into_iter().enumerate() {
+                        let label = fields
+                            .get("name")
+                            .or_else(|| fields.get("label"))
+                            .cloned()
+                            .unwrap_or_default();
+                        let item = ItemSeed {
+                            id: index as i64 + 1,
+                            label,
+                        };
+                        self.active_fields = fields;
+                        self.render_row(child, index, &item, &signals, live);
+                        self.active_fields.clear();
+                    }
+                } else {
+                    for (index, item) in self.items.clone().into_iter().enumerate() {
+                        self.active_fields.clear();
+                        self.render_row(child, index, &item, &signals, live);
+                    }
                 }
             }
             ViewNode::Slot { nodes, .. } => {
@@ -287,14 +308,14 @@ impl Sim {
         })
     }
 
-    /// A resource whose source signal changed goes back to `"loading"` and
+    /// A job whose dependency signals changed goes back to `"loading"` and
     /// keeps the previous value, so a `<Transition>` can show both.
     fn sync_jobs(&mut self) {
         for job in self.model.jobs.clone() {
-            let Some(source) = job.source else {
+            if job.deps.is_empty() {
                 continue;
-            };
-            let current = self.signal_text(&source);
+            }
+            let current = self.deps_text(&job.deps);
             let prev = self
                 .strings
                 .get(&format!("{}_source", job.name))
@@ -316,6 +337,13 @@ impl Sim {
         }
     }
 
+    fn deps_text(&self, deps: &[String]) -> String {
+        deps.iter()
+            .map(|dep| self.signal_text(dep))
+            .collect::<Vec<_>>()
+            .join("|")
+    }
+
     fn signal_text(&self, name: &str) -> String {
         if let Some(text) = self.strings.get(name) {
             return text.clone();
@@ -332,47 +360,87 @@ impl Sim {
         self.render();
     }
 
-    /// Finish every job the executor would complete: loading resources, and
-    /// actions whose pending flag is set.
-    pub fn settle(&mut self) {
-        for job in self.model.jobs.clone() {
-            let phase = self
-                .strings
-                .get(&format!("{}_phase", job.name))
-                .cloned()
-                .unwrap_or_default();
-            let pending = self
-                .state
-                .get(&format!("{}_pending", job.name))
-                .copied()
-                .unwrap_or(0);
-            let start = match job.kind {
-                JobKind::Action => pending == 1,
-                JobKind::Local | JobKind::Resource => phase == "loading",
-            };
-            if !start {
-                continue;
+    pub fn gen(&self, name: &str) -> i64 {
+        self.state.get(&format!("{name}_gen")).copied().unwrap_or(0)
+    }
+
+    fn accept(&self, name: &str, gen: i64) -> bool {
+        if gen < 0 {
+            return false;
+        }
+        let current = self.gen(name);
+        if current < 0 {
+            return false;
+        }
+        self.model.jobs.iter().any(|job| job.name == name)
+            && accept_gen(current as u64, gen as u64)
+    }
+
+    /// Write a successful future result when `gen` is still current.
+    /// A stale generation is ignored and returns false.
+    pub fn complete(&mut self, name: &str, gen: i64, value: JobValue) -> bool {
+        if !self.accept(name, gen) {
+            return false;
+        }
+        self.strings
+            .insert(format!("{name}_phase"), "ready".into());
+        self.strings.insert(format!("{name}_error"), String::new());
+        self.store_value(name, &value);
+        self.state.insert(format!("{name}_pending"), 0);
+        self.render();
+        true
+    }
+
+    /// Write an `Err` or a caught panic when `gen` is still current.
+    pub fn fail(&mut self, name: &str, gen: i64, err: &str) -> bool {
+        if !self.accept(name, gen) {
+            return false;
+        }
+        self.strings
+            .insert(format!("{name}_phase"), "error".into());
+        self.strings.insert(format!("{name}_value"), String::new());
+        self.strings
+            .insert(format!("{name}_error"), err.to_string());
+        self.field_rows.remove(&format!("{name}_value"));
+        self.state.insert(format!("{name}_pending"), 0);
+        self.render();
+        true
+    }
+
+    fn store_value(&mut self, name: &str, value: &JobValue) {
+        let key = format!("{name}_value");
+        self.field_rows.remove(&key);
+        match value {
+            JobValue::List(items) => {
+                let mut rows = Vec::new();
+                let mut labels = Vec::new();
+                for (index, item) in items.iter().enumerate() {
+                    let mut fields = HashMap::new();
+                    match item {
+                        JobValue::Obj(obj) => {
+                            for (field, value) in obj {
+                                fields.insert(field.clone(), value.display());
+                            }
+                        }
+                        other => {
+                            fields.insert("name".into(), other.display());
+                        }
+                    }
+                    fields
+                        .entry("id".into())
+                        .or_insert_with(|| (index as i64 + 1).to_string());
+                    if let Some(label) = fields.get("name").cloned() {
+                        labels.push(label);
+                    }
+                    rows.push(fields);
+                }
+                self.field_rows.insert(key.clone(), rows);
+                self.strings.insert(key, labels.join(", "));
             }
-            if job.err_text.is_empty() {
-                self.strings
-                    .insert(format!("{}_phase", job.name), "ready".into());
-                self.strings
-                    .insert(format!("{}_value", job.name), job.ok_text.clone());
-                self.strings
-                    .insert(format!("{}_error", job.name), String::new());
-            } else {
-                self.strings
-                    .insert(format!("{}_phase", job.name), "error".into());
-                self.strings
-                    .insert(format!("{}_value", job.name), String::new());
-                self.strings
-                    .insert(format!("{}_error", job.name), job.err_text.clone());
-            }
-            if matches!(job.kind, JobKind::Action) {
-                self.state.insert(format!("{}_pending", job.name), 0);
+            other => {
+                self.strings.insert(key, other.display());
             }
         }
-        self.render();
     }
 
     fn render_row(
@@ -531,8 +599,13 @@ impl Sim {
         for part in &el.parts {
             match part {
                 Part::Lit(text) => out.push_str(text),
-                Part::Param(name) if name == "label" || name == "item" => out.push_str(&item.label),
-                Part::Param(_) => out.push_str(&item.label),
+                Part::Param(name) => {
+                    if let Some(text) = self.active_fields.get(name) {
+                        out.push_str(text);
+                    } else {
+                        out.push_str(&item.label);
+                    }
+                }
                 Part::Sig(name) => {
                     if let Some(text) = self.row_strings.get(&(item.id, name.clone())) {
                         out.push_str(text);
@@ -901,6 +974,12 @@ impl Sim {
                         .unwrap_or(1);
                     self.state.insert(format!("{action}_gen"), gen + 1);
                 }
+                HandlerStmt::Refetch { job } => {
+                    self.strings
+                        .insert(format!("{job}_phase"), "loading".into());
+                    let gen = self.state.get(&format!("{job}_gen")).copied().unwrap_or(1);
+                    self.state.insert(format!("{job}_gen"), gen + 1);
+                }
                 HandlerStmt::ToggleTheme => {
                     let dark = self.state.get("quinn_dark").copied().unwrap_or(0);
                     self.state.insert("quinn_dark".into(), if dark == 0 { 1 } else { 0 });
@@ -1120,6 +1199,23 @@ fn flatten_obj(
             Init::Items(_) => {}
         }
     }
+}
+
+fn deps_init(model: &Model, deps: &[String]) -> String {
+    deps.iter()
+        .map(|dep| {
+            model
+                .signal(dep)
+                .map(|signal| match &signal.init {
+                    Init::Str(text) => text.clone(),
+                    Init::Int(value) => value.to_string(),
+                    Init::Bool(value) => value.to_string(),
+                    _ => String::new(),
+                })
+                .unwrap_or_default()
+        })
+        .collect::<Vec<_>>()
+        .join("|")
 }
 
 fn ctx_literal(expr: &str) -> String {

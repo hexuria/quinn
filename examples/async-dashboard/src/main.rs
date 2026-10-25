@@ -1,3 +1,5 @@
+mod jobs;
+
 use quinn::makepad_widgets::*;
 
 app_main!(App, font_assets: [makepad_platform::ROBOTO_FLEX_FONT_ASSET]);
@@ -16,6 +18,7 @@ impl MatchEvent for App {
 
 impl AppMain for App {
     fn script_mod(vm: &mut ScriptVm) -> ScriptValue {
+        jobs::install();
         quinn::makepad_widgets::script_mod(vm);
         let component = Self::script_component(vm).script_to_value(vm);
         quinn::load_hot_view(
@@ -24,7 +27,7 @@ impl AppMain for App {
             module_path!(),
             "Async dashboard",
             960,
-            640,
+            720,
             component,
         )
     }

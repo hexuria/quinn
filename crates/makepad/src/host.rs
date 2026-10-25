@@ -1,9 +1,12 @@
 use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};
+use std::sync::{Mutex, OnceLock};
 
+use makepad_widgets::makepad_platform::SignalToUI;
 use makepad_widgets::makepad_script::ScriptMod;
 use makepad_widgets::*;
 use quinn_core::{IntoView, NodeSpec, Owner, Runtime, Style, Surface, Tag, UiEvent};
+use quinn_lower::JobValue;
 use quinn_styles::{AlignSpec, FlowSpec, SizeSpec};
 
 use crate::{session_slot, Session};
@@ -769,16 +772,33 @@ pub fn load_hot_view(
     eval_hot_file(vm, &hot, manifest_dir, module_path, component)
 }
 
-struct Flight {
-    index: usize,
-    timer: Timer,
+struct Delivery {
+    name: String,
+    gen: u64,
+    result: Result<JobValue, String>,
+}
+
+fn inbox() -> &'static Mutex<Vec<Delivery>> {
+    static INBOX: OnceLock<Mutex<Vec<Delivery>>> = OnceLock::new();
+    INBOX.get_or_init(|| Mutex::new(Vec::new()))
+}
+
+fn job_runtime() -> &'static tokio::runtime::Runtime {
+    static RUNTIME: OnceLock<tokio::runtime::Runtime> = OnceLock::new();
+    RUNTIME.get_or_init(|| {
+        tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(2)
+            .enable_time()
+            .thread_name("quinn-job")
+            .build()
+            .expect("quinn tokio runtime")
+    })
 }
 
 std::thread_local! {
-    static FLIGHTS: RefCell<Vec<Flight>> = const { RefCell::new(Vec::new()) };
-    /// `(job index, generation)` already handed to a timer. Hot reload keeps
-    /// this set, so a finished job is not started again when `mod.state` survives.
-    static STARTED: RefCell<HashSet<(usize, u64)>> = RefCell::new(HashSet::new());
+    /// `(binding, generation)` already spawned. Hot reload keeps this set, so
+    /// an in-flight future is not started again when `mod.state` survives.
+    static STARTED: RefCell<HashSet<(String, u64)>> = RefCell::new(HashSet::new());
 }
 
 /// Drive shell signals and client jobs.
@@ -786,10 +806,13 @@ std::thread_local! {
 /// Call this at the end of `handle_event`, after `boot_script` and
 /// `ui.handle_event`, so a click's `dispatch` is visible on the same event.
 /// `WindowGeomChange` writes `state.quinn_width`. A job whose script gen is
-/// non-zero (`"loading"`, or an action with `pending`) is armed with
-/// `Cx::start_timeout`. When that timer fires, `mod.quinn_finish` writes the
-/// closed `Ok` / `Err` literal and calls `render()`. Script itself stays
-/// synchronous. Mouse moves are ignored.
+/// non-zero (`"loading"`, or an action with `pending`) is spawned on the tokio
+/// pool. The worker calls `SignalToUI::set_ui_signal`. On `Event::Signal` the
+/// result is written with `mod.quinn_apply` only when that generation is still
+/// current and the binding is still in the reloaded tree. Mouse moves are ignored.
+///
+/// Markup and classes hot-reload. The async fn body is compiled Rust and needs
+/// a rebuild, the same split Makepad has between script and Rust.
 pub fn drive_shell(cx: &mut Cx, event: &Event) {
     if std::env::var("QUINN_JOB_LOG").is_ok() {
         eprintln!("drive_shell");
@@ -800,29 +823,6 @@ pub fn drive_shell(cx: &mut Cx, event: &Event) {
             if ok{mod.quinn_set_width} != nil { mod.quinn_set_width(#(w)) } else { 0 }
             true
         });
-    }
-    if let Event::Timer(_) = event {
-        let mut done = Vec::new();
-        FLIGHTS.with(|flights| {
-            flights.borrow_mut().retain(|flight| {
-                if flight.timer.is_event(event).is_some() {
-                    done.push(flight.index);
-                    false
-                } else {
-                    true
-                }
-            });
-        });
-        for index in done {
-            let i = index as f64;
-            if std::env::var("QUINN_JOB_LOG").is_ok() {
-                eprintln!("quinn job {index} finished");
-            }
-            script_eval!(cx, {
-                if ok{mod.quinn_finish} != nil { mod.quinn_finish(#(i)) } else { 0 }
-                true
-            });
-        }
     }
     let poll = matches!(
         event,
@@ -836,6 +836,7 @@ pub fn drive_shell(cx: &mut Cx, event: &Event) {
             | Event::TextInput(_)
     );
     if poll {
+        drain_jobs(cx);
         poll_jobs(cx);
     }
 }
@@ -846,20 +847,30 @@ fn script_number(value: ScriptValue) -> f64 {
     value.as_number().unwrap_or(0.0)
 }
 
+fn script_text(cx: &mut Cx, value: ScriptValue) -> String {
+    if let Some(number) = value.as_number() {
+        if number.is_finite() && number.fract() == 0.0 && number.abs() < 1e15 {
+            return format!("{}", number as i64);
+        }
+        return number.to_string();
+    }
+    if let Some(flag) = value.as_bool() {
+        return if flag { "true" } else { "false" }.into();
+    }
+    let mut text = String::new();
+    cx.with_vm(|vm| {
+        vm.bx.heap.cast_to_string(value, &mut text);
+    });
+    text
+}
+
 fn poll_jobs(cx: &mut Cx) {
     let count_value = script_eval!(cx, {
         if ok{mod.quinn_job_count} == nil { 0 } else { mod.quinn_job_count() }
     });
     let count = script_number(count_value).round() as usize;
     if std::env::var("QUINN_JOB_LOG").is_ok() {
-        let mut text = String::new();
-        cx.with_vm(|vm| {
-            vm.bx.heap.cast_to_string(count_value, &mut text);
-        });
-        eprintln!(
-            "job count raw={text} number={:?} n={count}",
-            count_value.as_number()
-        );
+        eprintln!("job count n={count}");
     }
     for index in 0..count {
         let i = index as f64;
@@ -868,22 +879,125 @@ fn poll_jobs(cx: &mut Cx) {
         if gen == 0 {
             continue;
         }
-        let already = STARTED.with(|started| started.borrow().contains(&(index, gen)));
+        let key_value = script_eval!(cx, { mod.quinn_job_key(#(i)) });
+        let key = script_text(cx, key_value);
+        if key.is_empty() {
+            continue;
+        }
+        let already = STARTED.with(|started| started.borrow().contains(&(key.clone(), gen)));
         if already {
             continue;
         }
-        let delay_value = script_eval!(cx, { mod.quinn_job_delay(#(i)) });
-        let delay = script_number(delay_value).max(0.0);
-        let timer = cx.start_timeout(delay);
+        let func_value = script_eval!(cx, { mod.quinn_job_fn(#(i)) });
+        let func = script_text(cx, func_value);
+        let arg_value = script_eval!(cx, { mod.quinn_job_arg(#(i)) });
+        let arg = script_text(cx, arg_value);
         if std::env::var("QUINN_JOB_LOG").is_ok() {
-            eprintln!("quinn job {index} gen {gen} delay {delay}");
+            eprintln!("quinn job {key} fn {func} gen {gen} arg {arg}");
         }
         STARTED.with(|started| {
-            started.borrow_mut().insert((index, gen));
+            started.borrow_mut().insert((key.clone(), gen));
         });
-        FLIGHTS.with(|flights| {
-            flights.borrow_mut().push(Flight { index, timer });
+        spawn_job(func, key, gen, arg);
+    }
+}
+
+fn spawn_job(func: String, binding: String, gen: u64, arg: String) {
+    let job_arg = quinn_lower::JobArg::from_text(arg);
+    let Some(run) = quinn_lower::lookup(&func) else {
+        if std::env::var("QUINN_JOB_LOG").is_ok() {
+            eprintln!("quinn job {binding} has no fn {func}");
+        }
+        deliver(
+            binding,
+            gen,
+            Err(format!("no async fn `{func}`")),
+        );
+        return;
+    };
+    job_runtime().spawn(async move {
+        let result = run(job_arg).await;
+        deliver(binding, gen, result);
+    });
+}
+
+fn deliver(name: String, gen: u64, result: Result<JobValue, String>) {
+    inbox()
+        .lock()
+        .unwrap_or_else(|err| err.into_inner())
+        .push(Delivery { name, gen, result });
+    SignalToUI::set_ui_signal();
+}
+
+fn drain_jobs(cx: &mut Cx) {
+    let batch: Vec<Delivery> = inbox()
+        .lock()
+        .unwrap_or_else(|err| err.into_inner())
+        .drain(..)
+        .collect();
+    if batch.is_empty() {
+        return;
+    }
+    let mut retry = Vec::new();
+    let mut applied_any = false;
+    for item in batch {
+        let phase = if item.result.is_ok() {
+            "ready".to_string()
+        } else {
+            "error".to_string()
+        };
+        let (json, err) = match &item.result {
+            Ok(value) => (value.to_json(), String::new()),
+            Err(err) => ("\"\"".to_string(), err.clone()),
+        };
+        let name = item.name.clone();
+        let gen = item.gen as f64;
+        let applied = name.clone();
+        // Both branches are calls. A literal on one side and a call on the
+        // other unbalances the script stack, so the apply ran and the Rust
+        // side still saw nil and retried the same delivery forever.
+        let flag = script_eval!(cx, {
+            let raw = #(json)
+            let value = raw.parse_json()
+            fn quinn_missing() { 0 }
+            if ok{mod.quinn_apply} == nil { quinn_missing() } else { mod.quinn_apply(#(applied), #(gen), #(phase), value, #(err)) }
         });
+        match script_number(flag).round() as i64 {
+            2 => {
+                applied_any = true;
+                if std::env::var("QUINN_JOB_LOG").is_ok() {
+                    eprintln!("quinn job {name} gen {} applied", item.gen);
+                }
+            }
+            // Stale generation, or the binding left the tree. Consumed.
+            1 => {
+                if std::env::var("QUINN_JOB_LOG").is_ok() {
+                    eprintln!("quinn job {name} gen {} stale", item.gen);
+                }
+            }
+            _ => {
+                if std::env::var("QUINN_JOB_LOG").is_ok() {
+                    eprintln!(
+                        "quinn job {name} gen {} held ({})",
+                        item.gen,
+                        script_text(cx, flag)
+                    );
+                }
+                retry.push(item);
+            }
+        }
+    }
+    if applied_any {
+        script_eval!(cx, {
+            ui.host.render()
+            true
+        });
+    }
+    if !retry.is_empty() {
+        inbox()
+            .lock()
+            .unwrap_or_else(|err| err.into_inner())
+            .splice(0..0, retry);
     }
 }
 

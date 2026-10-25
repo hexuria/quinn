@@ -30,36 +30,34 @@ fn Shade() -> impl IntoView {
 fn Dashboard() -> impl IntoView {
     provide_context("tone", "stone");
     let tone = use_context("tone");
-    let note = LocalResource::new(|| async move {
-        delay_ms(700);
-        Ok("Ada's note".to_string())
-    });
-    let feed = LocalResource::new(|| async move {
-        delay_ms(400);
-        Err("feed dropped".to_string())
-    });
+    let note = LocalResource::new(|| async move { fetch_note().await });
+    let feed = LocalResource::new(|| async move { fetch_feed().await });
+    let cities = LocalResource::new(|| async move { fetch_cities().await });
+    let boom = LocalResource::new(|| async move { boom().await });
     let (city, set_city) = signal("Manila".to_string());
-    let place = Resource::new(
-        || city.get(),
-        |_| async move {
-            delay_ms(500);
-            Ok("Manila desk".to_string())
-        },
-    );
-    let save = Action::new(|_city: &str| async move {
-        delay_ms(300);
-        Ok("Saved Cebu".to_string())
+    let place = Resource::new(|| city.get(), |city| async move { fetch_place(city).await });
+    let save = Action::new(|place: &String| {
+        let p = place.clone();
+        async move { save_place(p).await }
+    });
+    let race = Action::new(|place: &String| {
+        let p = place.clone();
+        async move { race_place(p).await }
     });
     let (open, set_open) = signal(false);
 
     view! {
-        <div class="flex flex-col gap-3 p-4 bg-stone-100 dark:bg-stone-900 h-full">
-            <div class="flex flex-row items-center gap-2">
+        <div class="flex flex-col gap-2 p-4 bg-stone-100 dark:bg-stone-900 h-full">
+            <div class="flex flex-row flex-wrap items-center gap-2">
                 <span class="text-lg font-semibold dark:text-stone-100">"Async dashboard"</span>
                 <button class="px-2 py-1 focus:bg-amber-100" on:click=move |_| { toggle_theme(); }>"Theme"</button>
                 <button class="px-2 py-1" on:click=move |_| { set_open.set(true); }>"Open modal"</button>
-                <button class="px-2 py-1" on:click=move |_| { save.dispatch("Cebu"); }>"Save"</button>
+                <button class="px-2 py-1" on:click=move |_| { save.dispatch("Cebu"); }>"Save Cebu"</button>
+                <button class="px-2 py-1" on:click=move |_| { save.dispatch("Davao"); }>"Save Davao"</button>
                 <button class="px-2 py-1" on:click=move |_| { set_city.set("Cebu"); }>"Refetch"</button>
+                <button class="px-2 py-1" on:click=move |_| { note.refetch(); }>"Reload"</button>
+                <button class="px-2 py-1" on:click=move |_| { race.dispatch("Cebu"); }>"Race Cebu"</button>
+                <button class="px-2 py-1" on:click=move |_| { race.dispatch("Davao"); }>"Race Davao"</button>
                 <span class="text-sm dark:text-stone-100">"Tone " {tone}</span>
                 <Shade />
             </div>
@@ -77,10 +75,23 @@ fn Dashboard() -> impl IntoView {
                     <ErrorBoundary fallback=|| view! { <span class="text-sm dark:text-stone-100">"Could not load the feed"</span> }>
                         <span class="text-sm dark:text-stone-100">"Feed: " {feed}</span>
                     </ErrorBoundary>
+                    <ErrorBoundary fallback=|| view! { <span class="text-sm dark:text-stone-100">"The job panicked"</span> }>
+                        <span class="text-sm dark:text-stone-100">"Boom: " {boom}</span>
+                    </ErrorBoundary>
                     <Show when=move || save.pending()>
                         <span class="text-sm font-medium dark:text-stone-100">"Saving"</span>
                     </Show>
                     <span class="text-sm dark:text-stone-100">"Action: " {save}</span>
+                    <span class="text-sm dark:text-stone-100">{move || save.version()}</span>
+                    <Show when=move || race.pending()>
+                        <span class="text-sm font-medium dark:text-stone-100">"Racing"</span>
+                    </Show>
+                    <span class="text-sm dark:text-stone-100">"Race: " {race}</span>
+                    <Suspense fallback=|| view! { <span class="text-sm dark:text-stone-100">"Loading cities"</span> }>
+                        <For each=move || cities.get() key=|city| city.name>
+                            <span class="text-sm dark:text-stone-100">{city.name}</span>
+                        </For>
+                    </Suspense>
                     <Card title="Ada".into()>
                         <div class="h-[48px] rounded bg-stone-100">
                             <div class="absolute left-2 top-1 z-10">

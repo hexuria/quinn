@@ -36,7 +36,7 @@ Legend: **supported** means a `view.rs` the lowerer accepts and a running exampl
 | `RwSignal`, split read/write, `ReadSignal` | Missing | The re-export is whatever `reactive_graph` prelude has, and only compiled tests can call it. Script would be the same `mod.state` field with two names. Small once expressions exist. |
 | `Memo`, derived closures | Missing | Text `if` is the only derived form, and it is recomputed inside `on_render`, not cached. A memo is a script function of `state` called from `on_render`. No dependency tracking. Medium for a real expression language; small if the set of expressions stays closed. |
 | `Effect` / `RenderEffect` | Partial | Headless code has `ImmediateEffect` (`crates/reactive/src/lib.rs`) because Makepad has no async executor (`docs/decisions.md`). The window has no effect. A script effect is "the setter writes state and calls `render()`". An effect that must run without rebuilding the tree needs a script function invoked from the setter, not a subscriber list. Medium, and it will not match Leptos's "track what you read". |
-| Resources, `async`, `Suspense`, `Transition`, `Action` | Partial | `LocalResource::new`, `Resource::new`, and `Action::new` lower a closed body (`delay_ms`, `Ok("...")` / `Err("...")`) onto `mod.state` phase fields. `drive_shell` arms `Cx::start_timeout` and `mod.quinn_finish` writes the literal. `<Suspense>` / `<Transition>` are script gates. Not a Rust future, not `Suspend::new(IntoFuture)`, and not a server. |
+| Resources, `async`, `Suspense`, `Transition`, `Action` | Partial | `LocalResource::new`, `Resource::new`, and `Action::new` name a compiled async fn. A tokio worker polls that future. `SignalToUI` delivers the `Result` onto `mod.state` phase fields. `<Suspense>` / `<Transition>` are script gates. Not `Suspend::new(IntoFuture)`, and not a server. The fn body is Rust, so editing it needs a rebuild. |
 | `on_cleanup` | Partial | Re-exported and used by the headless owner. Script unmount is "this `on_render` did not return the widget", and `<Show>` zeroes the child's fields (`emit.rs` `emit_show_fn`). There is no user `on_cleanup` hook. A script callback stored on `mod` and called from the show's off branch is small. |
 
 ### Control flow
@@ -45,8 +45,8 @@ Legend: **supported** means a `view.rs` the lowerer accepts and a running exampl
 | --- | --- | --- |
 | `<Show when>` | Partial | Works at the host and inside a `<For>` row. Two functions: `_on` returns the child, `_off` returns `0`. A statement `if` in `on_render` unbalances the script stack, which is why it is functions. Fallback is the off branch, not a `<Show fallback>`. A row show is `row_quinn_show_<signal>_<n>(id, …)` and its flag lives on `state.r_<flag>["k"+id]`. Removing a row does not clear that id; pushing the id again calls `quinn_row_reset`. |
 | `<For each key let>` | Partial | Keyed counts live on `state.counts["k"+id]` because anonymous children match by index (`docs/architecture.md`). The row template is one element. Add, pop, and reverse are hard-coded actions. A general `each()` closure is not. Indexed `For` without a key would be the same loop and would lose per-row state on reorder, which is the turtle's behavior, not a bug to paper over. |
-| `<Suspense>` / `<Transition>` | Partial | A gate function. Loading with an empty value shows the fallback. `<Transition>` keeps the previous value on screen beside the fallback. The job body is the closed literal above, not an arbitrary future. |
-| `<ErrorBoundary>` | Partial | Shows the fallback when a child job's phase is `"error"`. It does not catch a script panic or a failed `on_render`. |
+| `<Suspense>` / `<Transition>` | Partial | A gate function. Loading with an empty value shows the fallback. `<Transition>` keeps the previous value on screen beside the fallback. The value is whatever the compiled future returned. |
+| `<ErrorBoundary>` | Partial | Shows the fallback when a child job's phase is `"error"`, including `Err` from the future and a panic caught around `poll`. It does not catch a script panic or a failed `on_render`. |
 | `<Portal>` | Partial | Lifted to a later sibling of the app view under `flow: Overlay`, so it paints above the page. Not a DOM mount and not a second OS window. |
 | `<DynamicChild>` / `<{expr}>` | Missing | The macro has no dynamic tag. Script would store a tag name on `state` and branch in `on_render` with the same function-per-branch pattern as `<Show>`. Medium, and only for tags the lowerer knows. |
 
@@ -215,10 +215,9 @@ Limits that were still true after P1. P2 changes context shadowing, `#[prop(into
 | `#[prop(into)]` | `"Ada".into()` / `.to_string()` becomes the literal. A path that is not a signal is an error. |
 | `hover:` on a `div` | `cursor: MouseCursor.Arrow` plus an `Animator` that writes `draw_bg.color`. The down track's resting color is the base color, so the first frames are not the hover swatch. `focus:` sets `draw_bg.color_focus` on `Button` and `TextInput`. |
 
-Limits that are still true after P2:
+Limits that are still true after P2, except where P3a below replaces the job body:
 
-- The job body is not Rust and not a future. `view.rs` is not compiled. `delay_ms` plus `Ok` / `Err` of a string literal is the whole language. `Action`'s result ignores the `dispatch` argument. A `Resource` refetch shows the same literal again.
-- `<ErrorBoundary>` does not catch a script error or a Rust panic. A failed `on_render` still discards the frame.
+- `<ErrorBoundary>` does not catch a script error. A failed `on_render` still discards the frame. A panic inside a job future is an error phase (P3a); a panic in the frame is not.
 - Server functions, websocket server functions, hydration, and `leptos_router` are out. No server.
 - `align-content` is not implemented. Turtle `align` is per item, and `wrap_spacing` is a constant gap. Quinn does not vendor or patch Makepad for this.
 - An `absolute` child of a `Grid` is positioned inside the cell. The grid is not rewritten into an overlay, because that would drop the columns.
@@ -227,6 +226,31 @@ Limits that are still true after P2:
 - `Flow::Overlay` uses the parent's align for every overlay child. Per-child align is the frame's align, computed from which edges were set.
 - Taffy stays out.
 
-Practical parity is P0 plus P1 plus this P2 slice. It is not a Leptos 0.8 port. The runtime stays `mod.state`, `mod.ctx`, and `render()`, with `drive_shell` as the only timer bridge. `drive_shell` reads script numbers with `as_number`, because an integer literal is not an `f64`.
+Practical parity is P0 plus P1 plus this P2 slice, with P3a running the futures. It is not a Leptos 0.8 port. The runtime stays `mod.state`, `mod.ctx`, and `render()`. `drive_shell` reads script numbers with `as_number`, because an integer literal is not an `f64`.
 
-Measured on the same machine as the other rows in [benchmarks.md](benchmarks.md), 25 Oct 2026, about 7:45 PM Asia/Manila. pid 95336, starttime 3602412, window `0x2200002`, one uncut take: markup 325.3 ms, class 231.7 ms, with the loaded note, dark mode, and the open modal still there.
+### P3a — real async fns
+
+`view.rs` is still not compiled. The lowerer reads one function name and one argument expression out of the closure. `quinn::job("fetch_note", ...)` registers the future. `examples/async-dashboard/src/jobs.rs` is that registry. A two-thread tokio runtime in `quinn-makepad` polls it. Completion pushes a `JobValue` and calls `SignalToUI::set_ui_signal`. On `Event::Signal`, `mod.quinn_apply` writes `phase` / `value` / `error` only when `state.{name}_gen` is still that generation and `quinn_job_live(name)` is 1.
+
+| Item | What landed |
+| --- | --- |
+| Call shape | `LocalResource::new(move \|\| fetch_note(id.get()))`, `Resource::new(\|\| city.get(), \|city\| async move { fetch_place(city).await })`, `Action::new(\|place: &String\| { let p = place.clone(); async move { save_place(p).await } })`. One argument. `let p = place.clone()` is an alias of the closure parameter. |
+| `dispatch` / `refetch` | `dispatch(arg)` stores the argument and bumps `gen`. The future receives that argument. `refetch()` sets phase `"loading"`, bumps `gen`, and keeps the previous value. |
+| Source tracking | Signals read by the resource source (and by `signal.get()` in a local body) are `deps`. `quinn_sync_jobs` compares them to `{name}_source` and restarts without clearing the value. |
+| Races | `STARTED` is `(binding, gen)` on the UI thread and is not cleared by hot reload. A newer gen makes `quinn_job_gen` non-zero, so a new task starts. The old result fails the gen check and is dropped. A binding removed by the reload fails `quinn_job_live` and is dropped. |
+| Values | `String`, numbers, bools, and serde structs / `Vec` become script values through JSON (`parse_json`). A list of objects is `state.{name}_value`, which `<For each=move \|\| cities.get()>` walks. `{city.name}` is the row field. |
+| Panics | `poll` runs inside `catch_unwind`. The payload becomes `Err("panic: ...")` and the phase is `"error"`. |
+| HTTP | Feature `net` plus `QUINN_HTTP=1` GETs `https://jsonplaceholder.typicode.com/users` with ureq on `spawn_blocking`. Failure, or a build without the variable, uses Manila / Cebu / Davao. |
+
+Limits that are still true after P3a:
+
+- The async fn is compiled Rust. Changing `jobs.rs` needs a rebuild. Changing markup or classes in `view.rs` hot-reloads, and an in-flight future is not started a second time.
+- The closure may call one function with one argument. There is no `.await` of an inline block that is not a named fn, and no multi-argument call.
+- `JobValue` is the value language (string, number, bool, list, object). It is not an arbitrary Rust type stored in the script heap.
+- `<ErrorBoundary>` still does not catch a script panic or a panic outside the job future.
+- No cancellation token is dropped into the future. A stale gen is ignored when it finishes; the worker still runs it.
+- Server functions, websockets, and hydration are out. The HTTP path is one optional GET.
+
+A `<For>` that is the only child of a suspense or boundary function is wrapped in a `RoundedView`. A bare `for` emits into the surrounding widget literal; a function has none, so the rows would otherwise not mount.
+
+The P2 take, before these futures, was measured 25 Oct 2026, about 7:45 PM Asia/Manila: pid 95336, starttime 3602412, window `0x2200002`, markup 325.3 ms, class 231.7 ms. That binary baked the results. The P3a take, 25 Oct 2026 at 9:44 PM Asia/Manila, pid 101729, starttime 4019518, window `0x2000002`, was 328.1 ms from `fsync` of `"Rail"` → `"Sidebar"` to the first changed frame, with the note still loading. The fetched note was the next change, at 2428.0 ms, in that reloaded tree. Details are in [benchmarks.md](benchmarks.md).

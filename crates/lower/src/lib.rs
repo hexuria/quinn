@@ -8,6 +8,7 @@
 mod emit;
 mod extract;
 mod handler;
+mod jobrt;
 mod model;
 mod parse;
 mod sim;
@@ -17,9 +18,10 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 pub use extract::extract_hot_script;
+pub use jobrt::{accept_gen, guard, job, lookup, panic_message, JobArg, JobRun, JobValue};
 pub use model::{
-    Act, BinOp, ClassWhen, El, HandlerStmt, HxExpr, Init, ItemSeed, Job, JobKind, Model, Part,
-    Signal, StyleWhen, ViewNode,
+    Act, ArgSrc, BinOp, ClassWhen, El, HandlerStmt, HxExpr, Init, ItemSeed, Job, JobKind, Model,
+    Part, Signal, StyleWhen, ViewNode,
 };
 pub use sim::Sim;
 
@@ -439,7 +441,7 @@ mod tests {
             ("examples/app-shell/view.rs", "padding: Inset{left: 8. top: 4. right: 0. bottom: 0.}"),
             ("examples/async-dashboard/view.rs", "fn quinn_gate_"),
             ("examples/async-dashboard/view.rs", "fn quinn_err_"),
-            ("examples/async-dashboard/view.rs", "mod.quinn_finish = quinn_finish"),
+            ("examples/async-dashboard/view.rs", "mod.quinn_apply = quinn_apply"),
             ("examples/async-dashboard/view.rs", "state.quinn_dark == 1"),
             ("examples/tailwind-gallery/view.rs", "state.quinn_width >= 768."),
         ];
@@ -822,7 +824,18 @@ mod tests {
             "quinn_width: 480.",
             "quinn_dark: 0",
             "fn quinn_job_count()",
-            "fn quinn_finish(i)",
+            "fn quinn_job_fn(i)",
+            "fn quinn_apply(name, gen, phase, value, err)",
+            "mod.quinn_apply = quinn_apply",
+            "\"fetch_note\"",
+            "\"fetch_place\"",
+            "\"save_place\"",
+            "\"race_place\"",
+            "\"fetch_cities\"",
+            "for city in state.cities_value",
+            "RoundedView {\n                width: Fill\n                height: Fit\n                flow: Down\n                for city in state.cities_value",
+            "state.note_phase = \"loading\"",
+            "state.note_gen = state.note_gen + 1",
             "fn quinn_sync_jobs()",
             "fn quinn_theme_on()",
             "if state.quinn_dark == 1 { quinn_theme_off() } else { quinn_theme_on() }",
@@ -833,6 +846,9 @@ mod tests {
             "state.feed_phase == \"error\"",
             "state.save_pending = true",
             "state.save_arg = \"Cebu\"",
+            "state.save_arg = \"Davao\"",
+            "state.race_arg = \"Cebu\"",
+            "state.race_arg = \"Davao\"",
             "text: \"Ada\"",
             "mod.ctx.tone = \"stone\"",
             "mod.ctx.tone = \"shade\"",
@@ -864,27 +880,97 @@ mod tests {
 
         let mut sim = Sim::new(parse_model(&source).unwrap());
         assert!(has_label(&sim, "Loading the note"));
+        assert!(has_label(&sim, "Loading cities"));
         assert!(!has_label(&sim, "Ada's note"));
         assert!(has_label(&sim, "Refreshing"));
         assert!(!has_label(&sim, "Manila desk"));
         assert!(!has_label(&sim, "Could not load the feed"));
+        assert!(!has_label(&sim, "The job panicked"));
         assert!(has_label(&sim, "Tone stone"));
         assert!(has_label(&sim, "shade"), "{:?}", sim.labels());
         assert!(!has_label(&sim, "Modal"));
-        sim.settle();
+        let note_gen = sim.gen("note");
+        let place_gen = sim.gen("place");
+        let feed_gen = sim.gen("feed");
+        let cities_gen = sim.gen("cities");
+        let boom_gen = sim.gen("boom");
+        assert!(sim.complete("note", note_gen, crate::JobValue::from("Ada's note")));
+        assert!(!sim.complete("note", note_gen - 1, crate::JobValue::from("stale note")));
+        assert!(sim.fail("feed", feed_gen, "feed dropped"));
+        assert!(sim.complete("place", place_gen, crate::JobValue::from("Manila desk")));
+        assert!(sim.complete(
+            "cities",
+            cities_gen,
+            crate::JobValue::list(vec![
+                crate::JobValue::obj(vec![
+                    ("id", crate::JobValue::from(1_i64)),
+                    ("name", crate::JobValue::from("Manila")),
+                ]),
+                crate::JobValue::obj(vec![
+                    ("id", crate::JobValue::from(2_i64)),
+                    ("name", crate::JobValue::from("Cebu")),
+                ]),
+                crate::JobValue::obj(vec![
+                    ("id", crate::JobValue::from(3_i64)),
+                    ("name", crate::JobValue::from("Davao")),
+                ]),
+            ])
+        ));
+        assert!(sim.fail("boom", boom_gen, "panic: boom"));
         assert!(has_label(&sim, "Ada's note"), "{:?}", sim.labels());
         assert!(!has_label(&sim, "Loading the note"));
         assert!(has_label(&sim, "Manila desk"));
         assert!(!has_label(&sim, "Refreshing"));
         assert!(has_label(&sim, "Could not load the feed"));
-        assert!(sim.click("save"));
+        assert!(has_label(&sim, "The job panicked"));
+        assert!(
+            sim.labels().iter().any(|(_, text)| text == "Manila"),
+            "{:?}",
+            sim.labels()
+        );
+        assert!(sim.labels().iter().any(|(_, text)| text == "Cebu"));
+        assert!(sim.labels().iter().any(|(_, text)| text == "Davao"));
+        assert!(!has_label(&sim, "Loading cities"));
+        assert!(sim.click("save_cebu"));
         assert_eq!(sim.state["save_pending"], 1);
         assert_eq!(sim.strings["save_arg"], "Cebu");
         assert!(has_label(&sim, "Saving"));
-        sim.settle();
+        let save_cebu = sim.gen("save");
+        assert!(sim.complete("save", save_cebu, crate::JobValue::from("Saved Cebu")));
         assert_eq!(sim.state["save_pending"], 0);
         assert!(has_label(&sim, "Saved Cebu"));
         assert!(!has_label(&sim, "Saving"));
+        assert!(sim.click("save_davao"));
+        assert_eq!(sim.strings["save_arg"], "Davao");
+        let save_davao = sim.gen("save");
+        assert!(save_davao > save_cebu);
+        assert!(!sim.complete(
+            "save",
+            save_cebu,
+            crate::JobValue::from("Saved Cebu")
+        ));
+        assert_eq!(sim.state["save_pending"], 1);
+        assert!(sim.complete(
+            "save",
+            save_davao,
+            crate::JobValue::from("Saved Davao")
+        ));
+        assert!(has_label(&sim, "Saved Davao"));
+        assert_eq!(sim.state["save_pending"], 0);
+        assert!(sim.click("race_cebu"));
+        let race_old = sim.gen("race");
+        assert_eq!(sim.strings["race_arg"], "Cebu");
+        assert!(sim.click("race_davao"));
+        let race_new = sim.gen("race");
+        assert!(race_new > race_old);
+        assert_eq!(sim.strings["race_arg"], "Davao");
+        assert!(!sim.complete("race", race_old, crate::JobValue::from("Cebu won")));
+        assert!(!has_label(&sim, "Cebu won"));
+        assert_eq!(sim.state["race_pending"], 1);
+        assert!(sim.complete("race", race_new, crate::JobValue::from("Davao won")));
+        assert!(has_label(&sim, "Davao won"));
+        assert!(!has_label(&sim, "Cebu won"));
+        assert_eq!(sim.state["race_pending"], 0);
         assert!(sim.click("theme"));
         assert_eq!(sim.state["quinn_dark"], 1);
         assert!(sim.click("theme"));
@@ -902,12 +988,29 @@ mod tests {
         assert!(sim.click("refetch"));
         assert_eq!(sim.strings["place_phase"], "loading");
         assert_eq!(sim.strings["place_value"], "Manila desk");
+        let place_next = sim.gen("place");
+        assert!(place_next > place_gen);
         assert!(has_label(&sim, "Refreshing"));
         assert!(has_label(&sim, "Manila desk"));
-        sim.settle();
+        assert!(!sim.complete(
+            "place",
+            place_gen,
+            crate::JobValue::from("Manila desk")
+        ));
+        assert_eq!(sim.strings["place_phase"], "loading");
+        assert!(sim.complete(
+            "place",
+            place_next,
+            crate::JobValue::from("Cebu desk")
+        ));
         assert_eq!(sim.strings["place_phase"], "ready");
-        assert!(has_label(&sim, "Manila desk"));
+        assert!(has_label(&sim, "Cebu desk"));
         assert!(!has_label(&sim, "Refreshing"));
+        let before_reload = sim.gen("note");
+        assert!(sim.click("reload"));
+        assert_eq!(sim.strings["note_phase"], "loading");
+        assert_eq!(sim.strings["note_value"], "Ada's note");
+        assert!(sim.gen("note") > before_reload);
 
         let bad = r#"
             #[component]

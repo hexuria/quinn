@@ -9,6 +9,8 @@ description = "Lower view! and signal() into Makepad script"
 [dependencies]
 quinn-core = { path = "../core" }
 quinn-styles = { path = "../styles" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
 proc-macro2 = "1"
 rstml = "=0.13.1"
 syn = { version = "3", features = ["full", "extra-traits"] }

@@ -11,10 +11,10 @@ pub use quinn_styles::{parse_classes, parse_inline, Style};
 
 #[cfg(feature = "native")]
 pub use quinn_makepad::{
-    after_mount, boot_script, census_host, drive_shell, eval_hot_file, flush_now, load_hot_view,
-    makepad_widgets,
-    on_actions, reclaim_script_heap, rss_kib, session_stats, set_frame_driver, set_inspector,
-    set_live_shell, startup, with_current_cx, with_cx, SessionStats, WidgetCensus,
+    accept_gen, after_mount, boot_script, census_host, drive_shell, eval_hot_file, flush_now, job,
+    load_hot_view, makepad_widgets, on_actions, reclaim_script_heap, rss_kib, session_stats,
+    set_frame_driver, set_inspector, set_live_shell, startup, with_current_cx, with_cx, JobArg,
+    JobValue, SessionStats, WidgetCensus,
 };
 
 /// Marker the lowerer sees in a component body. It emits `quinn_retain_step`

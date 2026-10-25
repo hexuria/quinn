@@ -102,6 +102,10 @@ fn lower_expr_stmt(expr: &Expr, signals: &[Signal]) -> Result<Vec<HandlerStmt>, 
     let Expr::MethodCall(call) = expr else {
         return Err(reject_expr(expr));
     };
+    if call.method == "refetch" {
+        let job = path_ident(&call.receiver)?;
+        return Ok(vec![HandlerStmt::Refetch { job }]);
+    }
     if call.method == "dispatch" {
         let action = path_ident(&call.receiver)?;
         let arg = match call.args.first() {

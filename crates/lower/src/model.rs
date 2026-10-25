@@ -106,6 +106,11 @@ pub enum HandlerStmt {
         action: String,
         arg: HxExpr,
     },
+    /// `note.refetch()`. Bumps the generation and sets phase back to loading.
+    /// The previous value stays so a `<Transition>` can keep showing it.
+    Refetch {
+        job: String,
+    },
     /// Flip `state.quinn_dark`. The shell signal behind `dark:` classes.
     ToggleTheme,
 }
@@ -219,19 +224,31 @@ pub enum ViewNode {
     },
 }
 
-/// A closed async job. The body is not Rust: `view.rs` is not compiled.
-/// The shell's executor waits `delay_ms`, then writes the phase fields.
+/// Where the one argument of a compiled async fn comes from.
+#[derive(Clone, Debug, PartialEq)]
+pub enum ArgSrc {
+    /// The fn takes no argument.
+    None,
+    /// `signal.get()` read in the closure. Also a refetch dependency.
+    Signal(String),
+    /// The resource fetcher's closure parameter. The value is the source snapshot.
+    Source,
+    /// `action.dispatch(arg)` stores the argument and the fn receives it.
+    Dispatch,
+    /// A string literal in the closure.
+    Lit(String),
+}
+
+/// A client job. `view.rs` is not compiled, so the closure is only a function
+/// name plus one argument expression. The registered Rust fn runs off the UI
+/// thread. `deps` are signals that bump `gen` and set the phase back to loading.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Job {
     pub name: String,
     pub kind: JobKind,
-    pub delay_ms: u64,
-    /// Empty when the outcome is `Err`.
-    pub ok_text: String,
-    /// Empty when the outcome is `Ok`.
-    pub err_text: String,
-    /// Signal read that restarts a `Resource` when it changes.
-    pub source: Option<String>,
+    pub func: String,
+    pub arg: ArgSrc,
+    pub deps: Vec<String>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

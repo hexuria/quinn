@@ -169,7 +169,7 @@ pub fn emit_rust(model: &Model, shell: &Shell) -> String {
     if has_input(&model.nodes) {
         children.push_str("                                let root = ui\n");
     }
-    if model.jobs.iter().any(|job| job.source.is_some()) {
+    if model.jobs.iter().any(|job| !job.deps.is_empty()) {
         children.push_str("                                quinn_sync_jobs()\n");
     }
     let root_style = parse_classes(&model.root_class);
@@ -558,13 +558,31 @@ fn emit_job_fns(model: &Model) -> String {
     let mut out = String::new();
     let n = model.jobs.len();
     out.push_str(&format!("        fn quinn_job_count() {{ {n} }}\n"));
-    out.push_str("        fn quinn_job_delay(i) {\n");
-    out.push_str(&chain_num(
-        model
+    out.push_str("        fn quinn_job_fn(i) {\n");
+    out.push_str(&chain_expr(
+        &model
             .jobs
             .iter()
-            .map(|job| script_num(job.delay_ms as f64 / 1000.0))
-            .collect(),
+            .map(|job| format!("\"{}\"", escape_script(&job.func)))
+            .collect::<Vec<_>>(),
+    ));
+    out.push_str("        }\n");
+    out.push_str("        fn quinn_job_key(i) {\n");
+    out.push_str(&chain_expr(
+        &model
+            .jobs
+            .iter()
+            .map(|job| format!("\"{}\"", escape_script(&job.name)))
+            .collect::<Vec<_>>(),
+    ));
+    out.push_str("        }\n");
+    out.push_str("        fn quinn_job_arg(i) {\n");
+    out.push_str(&chain_expr(
+        &model
+            .jobs
+            .iter()
+            .map(arg_expr)
+            .collect::<Vec<_>>(),
     ));
     out.push_str("        }\n");
     out.push_str("        fn quinn_job_gen(i) {\n");
@@ -585,57 +603,111 @@ fn emit_job_fns(model: &Model) -> String {
             .collect::<Vec<_>>(),
     ));
     out.push_str("        }\n");
-    for (index, job) in model.jobs.iter().enumerate() {
-        let phase = if job.err_text.is_empty() {
-            "ready"
-        } else {
-            "error"
-        };
-        let value = escape_script(&job.ok_text);
-        let err = escape_script(&job.err_text);
+    let names: Vec<String> = model.jobs.iter().map(|job| job.name.clone()).collect();
+    out.push_str("        fn quinn_dead() { 0 }\n");
+    out.push_str("        fn quinn_skip_job() { 1 }\n");
+    out.push_str("        fn quinn_job_live(name) {\n");
+    out.push_str(&chain_named(&names, |_| "1".into(), "quinn_dead()"));
+    out.push_str("        }\n");
+    out.push_str("        fn quinn_apply(name, gen, phase, value, err) {\n");
+    out.push_str(
+        "            if quinn_job_live(name) == 1 { quinn_apply_go(name, gen, phase, value, err) } else { quinn_skip_job() }\n",
+    );
+    out.push_str("        }\n");
+    out.push_str("        fn quinn_apply_go(name, gen, phase, value, err) {\n");
+    out.push_str(&chain_named(
+        &names,
+        |name| format!("quinn_write_{name}(gen, phase, value, err)"),
+        "quinn_skip_job()",
+    ));
+    out.push_str("        }\n");
+    for job in &model.jobs {
         out.push_str(&format!(
-            "        fn quinn_finish_{index}() {{\n            state.{name}_phase = \"{phase}\"\n            state.{name}_value = \"{value}\"\n            state.{name}_error = \"{err}\"\n",
+            "        fn quinn_write_{name}(gen, phase, value, err) {{\n            if state.{name}_gen == gen {{ quinn_commit_{name}(phase, value, err) }} else {{ quinn_skip_job() }}\n        }}\n",
+            name = job.name
+        ));
+        out.push_str(&format!(
+            "        fn quinn_commit_{name}(phase, value, err) {{\n            state.{name}_phase = phase\n            state.{name}_value = value\n            state.{name}_error = err\n",
             name = job.name
         ));
         if matches!(job.kind, JobKind::Action) {
             out.push_str(&format!("            state.{}_pending = false\n", job.name));
         }
-        out.push_str("            ui.host.render()\n        }\n");
+        // `render()` here re-enters the script VM from inside `script_eval`
+        // and the apply's return value never reaches Rust, so the delivery
+        // is retried forever. The host renders once after a successful apply.
+        // 2 means the generation matched and the value was written. 1, from
+        // `quinn_skip_job`, means the result was stale or the binding is gone.
+        out.push_str("            2\n        }\n");
     }
-    out.push_str("        fn quinn_finish(i) {\n");
-    out.push_str(&chain_expr(
-        &(0..n)
-            .map(|index| format!("quinn_finish_{index}()"))
-            .collect::<Vec<_>>(),
-    ));
-    out.push_str("        }\n");
-    if model.jobs.iter().any(|job| job.source.is_some()) {
+    let tracked: Vec<&Job> = model.jobs.iter().filter(|job| !job.deps.is_empty()).collect();
+    if !tracked.is_empty() {
         out.push_str("        fn quinn_sync_jobs() {\n");
-        for job in model.jobs.iter().filter(|job| job.source.is_some()) {
-            let source = job.source.as_deref().unwrap_or("");
+        for job in &tracked {
+            let source = source_expr(&job.deps);
             out.push_str(&format!(
-                "            if state.{name}_source != state.{source} {{ quinn_resync_{name}() }} else {{ 0 }}\n",
+                "            if state.{name}_source != {source} {{ quinn_resync_{name}() }} else {{ 0 }}\n",
                 name = job.name
             ));
         }
         out.push_str("        }\n");
-        for job in model.jobs.iter().filter(|job| job.source.is_some()) {
-            let source = job.source.as_deref().unwrap_or("");
+        for job in &tracked {
+            let source = source_expr(&job.deps);
             out.push_str(&format!(
-                "        fn quinn_resync_{name}() {{\n            state.{name}_source = state.{source}\n            state.{name}_phase = \"loading\"\n            state.{name}_gen = state.{name}_gen + 1\n        }}\n",
+                "        fn quinn_resync_{name}() {{\n            state.{name}_source = {source}\n            state.{name}_phase = \"loading\"\n            state.{name}_gen = state.{name}_gen + 1\n        }}\n",
                 name = job.name
             ));
         }
     }
     out.push_str("        mod.quinn_job_count = quinn_job_count\n");
-    out.push_str("        mod.quinn_job_delay = quinn_job_delay\n");
+    out.push_str("        mod.quinn_job_fn = quinn_job_fn\n");
+    out.push_str("        mod.quinn_job_key = quinn_job_key\n");
+    out.push_str("        mod.quinn_job_arg = quinn_job_arg\n");
     out.push_str("        mod.quinn_job_gen = quinn_job_gen\n");
-    out.push_str("        mod.quinn_finish = quinn_finish\n");
+    out.push_str("        mod.quinn_job_live = quinn_job_live\n");
+    out.push_str("        mod.quinn_apply = quinn_apply\n");
     out
 }
 
-fn chain_num(values: Vec<String>) -> String {
-    chain_expr(&values)
+fn arg_expr(job: &Job) -> String {
+    match &job.arg {
+        ArgSrc::None => "\"\"".into(),
+        ArgSrc::Lit(text) => format!("\"{}\"", escape_script(text)),
+        ArgSrc::Signal(name) => format!("state.{name}"),
+        ArgSrc::Source => format!("state.{}_source", job.name),
+        ArgSrc::Dispatch => format!("state.{}_arg", job.name),
+    }
+}
+
+fn source_expr(deps: &[String]) -> String {
+    if deps.len() == 1 {
+        return format!("state.{}", deps[0]);
+    }
+    deps.iter()
+        .map(|dep| format!("(\"\" + state.{dep})"))
+        .collect::<Vec<_>>()
+        .join(" + \"|\" + ")
+}
+
+fn chain_named(names: &[String], body: impl Fn(&str) -> String, fallback: &str) -> String {
+    let arms: Vec<String> = names
+        .iter()
+        .map(|name| format!("if name == \"{}\" {{ {} }}", escape_script(name), body(name)))
+        .collect();
+    if arms.is_empty() {
+        return format!("            {fallback}\n");
+    }
+    fn nest(arms: &[String], index: usize, fallback: &str) -> String {
+        if index + 1 >= arms.len() {
+            return format!("{} else {{ {fallback} }}", arms[index]);
+        }
+        format!(
+            "{} else {{ {} }}",
+            arms[index],
+            nest(arms, index + 1, fallback)
+        )
+    }
+    format!("            {}\n", nest(&arms, 0, fallback))
 }
 
 fn chain_expr(values: &[String]) -> String {
@@ -653,6 +725,42 @@ fn chain_expr(values: &[String]) -> String {
         )
     }
     format!("            {}\n", nest(values, 0))
+}
+
+fn source_seed(model: &Model, deps: &[String]) -> String {
+    if deps.len() == 1 {
+        return signal_literal(model, &deps[0]);
+    }
+    let joined = deps
+        .iter()
+        .map(|dep| signal_seed_text(model, dep))
+        .collect::<Vec<_>>()
+        .join("|");
+    format!("\"{}\"", escape_script(&joined))
+}
+
+fn signal_literal(model: &Model, name: &str) -> String {
+    model
+        .signal(name)
+        .map(|signal| match &signal.init {
+            Init::Str(text) => format!("\"{}\"", escape_script(text)),
+            Init::Int(value) => value.to_string(),
+            Init::Bool(value) => value.to_string(),
+            _ => "\"\"".into(),
+        })
+        .unwrap_or_else(|| "\"\"".into())
+}
+
+fn signal_seed_text(model: &Model, name: &str) -> String {
+    model
+        .signal(name)
+        .map(|signal| match &signal.init {
+            Init::Str(text) => text.clone(),
+            Init::Int(value) => value.to_string(),
+            Init::Bool(value) => value.to_string(),
+            _ => String::new(),
+        })
+        .unwrap_or_default()
 }
 
 fn seed_lines(model: &Model, shell: &Shell) -> Vec<String> {
@@ -699,17 +807,12 @@ fn seed_lines(model: &Model, shell: &Shell) -> Vec<String> {
         lines.push(format!("{}_value: \"\"", job.name));
         lines.push(format!("{}_error: \"\"", job.name));
         lines.push(format!("{}_gen: 1", job.name));
-        if let Some(source) = &job.source {
-            let init = model
-                .signal(source)
-                .map(|signal| match &signal.init {
-                    Init::Str(text) => format!("\"{}\"", escape_script(text)),
-                    Init::Int(value) => value.to_string(),
-                    Init::Bool(value) => value.to_string(),
-                    _ => "\"\"".into(),
-                })
-                .unwrap_or_else(|| "\"\"".into());
-            lines.push(format!("{}_source: {init}", job.name));
+        if !job.deps.is_empty() {
+            lines.push(format!(
+                "{}_source: {}",
+                job.name,
+                source_seed(model, &job.deps)
+            ));
         }
         if matches!(job.kind, JobKind::Action) {
             lines.push(format!("{}_pending: false", job.name));
@@ -1523,6 +1626,23 @@ fn emit_returned(
             routes,
             pass_root,
         ),
+        // A `for` emits into the widget literal around it. A slot function has
+        // no literal of its own, so the rows would otherwise vanish and the
+        // function would return nil. The view is what the parent mounts.
+        ViewNode::For { .. } => {
+            let inner = emit_node(
+                node,
+                4,
+                None,
+                FlowSpec::Column,
+                false,
+                shows,
+                slots,
+                routes,
+                pass_root,
+            );
+            format!("            RoundedView {{\n                width: Fill\n                height: Fit\n                flow: Down\n{inner}            }}\n")
+        }
         other => emit_node(
             other,
             3,
@@ -2064,6 +2184,10 @@ fn emit_stmts(stmts: &[HandlerStmt], row: Option<&RowEnv<'_>>) -> Vec<String> {
                 lines.push(format!("state.{action}_gen = state.{action}_gen + 1"));
                 lines.push(format!("state.{action}_arg = {arg}"));
             }
+            HandlerStmt::Refetch { job } => {
+                lines.push(format!("state.{job}_phase = \"loading\""));
+                lines.push(format!("state.{job}_gen = state.{job}_gen + 1"));
+            }
             HandlerStmt::ToggleTheme => {
                 lines.push(
                     "if state.quinn_dark == 1 { quinn_theme_off() } else { quinn_theme_on() }"
@@ -2193,7 +2317,11 @@ fn text_expr(el: &El, row: Option<&RowEnv<'_>>) -> String {
             Part::Lit(text) => format!("\"{}\"", escape_script(text)),
             Part::Sig(name) => {
                 let read = state_read(name, row);
-                if row.is_some() {
+                // A bare number is not a label string. Generations and the
+                // pending flag are numbers; prefix an empty string so `+`
+                // makes text. Row signals already take this path.
+                let numeric = name.ends_with("_gen") || name.ends_with("_pending");
+                if row.is_some() || numeric {
                     format!("\"\" + {read}")
                 } else {
                     read

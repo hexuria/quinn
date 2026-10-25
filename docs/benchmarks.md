@@ -143,7 +143,18 @@ The lowerer's poll is inside these numbers. They are not the old ~200 ms log-lin
 | `"Modal"` → `"Still open"` | dark theme, open portal, loaded note, `Saved Cebu` | 325.3 |
 | `w-[280px]` → `w-[420px]` | the same, with the title already `Still open` | 231.7 |
 
-Closing the modal later in that same take showed `Note: Ada's note`, `Place: Manila desk`, `Could not load the feed`, and `Action: Saved Cebu` on the dark page. Both edits logged `script_reload pid=95336 window_stays=1`. `view.rs` was restored after the take. starttime did not change.
+Closing the modal later in that same take showed `Note: Ada's note`, `Place: Manila desk`, `Could not load the feed`, and `Action: Saved Cebu` on the dark page. Both edits logged `script_reload pid=95336 window_stays=1`. `view.rs` was restored after the take. starttime did not change. That binary baked the job results. It is not the P3a measurement below.
+
+### Async dashboard, real futures
+
+25 Oct 2026, 9:44 PM Asia/Manila. `./target/release/async-dashboard --hot`. One process: pid 101729, starttime 4019518, window `0x2000002`. The title bar showed that pid, starttime, and window id for the whole take. The X server reused `0x2000002` from a process that had already exited; starttime did not change during the take. Reload was clicked while the note read `Ada's note` and the sidebar label read `Rail`. The line became `Loading the note`. `examples/async-dashboard/view.rs` was then edited, `"Rail"` → `"Sidebar"`, and `fsync` returned at 21:44:45.850 Asia/Manila. One continuous 30 fps capture, 124 frames, 4.133 s, from eight frames before that loading text through the result. Not stitched. The clock starts when `write()` and `fsync` return and stops on the first raw frame received after that whose pixels differ.
+
+| Edit | What the frame showed | ms |
+| --- | --- | --- |
+| `"Rail"` → `"Sidebar"` | still `Loading the note`, `Saved Davao`, `Davao won`, Manila / Cebu / Davao | 328.1 |
+| same request, next pixel change | `Note: Ada's note` with the label already `Sidebar` | 2428.0 |
+
+The log for that generation was one `script_reload pid=101729 window_stays=1 render=1` and one `quinn job note gen 3 applied`. `view.rs` was left on `Sidebar`. Markup hot-reloads. The body of `fetch_note` in `src/jobs.rs` is compiled Rust and was not part of this edit.
 
 ## Wasm
 

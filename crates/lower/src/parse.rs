@@ -73,6 +73,8 @@ struct Build {
     in_children_fn: bool,
     /// Resource and action names in scope for `{note}` and `note.get()`.
     job_names: Vec<String>,
+    /// `<For>` loop variable, so `{city.name}` becomes a row field.
+    row_var: Option<String>,
 }
 
 pub fn parse_model(source: &str) -> Result<Model, String> {
@@ -108,6 +110,7 @@ pub fn parse_model(source: &str) -> Result<Model, String> {
         provides_here: Vec::new(),
         in_children_fn: false,
         job_names: Vec::new(),
+        row_var: None,
     };
     let (signals, frame, retain, has_ctx, root_provides, root_ctx, view) = {
         let root = build
@@ -939,7 +942,7 @@ impl Build {
                 let Some(value) = attr.value() else {
                     return Err("<For each> needs a value".into());
                 };
-                items = Some(signal_get(value, signals)?);
+                items = Some(each_source(value, signals, &self.job_names)?);
             } else if key == "key" {
                 if let Some(value) = attr.value() {
                     if let Some((name, field)) = key_field_of(value) {
@@ -963,7 +966,10 @@ impl Build {
             return Err("<For> needs one child".into());
         }
         self.pending_row_signals.clear();
+        let saved_row = self.row_var.clone();
+        self.row_var = Some(var.clone());
         let child = self.lower_node(body[0], signals, true)?;
+        self.row_var = saved_row;
         let ViewNode::El(el) = child else {
             return Err("<For> child must be one element".into());
         };
@@ -1256,6 +1262,7 @@ impl Build {
                         &self.ctx_env,
                         self.in_children_fn,
                         &self.job_names,
+                        self.row_var.as_deref(),
                     )?);
                 }
                 Node::Comment(_) | Node::Doctype(_) => {}
@@ -1752,7 +1759,7 @@ fn rename_act(act: &mut Act, orig: &[Signal], prefix: &str) {
                     }
                     HandlerStmt::Navigate(expr) => rename_expr(expr, orig, prefix),
                     HandlerStmt::Dispatch { arg, .. } => rename_expr(arg, orig, prefix),
-                    HandlerStmt::ToggleTheme => {}
+                    HandlerStmt::Refetch { .. } | HandlerStmt::ToggleTheme => {}
                 }
             }
         }
@@ -1897,121 +1904,283 @@ fn try_job(local: &syn::Local) -> Result<Option<Job>, String> {
     let name = ident.ident.to_string();
     if path_ends(&call.func, &["LocalResource", "new"]) {
         let Some(body) = call.args.first() else {
-            return Err(format!("{name} needs an async body"));
+            return Err(format!("{name} needs a closure that calls an async fn"));
         };
-        let (delay_ms, ok_text, err_text) = job_outcome(body)?;
+        let (func, arg, deps) = parse_job_body(body, JobKind::Local)?;
         return Ok(Some(Job {
             name,
             kind: JobKind::Local,
-            delay_ms,
-            ok_text,
-            err_text,
-            source: None,
+            func,
+            arg,
+            deps,
         }));
     }
     if path_ends(&call.func, &["Resource", "new"]) {
         if call.args.len() < 2 {
-            return Err(format!("{name} needs a source and an async body"));
+            return Err(format!("{name} needs a source and a fetcher"));
         }
-        let source = job_source(&call.args[0])?;
-        let (delay_ms, ok_text, err_text) = job_outcome(&call.args[1])?;
+        let mut deps = source_deps(&call.args[0])?;
+        let (func, arg, body_deps) = parse_job_body(&call.args[1], JobKind::Resource)?;
+        for dep in body_deps {
+            if !deps.iter().any(|have| have == &dep) {
+                deps.push(dep);
+            }
+        }
         return Ok(Some(Job {
             name,
             kind: JobKind::Resource,
-            delay_ms,
-            ok_text,
-            err_text,
-            source: Some(source),
+            func,
+            arg,
+            deps,
         }));
     }
     if path_ends(&call.func, &["Action", "new"]) {
         let Some(body) = call.args.first() else {
-            return Err(format!("{name} needs an async body"));
+            return Err(format!("{name} needs a closure that calls an async fn"));
         };
-        let (delay_ms, ok_text, err_text) = job_outcome(body)?;
+        let (func, arg, deps) = parse_job_body(body, JobKind::Action)?;
         return Ok(Some(Job {
             name,
             kind: JobKind::Action,
-            delay_ms,
-            ok_text,
-            err_text,
-            source: None,
+            func,
+            arg,
+            deps,
         }));
     }
     Ok(None)
 }
 
-fn job_source(expr: &Expr) -> Result<String, String> {
+fn source_deps(expr: &Expr) -> Result<Vec<String>, String> {
+    let mut deps = Vec::new();
+    walk_gets(expr, &mut deps);
+    if deps.is_empty() {
+        return Err("resource source must read a signal with .get()".into());
+    }
+    Ok(deps)
+}
+
+fn walk_gets(expr: &Expr, deps: &mut Vec<String>) {
+    match expr {
+        Expr::Closure(closure) => walk_gets(&closure.body, deps),
+        Expr::MethodCall(call) if call.method == "get" => {
+            if let Ok(name) = path_ident(&call.receiver) {
+                if !deps.iter().any(|have| have == &name) {
+                    deps.push(name);
+                }
+            }
+        }
+        Expr::Block(block) => {
+            for stmt in &block.block.stmts {
+                if let Stmt::Expr(expr, _) = stmt {
+                    walk_gets(expr, deps);
+                }
+            }
+        }
+        Expr::Async(block) => {
+            for stmt in &block.block.stmts {
+                if let Stmt::Expr(expr, _) = stmt {
+                    walk_gets(expr, deps);
+                }
+            }
+        }
+        _ => {}
+    }
+}
+
+fn parse_job_body(expr: &Expr, kind: JobKind) -> Result<(String, ArgSrc, Vec<String>), String> {
+    let (expr, params) = unwrap_job_closure(expr);
+    let mut aliases = Vec::new();
+    let call = find_job_call(expr, &params, &mut aliases)?;
+    let func = call_ident(&call.func)?;
+    if call.args.len() > 1 {
+        return Err(format!(
+            "{func} takes one argument; the job lowerer passes a single value"
+        ));
+    }
+    let mut deps = Vec::new();
+    let arg = match call.args.first() {
+        None => ArgSrc::None,
+        Some(arg) => classify_job_arg(arg, kind, &params, &aliases, &mut deps)?,
+    };
+    Ok((func, arg, deps))
+}
+
+fn unwrap_job_closure(expr: &Expr) -> (&Expr, Vec<String>) {
+    if let Expr::Closure(closure) = expr {
+        let params = closure
+            .inputs
+            .iter()
+            .filter_map(|pat| match pat {
+                syn::Pat::Ident(ident) => Some(ident.ident.to_string()),
+                syn::Pat::Type(typed) => pat_ident(&typed.pat).ok(),
+                _ => None,
+            })
+            .collect();
+        return (&closure.body, params);
+    }
+    (expr, Vec::new())
+}
+
+fn find_job_call<'a>(
+    expr: &'a Expr,
+    params: &[String],
+    aliases: &mut Vec<(String, String)>,
+) -> Result<&'a syn::ExprCall, String> {
+    match expr {
+        Expr::Async(block) => find_job_call_block(&block.block, params, aliases),
+        Expr::Block(block) => find_job_call_block(&block.block, params, aliases),
+        Expr::Await(wait) => find_job_call(&wait.base, params, aliases),
+        Expr::Call(call) => Ok(call),
+        other => Err(format!(
+            "a job must call a compiled async fn ({})",
+            snippet(other)
+        )),
+    }
+}
+
+fn find_job_call_block<'a>(
+    block: &'a syn::Block,
+    params: &[String],
+    aliases: &mut Vec<(String, String)>,
+) -> Result<&'a syn::ExprCall, String> {
+    let mut call = None;
+    for stmt in &block.stmts {
+        match stmt {
+            Stmt::Local(local) => record_job_alias(local, params, aliases)?,
+            Stmt::Expr(expr, _) => {
+                call = Some(find_job_call(expr, params, aliases)?);
+            }
+            _ => return Err("unsupported statement in a job closure".into()),
+        }
+    }
+    call.ok_or_else(|| "a job closure has no function call".into())
+}
+
+fn record_job_alias(
+    local: &syn::Local,
+    params: &[String],
+    aliases: &mut Vec<(String, String)>,
+) -> Result<(), String> {
+    let syn::Pat::Ident(ident) = &local.pat else {
+        return Err("a job let must be a name".into());
+    };
+    let Some(init) = &local.init else {
+        return Err(format!("let {} needs a value", ident.ident));
+    };
+    let source = alias_source(&init.expr)?;
+    let resolved = resolve_job_name(&source, params, aliases)?;
+    aliases.push((ident.ident.to_string(), resolved));
+    Ok(())
+}
+
+fn alias_source(expr: &Expr) -> Result<String, String> {
+    match expr {
+        Expr::Path(path) => path
+            .path
+            .get_ident()
+            .map(|ident| ident.to_string())
+            .ok_or_else(|| "a job let must copy the closure argument".into()),
+        Expr::Reference(refer) => alias_source(&refer.expr),
+        Expr::MethodCall(call)
+            if call.method == "clone" || call.method == "to_string" || call.method == "to_owned" =>
+        {
+            path_ident(&call.receiver)
+        }
+        _ => Err("a job let must copy the closure argument".into()),
+    }
+}
+
+fn resolve_job_name(
+    name: &str,
+    params: &[String],
+    aliases: &[(String, String)],
+) -> Result<String, String> {
+    if let Some((_, source)) = aliases.iter().rev().find(|(alias, _)| alias == name) {
+        return Ok(source.clone());
+    }
+    if params.iter().any(|param| param == name) {
+        return Ok(name.to_string());
+    }
+    Err(format!("job let {name} is not the closure argument"))
+}
+
+fn classify_job_arg(
+    expr: &Expr,
+    kind: JobKind,
+    params: &[String],
+    aliases: &[(String, String)],
+    deps: &mut Vec<String>,
+) -> Result<ArgSrc, String> {
+    let expr = match expr {
+        Expr::Reference(refer) => &*refer.expr,
+        other => other,
+    };
+    if let Some(text) = lit_string(expr) {
+        return Ok(ArgSrc::Lit(text));
+    }
+    if let Expr::MethodCall(call) = expr {
+        if call.method == "get" {
+            let name = path_ident(&call.receiver)?;
+            if !deps.iter().any(|dep| dep == &name) {
+                deps.push(name.clone());
+            }
+            return Ok(ArgSrc::Signal(name));
+        }
+        if call.method == "clone" || call.method == "to_string" || call.method == "to_owned" {
+            return classify_job_arg(&call.receiver, kind, params, aliases, deps);
+        }
+    }
+    if let Ok(name) = path_ident(expr) {
+        let is_alias = aliases.iter().any(|(alias, _)| alias == &name);
+        let resolved = if let Some((_, source)) = aliases.iter().rev().find(|(alias, _)| alias == &name)
+        {
+            source.clone()
+        } else {
+            name.clone()
+        };
+        let is_param = params.iter().any(|param| param == &resolved || param == &name);
+        if is_param || is_alias {
+            return match kind {
+                JobKind::Action => Ok(ArgSrc::Dispatch),
+                JobKind::Resource => Ok(ArgSrc::Source),
+                JobKind::Local => Err(
+                    "a LocalResource argument is signal.get(), not the closure parameter".into(),
+                ),
+            };
+        }
+    }
+    Err("a job argument must be signal.get(), a string, or the closure argument".into())
+}
+
+fn call_ident(expr: &Expr) -> Result<String, String> {
+    let Expr::Path(path) = expr else {
+        return Err("a job calls a function by name".into());
+    };
+    path.path
+        .get_ident()
+        .map(|ident| ident.to_string())
+        .ok_or_else(|| "a job calls a function by its registered name".into())
+}
+
+fn each_source(expr: &Expr, signals: &[Signal], jobs: &[String]) -> Result<String, String> {
     let expr = match expr {
         Expr::Closure(closure) => &*closure.body,
         other => other,
     };
     let Expr::MethodCall(call) = expr else {
-        return Err("resource source must be || signal.get()".into());
+        return Err("<For each> needs signal.get() or resource.get()".into());
     };
     if call.method != "get" {
-        return Err("resource source must be || signal.get()".into());
+        return Err("<For each> needs .get()".into());
     }
-    path_ident(&call.receiver)
-}
-
-fn job_outcome(expr: &Expr) -> Result<(u64, String, String), String> {
-    let block = job_block(expr)?;
-    let mut delay_ms = 0;
-    let mut ok_text = None;
-    let mut err_text = None;
-    for stmt in &block.stmts {
-        let Stmt::Expr(expr, _) = stmt else {
-            return Err("a job body is delay_ms(...) and Ok(...) or Err(...)".into());
-        };
-        if let Expr::Call(call) = expr {
-            if path_ends(&call.func, &["delay_ms"]) {
-                let Some(arg) = call.args.first() else {
-                    return Err("delay_ms needs milliseconds".into());
-                };
-                let Expr::Lit(lit) = arg else {
-                    return Err("delay_ms needs an integer".into());
-                };
-                let syn::Lit::Int(value) = &lit.lit else {
-                    return Err("delay_ms needs an integer".into());
-                };
-                delay_ms = value.base10_parse::<u64>().map_err(|err| err.to_string())?;
-                continue;
-            }
-            if path_ends(&call.func, &["Ok"]) {
-                let Some(arg) = call.args.first() else {
-                    return Err("Ok needs a string".into());
-                };
-                ok_text = Some(stringish(arg)?);
-                continue;
-            }
-            if path_ends(&call.func, &["Err"]) {
-                let Some(arg) = call.args.first() else {
-                    return Err("Err needs a string".into());
-                };
-                err_text = Some(stringish(arg)?);
-                continue;
-            }
-        }
-        return Err("a job body is delay_ms(...) and Ok(...) or Err(...)".into());
+    let name = path_ident(&call.receiver)?;
+    if jobs.iter().any(|job| job == &name) {
+        return Ok(format!("{name}_value"));
     }
-    match (ok_text, err_text) {
-        (Some(ok_text), None) => Ok((delay_ms, ok_text, String::new())),
-        (None, Some(err_text)) => Ok((delay_ms, String::new(), err_text)),
-        _ => Err("a job needs Ok(\"...\") or Err(\"...\")".into()),
+    if signals.iter().any(|signal| signal.read == name) {
+        return Ok(name);
     }
-}
-
-fn job_block(expr: &Expr) -> Result<&syn::Block, String> {
-    let expr = match expr {
-        Expr::Closure(closure) => &*closure.body,
-        other => other,
-    };
-    match expr {
-        Expr::Async(block) => Ok(&block.block),
-        Expr::Block(block) => Ok(&block.block),
-        _ => Err("job body must be || async move { ... }".into()),
-    }
+    Err(format!("unknown each source {name}"))
 }
 
 fn jobs_in(node: &ViewNode, known: &[String]) -> Vec<String> {
@@ -2034,7 +2203,21 @@ fn jobs_in(node: &ViewNode, known: &[String]) -> Vec<String> {
                 }
             }
             ViewNode::Show { child, .. } => walk(child, known, found),
-            ViewNode::For { .. } => {}
+            ViewNode::For { items, child, .. } => {
+                if let Some(name) = items.strip_suffix("_value") {
+                    if known.iter().any(|job| job == name)
+                        && !found.iter().any(|have| have == name)
+                    {
+                        found.push(name.to_string());
+                    }
+                }
+                for part in &child.parts {
+                    consider(part, found, known);
+                }
+                for node in &child.children {
+                    walk(node, known, found);
+                }
+            }
             ViewNode::Slot { nodes, .. } => {
                 for child in nodes {
                     walk(child, known, found);
@@ -2205,6 +2388,7 @@ fn parse_interp(
     ctx: &HashMap<String, String>,
     in_children_fn: bool,
     jobs: &[String],
+    row_var: Option<&str>,
 ) -> Result<Part, String> {
     let NodeBlock::ValidBlock(block) = block else {
         return Err("invalid interpolation block".into());
@@ -2242,6 +2426,9 @@ fn parse_interp(
     }
     if let Some(path) = signal_field_path(expr) {
         if let Some((base, rest)) = path.split_once('.') {
+            if in_row && row_var == Some(base) {
+                return Ok(Part::Param(rest.to_string()));
+            }
             if signals.iter().any(|signal| signal.read == base) || props.contains_key(base) {
                 return Ok(Part::Sig(path));
             }
@@ -2250,24 +2437,37 @@ fn parse_interp(
             }
         }
     }
-    let Expr::Closure(closure) = expr else {
-        let name = path_ident_opt(expr).unwrap_or_default();
-        return Err(format!("unsupported interpolation `{name}`"));
+    let peeled = match expr {
+        Expr::Closure(closure) => &*closure.body,
+        other => other,
     };
-    match &*closure.body {
-        Expr::MethodCall(call) if call.method == "get" => {
+    if let Expr::MethodCall(call) = peeled {
+        if call.method == "get" || call.method == "value" {
             let name = path_ident(&call.receiver)?;
             if jobs.iter().any(|job| job == &name) {
                 return Ok(Part::Job(name));
             }
-            if signals.iter().any(|signal| signal.read == name) {
+            if call.method == "get" && signals.iter().any(|signal| signal.read == name) {
                 return Ok(Part::Sig(name));
             }
-            Err(format!("unknown signal {name}"))
+            return Err(format!("unknown signal {name}"));
         }
-        Expr::If(expr) => parse_if_text(expr, signals),
-        other => Err(format!("unsupported interpolation {}", snippet(other))),
+        if call.method == "version" {
+            let name = path_ident(&call.receiver)?;
+            if jobs.iter().any(|job| job == &name) {
+                return Ok(Part::Sig(format!("{name}_gen")));
+            }
+            return Err(format!("unknown job {name}"));
+        }
+        if call.method == "pending" {
+            let name = path_ident(&call.receiver)?;
+            return Ok(Part::Sig(format!("{name}_pending")));
+        }
     }
+    if let Expr::If(expr) = peeled {
+        return parse_if_text(expr, signals);
+    }
+    Err(format!("unsupported interpolation {}", snippet(peeled)))
 }
 
 fn parse_if_text(expr: &syn::ExprIf, signals: &[Signal]) -> Result<Part, String> {

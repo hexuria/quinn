@@ -4,7 +4,7 @@
 //! `CxWidgetExt::widget_tree_insert_child` for the lookup graph.
 //!
 //! `Cx` is UI-thread-only. [`with_cx`] publishes the current `&mut Cx` for the
-//! object-safe [`lm_core::Surface`] methods, which cannot take a `Cx` argument.
+//! object-safe [`quinn_core::Surface`] methods, which cannot take a `Cx` argument.
 
 mod host;
 
@@ -13,7 +13,7 @@ pub use makepad_widgets;
 
 use std::cell::RefCell;
 
-use lm_core::{Owner, Runtime};
+use quinn_core::{Owner, Runtime};
 
 pub struct Session {
     pub runtime: Runtime,

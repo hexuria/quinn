@@ -1,4 +1,4 @@
-use lume::prelude::*;
+use quinn::prelude::*;
 
 #[derive(Clone)]
 struct Item {
@@ -23,9 +23,18 @@ fn Row(item: Item) -> impl IntoView {
 #[component]
 fn KeyedList() -> impl IntoView {
     let (items, set_items) = signal(vec![
-        Item { id: 1, label: "Alpha".into() },
-        Item { id: 2, label: "Beta".into() },
-        Item { id: 3, label: "Gamma".into() },
+        Item {
+            id: 1,
+            label: "Alpha".into(),
+        },
+        Item {
+            id: 2,
+            label: "Beta".into(),
+        },
+        Item {
+            id: 3,
+            label: "Gamma".into(),
+        },
     ]);
     let (next_id, set_next) = signal(4u64);
 
@@ -54,4 +63,4 @@ fn KeyedList() -> impl IntoView {
     }
 }
 
-lume::run!("Keyed list", 520, 520, view! { <KeyedList /> });
+quinn::run!("Keyed list", 520, 520, view! { <KeyedList /> });

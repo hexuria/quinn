@@ -1,5 +1,5 @@
 [package]
-name = "lm-styles"
+name = "quinn-styles"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

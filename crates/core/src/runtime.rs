@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
-use lm_reactive::{ImmediateEffect, Owner};
+use quinn_reactive::{ImmediateEffect, Owner};
 
 use crate::surface::{NodeSpec, Surface, Tag};
 use crate::Style;

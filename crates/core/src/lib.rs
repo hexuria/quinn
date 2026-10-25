@@ -14,10 +14,10 @@ mod tests;
 pub use builder::{
     display_text, el, empty, for_each, fragment, scope_owner, show, DynView, El, IntoView,
 };
-pub use lm_styles::{
+pub use quinn_styles::{
     parse_classes, parse_inline, AlignSpec, Edges, FlowSpec, Rgba, SizeSpec, Style,
 };
 pub use runtime::{Runtime, UiEvent};
 pub use surface::{MemorySurface, NodeSpec, Surface, Tag};
 
-pub use lm_reactive::{on_cleanup, signal, ImmediateEffect, Owner};
+pub use quinn_reactive::{on_cleanup, signal, ImmediateEffect, Owner};

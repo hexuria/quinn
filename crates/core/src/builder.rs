@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::hash::Hash;
 use std::sync::{Arc, Mutex};
 
-use lm_styles::{parse_classes, Style};
+use quinn_styles::{parse_classes, Style};
 
 use crate::runtime::{
     push_list, push_placeholder, push_show, push_style, push_text, ClickFn, InputFn, ListDriver,
@@ -270,11 +270,11 @@ impl IntoView for Show {
 
 fn host_style() -> Style {
     let mut style = Tag::Div.defaults();
-    style.flow = Some(lm_styles::FlowSpec::Column);
-    style.width = Some(lm_styles::SizeSpec::Fill);
-    style.height = Some(lm_styles::SizeSpec::Fit);
-    style.padding = lm_styles::Edges::default();
-    style.margin = lm_styles::Edges::default();
+    style.flow = Some(quinn_styles::FlowSpec::Column);
+    style.width = Some(quinn_styles::SizeSpec::Fill);
+    style.height = Some(quinn_styles::SizeSpec::Fit);
+    style.padding = quinn_styles::Edges::default();
+    style.margin = quinn_styles::Edges::default();
     style
 }
 

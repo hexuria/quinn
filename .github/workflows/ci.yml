@@ -13,4 +13,4 @@ jobs:
         with:
           toolchain: "1.99.0"
       - name: Unit tests without the Makepad renderer
-        run: cargo test -p lm-styles -p lm-reactive -p lm-core -p lume --no-default-features
+        run: cargo test -p quinn-styles -p quinn-reactive -p quinn-core -p quinn --no-default-features

@@ -1,7 +1,7 @@
 //! `view!`, `#[component]`, and `run!`.
 //!
 //! Parsing is [rstml](https://github.com/rs-tml/rstml) 0.13.1 (commit
-//! `9fe0f4616a8224d37d64a53fa91722a08d736952`). Expansion targets `lume`,
+//! `9fe0f4616a8224d37d64a53fa91722a08d736952`). Expansion targets `quinn`,
 //! not the DOM.
 
 use proc_macro::TokenStream;
@@ -23,9 +23,9 @@ pub fn component(_attr: TokenStream, item: TokenStream) -> TokenStream {
     let mut func = parse_macro_input!(item as ItemFn);
     let block = func.block;
     func.block = syn::parse_quote! {{
-        let __lume_owner = ::lume::Owner::new();
-        let __lume_view = __lume_owner.with(|| #block);
-        ::lume::scope_owner(__lume_owner, __lume_view)
+        let __quinn_owner = ::quinn::Owner::new();
+        let __quinn_view = __quinn_owner.with(|| #block);
+        ::quinn::scope_owner(__quinn_owner, __quinn_view)
     }};
     func.attrs.push(syn::parse_quote!(#[allow(non_snake_case)]));
     quote!(#func).into()
@@ -95,8 +95,8 @@ startup() do #(0) {{
 "#
     );
     quote! {
-        pub use ::lume::makepad_widgets;
-        use ::lume::makepad_widgets::*;
+        pub use ::quinn::makepad_widgets;
+        use ::quinn::makepad_widgets::*;
 
         app_main!(App);
 
@@ -108,11 +108,11 @@ startup() do #(0) {{
 
         impl MatchEvent for App {
             fn handle_startup(&mut self, cx: &mut Cx) {
-                ::lume::startup(cx, &self.ui, || #root);
+                ::quinn::startup(cx, &self.ui, || #root);
             }
 
             fn handle_actions(&mut self, cx: &mut Cx, actions: &Actions) {
-                ::lume::on_actions(cx, actions);
+                ::quinn::on_actions(cx, actions);
             }
         }
 
@@ -121,7 +121,7 @@ startup() do #(0) {{
                 crate::makepad_widgets::script_mod(vm);
                 let shell = #shell;
                 let component = App::script_component(vm);
-                vm.eval(::lume::makepad_widgets::makepad_script::ScriptMod {
+                vm.eval(::quinn::makepad_widgets::makepad_script::ScriptMod {
                     cargo_manifest_path: String::new(),
                     module_path: module_path!().to_string(),
                     file: file!().to_string(),
@@ -149,9 +149,9 @@ fn expand_nodes(nodes: &[Node]) -> TokenStream2 {
         }
     }
     match views.len() {
-        0 => quote!(::lume::empty()),
+        0 => quote!(::quinn::empty()),
         1 => views.pop().unwrap(),
-        _ => quote!(::lume::fragment(vec![#(#views .into_view()),*])),
+        _ => quote!(::quinn::fragment(vec![#(#views .into_view()),*])),
     }
 }
 
@@ -161,18 +161,18 @@ fn expand_child_view(node: &Node) -> Option<TokenStream2> {
         Node::Fragment(fragment) => Some(expand_nodes(&fragment.children)),
         Node::Text(text) => {
             let value = text.value_string();
-            Some(quote!(::lume::el(::lume::Tag::Span).text_fixed(#value)))
+            Some(quote!(::quinn::el(::quinn::Tag::Span).text_fixed(#value)))
         }
         Node::Block(block) => {
             let text = text_method(block);
-            Some(quote!(::lume::el(::lume::Tag::Span) #text))
+            Some(quote!(::quinn::el(::quinn::Tag::Span) #text))
         }
         Node::RawText(raw) => {
             let value = raw.to_string_best();
             if value.trim().is_empty() {
                 None
             } else {
-                Some(quote!(::lume::el(::lume::Tag::Span).text_fixed(#value)))
+                Some(quote!(::quinn::el(::quinn::Tag::Span).text_fixed(#value)))
             }
         }
         Node::Comment(_) | Node::Doctype(_) | Node::Custom(_) => None,
@@ -241,11 +241,11 @@ fn expand_tag(element: &NodeElement<rstml::Infallible>, name: &str) -> TokenStre
 
     let style = match (class_lit, style_lit) {
         (None, None) => quote!(),
-        (Some(class), None) => quote!(.style(::lume::parse_classes(#class))),
-        (None, Some(style)) => quote!(.style(::lume::parse_inline(#style))),
+        (Some(class), None) => quote!(.style(::quinn::parse_classes(#class))),
+        (None, Some(style)) => quote!(.style(::quinn::parse_inline(#style))),
         (Some(class), Some(style)) => quote!(.style({
-            let mut __style = ::lume::parse_classes(#class);
-            __style.merge_from(&::lume::parse_inline(#style));
+            let mut __style = ::quinn::parse_classes(#class);
+            __style.merge_from(&::quinn::parse_inline(#style));
             __style
         })),
     };
@@ -298,7 +298,7 @@ fn expand_tag(element: &NodeElement<rstml::Infallible>, name: &str) -> TokenStre
     }
 
     quote! {
-        ::lume::el(::lume::Tag::#tag)
+        ::quinn::el(::quinn::Tag::#tag)
             #style
             #class_dyn
             #(#texts)*
@@ -339,7 +339,7 @@ fn expand_show(element: &NodeElement<rstml::Infallible>) -> TokenStream2 {
         return quote!(compile_error!("<Show> needs when=..."));
     };
     let body = expand_nodes(element.children());
-    quote!(::lume::show(#when, move || { #body }))
+    quote!(::quinn::show(#when, move || { #body }))
 }
 
 fn expand_for(element: &NodeElement<rstml::Infallible>) -> TokenStream2 {
@@ -364,7 +364,7 @@ fn expand_for(element: &NodeElement<rstml::Infallible>) -> TokenStream2 {
     };
     let binding = Ident::new(&binding, proc_macro2::Span::call_site());
     let body = expand_nodes(element.children());
-    quote!(::lume::for_each(#each, #key, move |#binding| { #body }))
+    quote!(::quinn::for_each(#each, #key, move |#binding| { #body }))
 }
 
 fn expand_component(element: &NodeElement<rstml::Infallible>) -> TokenStream2 {
@@ -412,11 +412,11 @@ fn block_interp(block: &NodeBlock) -> Interp {
                     return expr_interp(expr);
                 }
             }
-            Interp::Fixed(quote!(::lume::display_text(#block)))
+            Interp::Fixed(quote!(::quinn::display_text(#block)))
         }
         NodeBlock::Invalid(invalid) => {
             let body = &invalid.body;
-            Interp::Fixed(quote!(::lume::display_text({ #body })))
+            Interp::Fixed(quote!(::quinn::display_text({ #body })))
         }
     }
 }
@@ -425,10 +425,10 @@ fn expr_interp(expr: &Expr) -> Interp {
     if let Expr::Closure(closure) = expr {
         Interp::Dyn(quote!({
             let __f = #closure;
-            move || ::lume::display_text(__f())
+            move || ::quinn::display_text(__f())
         }))
     } else {
-        Interp::Fixed(quote!(::lume::display_text(#expr)))
+        Interp::Fixed(quote!(::quinn::display_text(#expr)))
     }
 }
 
@@ -436,10 +436,10 @@ fn expr_to_string(expr: &Expr) -> TokenStream2 {
     if let Expr::Closure(closure) = expr {
         quote!({
             let __f = #closure;
-            move || ::lume::display_text(__f())
+            move || ::quinn::display_text(__f())
         })
     } else {
-        quote!(move || ::lume::display_text(#expr))
+        quote!(move || ::quinn::display_text(#expr))
     }
 }
 

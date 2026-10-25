@@ -6,7 +6,7 @@ members = [
     "crates/core",
     "crates/macros",
     "crates/makepad",
-    "crates/lume",
+    "crates/quinn",
     "probes/widget-lifecycle",
     "examples/baseline-counter",
     "examples/counter",

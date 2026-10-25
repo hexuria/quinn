@@ -2,7 +2,7 @@
 
 ## Option C — `reactive_graph` + a focused `view!`
 
-Chosen. `lm-reactive` re-exports `reactive_graph` at `5ca3a9bf90cbcc0561dc4323f8018e18dce5906f` with the `effects` feature. `lm-macros` parses with rstml 0.13.1 and emits `lume` builders. `#[component]` is a small attribute that installs an `Owner`. It is not the upstream attribute: it does not support props macros, slots, or `impl IntoView` magic beyond "the function body is the view". Attribute order on a custom tag is argument order.
+Chosen. `quinn-reactive` re-exports `reactive_graph` at `5ca3a9bf90cbcc0561dc4323f8018e18dce5906f` with the `effects` feature. `quinn-macros` parses with rstml 0.13.1 and emits `quinn` builders. `#[component]` is a small attribute that installs an `Owner`. It is not the upstream attribute: it does not support props macros, slots, or `impl IntoView` magic beyond "the function body is the view". Attribute order on a custom tag is argument order.
 
 ### Why not A (upstream Tachys / `leptos_macro`)
 
@@ -24,20 +24,20 @@ Widgets are constructed with `ScriptVm::eval` + `WidgetRef::script_from_value` s
 
 ## Style subset
 
-`lm-styles` parses a fixed utility vocabulary and a small inline grammar into a `Style` struct. Tag defaults live in `Tag::defaults` (dark ink `#1c1917` on the light page, light label on a dark button, input height 36px). Unknown utilities are ignored. See `docs/compatibility.md` for what is not CSS.
+`quinn-styles` parses a fixed utility vocabulary and a small inline grammar into a `Style` struct. Tag defaults live in `Tag::defaults` (dark ink `#1c1917` on the light page, light label on a dark button, input height 36px). Unknown utilities are ignored. See `docs/compatibility.md` for what is not CSS.
 
 ## Crate split
 
 | Crate | Role |
 | --- | --- |
-| `lm-styles` | Pure parser. No Makepad, no Leptos. |
-| `lm-reactive` | Pinned `reactive_graph` re-export. |
-| `lm-core` | Owners, commands, `Surface`, `MemorySurface`, tests. |
-| `lm-macros` | `view!`, `#[component]`, `run!`. |
-| `lm-makepad` | `MakepadSurface`, startup, actions. Optional. |
-| `lume` | The import path. `native` (default) pulls `lm-makepad`. |
+| `quinn-styles` | Pure parser. No Makepad, no Leptos. |
+| `quinn-reactive` | Pinned `reactive_graph` re-export. |
+| `quinn-core` | Owners, commands, `Surface`, `MemorySurface`, tests. |
+| `quinn-macros` | `view!`, `#[component]`, `run!`. |
+| `quinn-makepad` | `MakepadSurface`, startup, actions. Optional. |
+| `quinn` | The import path. `native` (default) pulls `quinn-makepad`. |
 
-`cargo test -p lume --no-default-features` never links Makepad. That is what CI runs.
+`cargo test -p quinn --no-default-features` never links Makepad. That is what CI runs.
 
 ## Live reload
 

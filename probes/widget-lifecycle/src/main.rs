@@ -1,7 +1,7 @@
 //! Probe A. Eight widget-tree operations against Makepad's public types,
-//! logged to `LUME_LOG` (default `artifacts/probe-widget-lifecycle.log`).
+//! logged to `QUINN_LOG` (default `artifacts/probe-widget-lifecycle.log`).
 //!
-//! `LUME_PROBE_EXIT=1` quits after the log is written. Leave it unset to keep
+//! `QUINN_PROBE_EXIT=1` quits after the log is written. Leave it unset to keep
 //! the window up for a click on Increment.
 
 pub use makepad_widgets;
@@ -199,7 +199,7 @@ impl Probe {
     }
 
     fn flush(&self) {
-        let path = std::env::var("LUME_LOG")
+        let path = std::env::var("QUINN_LOG")
             .unwrap_or_else(|_| "artifacts/probe-widget-lifecycle.log".into());
         if let Some(parent) = std::path::Path::new(&path).parent() {
             let _ = fs::create_dir_all(parent);
@@ -213,7 +213,7 @@ impl Probe {
         });
         let _ = fs::write(&path, &body);
         let _ = fs::write("/opt/cursor/artifacts/probe-widget-lifecycle.log", &body);
-        let _ = fs::write("/tmp/lume-probe.log", &body);
+        let _ = fs::write("/tmp/quinn-probe.log", &body);
     }
 }
 
@@ -221,7 +221,7 @@ impl MatchEvent for App {
     fn handle_startup(&mut self, cx: &mut Cx) {
         let host = self.ui.view(cx, ids!(host));
         self.probe.run(cx, &self.ui, &host);
-        if std::env::var("LUME_PROBE_EXIT").ok().as_deref() == Some("1") {
+        if std::env::var("QUINN_PROBE_EXIT").ok().as_deref() == Some("1") {
             if !self.probe.passed() {
                 eprintln!("PROBE_FAIL");
                 std::process::exit(1);

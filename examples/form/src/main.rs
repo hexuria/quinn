@@ -1,4 +1,4 @@
-use lume::prelude::*;
+use quinn::prelude::*;
 
 #[component]
 fn Form() -> impl IntoView {
@@ -20,4 +20,4 @@ fn Form() -> impl IntoView {
     }
 }
 
-lume::run!("Form", 480, 320, view! { <Form /> });
+quinn::run!("Form", 480, 320, view! { <Form /> });

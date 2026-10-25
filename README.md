@@ -1,9 +1,9 @@
-# lume
+# quinn
 
 Leptos-style components, rendered by Makepad. There is no WebView and no second layout engine.
 
 ```rust
-use lume::prelude::*;
+use quinn::prelude::*;
 
 #[component]
 fn Counter() -> impl IntoView {
@@ -19,7 +19,7 @@ fn Counter() -> impl IntoView {
     }
 }
 
-lume::run!("Counter", 480, 360, view! { <Counter /> });
+quinn::run!("Counter", 480, 360, view! { <Counter /> });
 ```
 
 `run!` has to sit at the crate root. It expands to a Makepad `app_main!` shell. Rust 1.99.0 is pinned in `rust-toolchain.toml`.
@@ -29,7 +29,7 @@ lume::run!("Counter", 480, 360, view! { <Counter /> });
 This does not need a GPU or a display:
 
 ```bash
-cargo test -p lm-styles -p lm-reactive -p lm-core -p lume --no-default-features
+cargo test -p quinn-styles -p quinn-reactive -p quinn-core -p quinn --no-default-features
 ```
 
 ## Run a native example
@@ -46,7 +46,7 @@ The same invocation works for `conditional`, `keyed-list`, `form`, `baseline-cou
 
 Without Xvfb, drop `xvfb-run -a` if `DISPLAY` is already a real X server.
 
-`LUME_EXIT=1` asks a lume example to quit after the first frame. `LUME_READY=/tmp/ready` writes `ready` once the tree is mounted. The lifecycle probe writes `artifacts/probe-widget-lifecycle.log` and quits with a failure status when `LUME_PROBE_EXIT=1` if any of the eight checks failed.
+`QUINN_EXIT=1` asks a quinn example to quit after the first frame. `QUINN_READY=/tmp/ready` writes `ready` once the tree is mounted. The lifecycle probe writes `artifacts/probe-widget-lifecycle.log` and quits with a failure status when `QUINN_PROBE_EXIT=1` if any of the eight checks failed.
 
 ## Layout of the workspace
 
@@ -55,7 +55,7 @@ Without Xvfb, drop `xvfb-run -a` if `DISPLAY` is already a real X server.
 - `crates/core` — owners, surface, lifecycle tests
 - `crates/macros` — `view!`, `#[component]`, `run!`
 - `crates/makepad` — the only renderer
-- `crates/lume` — what applications import
+- `crates/quinn` — what applications import
 - `examples/` — counter, conditional, keyed list, form, and a Makepad baseline. The baseline follows the upstream counter, with `height: Fit` on the main view so the button is not given zero space in a 220px window, and an explicit dark label color.
 - `probes/widget-lifecycle` — the Makepad tree experiment
 - `docs/` — research, architecture, decisions, compatibility

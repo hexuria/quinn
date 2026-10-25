@@ -1,5 +1,5 @@
-use lume::prelude::*;
-use lume::{MemorySurface, Runtime};
+use quinn::prelude::*;
+use quinn::{MemorySurface, Runtime};
 
 #[component]
 fn Banner(title: String) -> impl IntoView {

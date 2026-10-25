@@ -1,8 +1,8 @@
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
-use lm_reactive::prelude::*;
-use lm_reactive::{on_cleanup, Owner};
+use quinn_reactive::prelude::*;
+use quinn_reactive::{on_cleanup, Owner};
 
 use crate::{el, for_each, scope_owner, show, MemorySurface, Runtime, Tag};
 

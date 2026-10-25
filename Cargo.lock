@@ -116,7 +116,7 @@ source = "git+https://github.com/makepad/makepad?rev=44ecb822b48106fa76bde4dfd30
 name = "conditional"
 version = "0.1.0"
 dependencies = [
- "lume",
+ "quinn",
 ]
 
 [[package]]
@@ -132,7 +132,7 @@ dependencies = [
 name = "counter"
 version = "0.1.0"
 dependencies = [
- "lume",
+ "quinn",
 ]
 
 [[package]]
@@ -206,7 +206,7 @@ source = "git+https://github.com/makepad/makepad?rev=44ecb822b48106fa76bde4dfd30
 name = "form"
 version = "0.1.0"
 dependencies = [
- "lume",
+ "quinn",
 ]
 
 [[package]]
@@ -369,7 +369,7 @@ dependencies = [
 name = "keyed-list"
 version = "0.1.0"
 dependencies = [
- "lume",
+ "quinn",
 ]
 
 [[package]]
@@ -389,55 +389,6 @@ source = "git+https://github.com/makepad/makepad?rev=44ecb822b48106fa76bde4dfd30
 dependencies = [
  "cfg-if 1.0.4",
  "windows-link 0.2.1 (git+https://github.com/makepad/makepad?rev=44ecb822b48106fa76bde4dfd309e5a8a7ff1932)",
-]
-
-[[package]]
-name = "lm-core"
-version = "0.1.0"
-dependencies = [
- "lm-reactive",
- "lm-styles",
-]
-
-[[package]]
-name = "lm-macros"
-version = "0.1.0"
-dependencies = [
- "proc-macro2",
- "quote",
- "rstml",
- "syn 3.0.9",
-]
-
-[[package]]
-name = "lm-makepad"
-version = "0.1.0"
-dependencies = [
- "lm-core",
- "lm-styles",
- "makepad-widgets",
-]
-
-[[package]]
-name = "lm-reactive"
-version = "0.1.0"
-dependencies = [
- "reactive_graph",
-]
-
-[[package]]
-name = "lm-styles"
-version = "0.1.0"
-
-[[package]]
-name = "lume"
-version = "0.1.0"
-dependencies = [
- "lm-core",
- "lm-macros",
- "lm-makepad",
- "lm-reactive",
- "lm-styles",
 ]
 
 [[package]]
@@ -1031,6 +982,55 @@ dependencies = [
  "syn 3.0.9",
  "version_check",
 ]
+
+[[package]]
+name = "quinn"
+version = "0.1.0"
+dependencies = [
+ "quinn-core",
+ "quinn-macros",
+ "quinn-makepad",
+ "quinn-reactive",
+ "quinn-styles",
+]
+
+[[package]]
+name = "quinn-core"
+version = "0.1.0"
+dependencies = [
+ "quinn-reactive",
+ "quinn-styles",
+]
+
+[[package]]
+name = "quinn-macros"
+version = "0.1.0"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "rstml",
+ "syn 3.0.9",
+]
+
+[[package]]
+name = "quinn-makepad"
+version = "0.1.0"
+dependencies = [
+ "makepad-widgets",
+ "quinn-core",
+ "quinn-styles",
+]
+
+[[package]]
+name = "quinn-reactive"
+version = "0.1.0"
+dependencies = [
+ "reactive_graph",
+]
+
+[[package]]
+name = "quinn-styles"
+version = "0.1.0"
 
 [[package]]
 name = "quote"

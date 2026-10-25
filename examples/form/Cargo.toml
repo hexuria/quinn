@@ -10,4 +10,4 @@ name = "form"
 path = "src/main.rs"
 
 [dependencies]
-lume = { path = "../../crates/lume" }
+quinn = { path = "../../crates/quinn" }

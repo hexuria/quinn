@@ -1,6 +1,6 @@
 use std::any::Any;
 
-use lm_styles::Style;
+use quinn_styles::Style;
 
 /// Tags the markup crate understands. Each one is a Makepad widget prototype,
 /// not an HTML element.
@@ -26,50 +26,50 @@ impl Tag {
 
     pub fn defaults(self) -> Style {
         let mut style = Style::default();
-        let ink = lm_styles::Rgba::new(28, 25, 23);
+        let ink = quinn_styles::Rgba::new(28, 25, 23);
         match self {
             Self::Div => {
-                style.flow = Some(lm_styles::FlowSpec::Column);
-                style.width = Some(lm_styles::SizeSpec::Fill);
-                style.height = Some(lm_styles::SizeSpec::Fit);
+                style.flow = Some(quinn_styles::FlowSpec::Column);
+                style.width = Some(quinn_styles::SizeSpec::Fill);
+                style.height = Some(quinn_styles::SizeSpec::Fit);
             }
             Self::H1 => {
                 style.color = Some(ink);
                 style.font_size = Some(28.0);
-                style.width = Some(lm_styles::SizeSpec::Fill);
-                style.height = Some(lm_styles::SizeSpec::Fit);
+                style.width = Some(quinn_styles::SizeSpec::Fill);
+                style.height = Some(quinn_styles::SizeSpec::Fit);
             }
             Self::H2 => {
                 style.color = Some(ink);
                 style.font_size = Some(22.0);
-                style.width = Some(lm_styles::SizeSpec::Fill);
-                style.height = Some(lm_styles::SizeSpec::Fit);
+                style.width = Some(quinn_styles::SizeSpec::Fill);
+                style.height = Some(quinn_styles::SizeSpec::Fit);
             }
             Self::Span | Self::P | Self::Label => {
                 style.color = Some(ink);
                 style.font_size = Some(16.0);
-                style.width = Some(lm_styles::SizeSpec::Fit);
-                style.height = Some(lm_styles::SizeSpec::Fit);
+                style.width = Some(quinn_styles::SizeSpec::Fit);
+                style.height = Some(quinn_styles::SizeSpec::Fit);
             }
             Self::Button => {
-                style.color = Some(lm_styles::Rgba::new(246, 243, 236));
+                style.color = Some(quinn_styles::Rgba::new(246, 243, 236));
                 style.font_size = Some(16.0);
-                style.background = Some(lm_styles::Rgba::new(28, 25, 23));
+                style.background = Some(quinn_styles::Rgba::new(28, 25, 23));
                 style.radius = Some(8.0);
-                style.padding = lm_styles::Edges::all(10.0);
-                style.width = Some(lm_styles::SizeSpec::Fit);
-                style.height = Some(lm_styles::SizeSpec::Fit);
+                style.padding = quinn_styles::Edges::all(10.0);
+                style.width = Some(quinn_styles::SizeSpec::Fit);
+                style.height = Some(quinn_styles::SizeSpec::Fit);
             }
             Self::Input => {
                 style.color = Some(ink);
                 style.font_size = Some(16.0);
-                style.background = Some(lm_styles::Rgba::new(255, 255, 255));
+                style.background = Some(quinn_styles::Rgba::new(255, 255, 255));
                 style.border_width = Some(1.0);
-                style.border_color = Some(lm_styles::Rgba::new(214, 211, 209));
+                style.border_color = Some(quinn_styles::Rgba::new(214, 211, 209));
                 style.radius = Some(6.0);
-                style.padding = lm_styles::Edges::all(8.0);
-                style.width = Some(lm_styles::SizeSpec::Fill);
-                style.height = Some(lm_styles::SizeSpec::Px(36.0));
+                style.padding = quinn_styles::Edges::all(8.0);
+                style.width = Some(quinn_styles::SizeSpec::Fill);
+                style.height = Some(quinn_styles::SizeSpec::Px(36.0));
             }
         }
         style

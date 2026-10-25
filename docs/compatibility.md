@@ -16,7 +16,7 @@ No GPUI, NSH, Electron, WebView, or JavaScript runtime is a dependency.
 
 Makepad's `platform/` tree contains Linux (X11 and Wayland), Windows, macOS, iOS, Android, and a wasm bridge. This milestone **runs** the Linux X11 software-GL path (`MAKEPAD_GPU=gl`, `LIBGL_ALWAYS_SOFTWARE=1`, Mesa llvmpipe, OpenGL ES 3.2). On this VM that was display `:1` (XFCE) and, for the headless smoke runs, Xvfb. Vulkan windowing is skipped on X11 because Makepad wants Wayland for Vulkan (`X11 session: Vulkan windowing needs Wayland; rendering with OpenGL ES`). macOS, Windows, iOS, and Android were not executed. A successful `cargo check` is not a running UI.
 
-`cargo check -p lm-styles -p lm-reactive -p lm-core -p lume --no-default-features --target wasm32-unknown-unknown` finished in 12.12s (dev profile, rustc 1.99.0). `cargo check -p baseline-counter --target wasm32-unknown-unknown` finished in 15.50s. Neither produced a browser session. `bumpalo` was not in the offline cache, so the framework check needed network once.
+`cargo check -p quinn-styles -p quinn-reactive -p quinn-core -p quinn --no-default-features --target wasm32-unknown-unknown` finished in 12.12s (dev profile, rustc 1.99.0). `cargo check -p baseline-counter --target wasm32-unknown-unknown` finished in 15.50s. Neither produced a browser session. `bumpalo` was not in the offline cache, so the framework check needed network once.
 
 ## Markup that works
 
@@ -70,7 +70,7 @@ Host: Linux x86_64, kernel 6.12.94, rustc 1.99.0 (`b940084d7`), 4 cores, XFCE on
 | Release rebuild after `touch examples/counter/src/main.rs` | 1.21s |
 | Release binary size, counter | 27,567,424 bytes |
 | Release binary size, baseline | 27,025,872 bytes |
-| Release counter, spawn to `LUME_READY` (tree mounted) | 95 ms |
+| Release counter, spawn to `QUINN_READY` (tree mounted) | 95 ms |
 | Release baseline, spawn to the `Makepad GL` log line | 133 ms |
 | Release counter idle, 3s sample of `/proc/stat` ticks | 0.33% CPU, RSS 232,080 KiB |
 | Release baseline idle, 2s sample | 0.0% CPU, RSS 210,880 KiB |

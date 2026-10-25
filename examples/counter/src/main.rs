@@ -1,4 +1,4 @@
-use lume::prelude::*;
+use quinn::prelude::*;
 
 #[component]
 fn Counter() -> impl IntoView {
@@ -14,4 +14,4 @@ fn Counter() -> impl IntoView {
     }
 }
 
-lume::run!("Counter", 480, 360, view! { <Counter /> });
+quinn::run!("Counter", 480, 360, view! { <Counter /> });

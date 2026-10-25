@@ -1,4 +1,4 @@
-use lume::prelude::*;
+use quinn::prelude::*;
 
 #[component]
 fn Detail() -> impl IntoView {
@@ -34,4 +34,4 @@ fn Conditional() -> impl IntoView {
     }
 }
 
-lume::run!("Conditional", 520, 420, view! { <Conditional /> });
+quinn::run!("Conditional", 520, 420, view! { <Conditional /> });

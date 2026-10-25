@@ -12,9 +12,9 @@ pub use reactive_graph::owner::{on_cleanup, Owner};
 pub use reactive_graph::signal::signal;
 
 pub mod prelude {
+    pub use reactive_graph::owner::{on_cleanup, Owner};
     pub use reactive_graph::prelude::*;
     pub use reactive_graph::signal::signal;
-    pub use reactive_graph::owner::{on_cleanup, Owner};
 }
 
 #[cfg(test)]

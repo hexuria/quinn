@@ -1,13 +1,13 @@
 # Architecture
 
-`lume` is the crate applications import. A `view!` body expands to `el` / `show` / `for_each` builders in `lm-core`. Those builders mount onto a `Surface`. The only production surface is Makepad. Tests use `MemorySurface`, which records creates, text writes, and child order and never reuses an id.
+`quinn` is the crate applications import. A `view!` body expands to `el` / `show` / `for_each` builders in `quinn-core`. Those builders mount onto a `Surface`. The only production surface is Makepad. Tests use `MemorySurface`, which records creates, text writes, and child order and never reuses an id.
 
 ```
-view! / #[component]  (lm-macros, rstml)
+view! / #[component]  (quinn-macros, rstml)
         │
         ▼
-el / show / for_each / scope_owner   (lm-core)
-        │  ImmediateEffect (lm-reactive → reactive_graph)
+el / show / for_each / scope_owner   (quinn-core)
+        │  ImmediateEffect (quinn-reactive → reactive_graph)
         ▼
 Surface::create / set_text / set_style / set_order / remove
         │
@@ -53,4 +53,4 @@ Commands carry ids, not `WidgetRef`, because effects are `Send + Sync` and `Widg
 
 ## What is intentionally not a second system
 
-No Taffy, no CSS cascade, no DOM `Renderer`, no second GPU backend, no JS runtime. Class strings are parsed in `lm-styles` into the fields Makepad already lays out.
+No Taffy, no CSS cascade, no DOM `Renderer`, no second GPU backend, no JS runtime. Class strings are parsed in `quinn-styles` into the fields Makepad already lays out.

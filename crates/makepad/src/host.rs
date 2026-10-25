@@ -1,10 +1,10 @@
 use std::cell::Cell;
 use std::collections::HashMap;
 
-use lm_core::{IntoView, NodeSpec, Owner, Runtime, Style, Surface, Tag, UiEvent};
-use lm_styles::{AlignSpec, FlowSpec, SizeSpec};
 use makepad_widgets::makepad_script::ScriptMod;
 use makepad_widgets::*;
+use quinn_core::{IntoView, NodeSpec, Owner, Runtime, Style, Surface, Tag, UiEvent};
+use quinn_styles::{AlignSpec, FlowSpec, SizeSpec};
 
 use crate::{session_slot, Session};
 
@@ -229,8 +229,8 @@ fn eval_widget(code: &str) -> WidgetRef {
 fn script_mod(code: &str) -> ScriptMod {
     ScriptMod {
         cargo_manifest_path: String::new(),
-        module_path: "lume".into(),
-        file: "lume.script".into(),
+        module_path: "quinn".into(),
+        file: "quinn.script".into(),
         line: 1,
         column: 1,
         // A fresh `ScriptVm::eval` body does not inherit the app module's
@@ -453,7 +453,7 @@ fn control_script(style: &Style) -> String {
 pub fn startup<V: IntoView>(cx: &mut Cx, ui: &WidgetRef, build: impl FnOnce() -> V) {
     let host = ui.view(cx, ids!(host));
     if host.is_empty() {
-        panic!("lume host view was not created; the shell script did not register `host`");
+        panic!("quinn host view was not created; the shell script did not register `host`");
     }
     let owner = Owner::new();
     let view = owner.with(|| build().into_view());
@@ -464,10 +464,10 @@ pub fn startup<V: IntoView>(cx: &mut Cx, ui: &WidgetRef, build: impl FnOnce() ->
     session_slot().with(|slot| {
         *slot.borrow_mut() = Some(Session { runtime, owner });
     });
-    if let Ok(path) = std::env::var("LUME_READY") {
+    if let Ok(path) = std::env::var("QUINN_READY") {
         let _ = std::fs::write(path, "ready\n");
     }
-    if std::env::var("LUME_EXIT").ok().as_deref() == Some("1") {
+    if std::env::var("QUINN_EXIT").ok().as_deref() == Some("1") {
         cx.quit();
     }
 }

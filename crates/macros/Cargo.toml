@@ -1,5 +1,5 @@
 [package]
-name = "lm-macros"
+name = "quinn-macros"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

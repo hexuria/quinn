@@ -1,6 +1,6 @@
 use quinn::makepad_widgets::*;
 
-app_main!(App);
+app_main!(App, font_assets: [makepad_platform::ROBOTO_FLEX_FONT_ASSET]);
 
 #[derive(Script, ScriptHook)]
 pub struct App {

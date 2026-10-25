@@ -22,15 +22,15 @@ Makepad's `platform/` tree contains Linux (X11 and Wayland), Windows, macOS, iOS
 
 Tags: `div`, `span`, `h1`, `h2`, `p`, `label`, `button`, `input`.
 
-`div` → `RoundedView` (a `View` prototype). Text tags → `Label`, except `h1`/`h2` which use those prototypes. `button` → `Button`. `input` → `TextInput`.
+`div` → `RoundedView` (a `View` prototype), or `RoundedShadowView` when the class has `shadow`, or `widgets.Grid` when the class has `grid-cols-*`. Text tags → `Label`, except `h1`/`h2` which use those prototypes. `button` → `Button`. `input` → `TextInput`. `<A href>` → `Button` that sets `state.route`.
 
-Also: nested elements, string literals and `{expr}` / `{move || value}` text, `on:click`, `on:input` / `on:change`, `value=`, `placeholder="..."`, `class="..."`, `style="..."`, `<Show when=...>`, `<For each=... key=... let:item>`, and a custom component as a function call whose attributes are arguments in source order.
+Also: nested elements, fragments (`<>...</>`), string literals and `{expr}` / `{move || value}` text, `on:click`, `on:input` / `on:change`, `value=`, `bind:value`, `placeholder="..."`, `class="..."`, `style="..."`, `<Show when=...>`, `<For each=... key=... let:item>`, `<Router>` / `<Routes>` / `<Route path>`, and a custom component as a function call. `#[prop(optional)]`, `default`, and `into` are accepted. `children: Children` and `children: ChildrenFn` are script functions.
 
-`#[component] fn Name(...) -> impl IntoView`, when Rust compiles it, creates an owner and returns `scope_owner`. It does not implement upstream prop helpers or children slots. The example `view.rs` files are not compiled. The lowerer reads the same syntax and emits script. A `<Show>` nested inside a `<For>` row is parsed as syntax and is not emitted correctly.
+`#[component] fn Name(...) -> impl IntoView`, when Rust compiles it, creates an owner and returns `scope_owner`. The example `view.rs` files are not compiled. The lowerer reads the same syntax and emits script. A `<Show>` nested inside a `<For>` row is its own function pair and does not use the host show cursor. The in-app router is `state.route`. It is not `leptos_router`.
 
 ## Style subset
 
-Utilities (later tokens win): `flex`, `flex-row`, `flex-col`, `flex-wrap`, `flex-nowrap`, `flex-1`, `flex-none`, `grow`, `shrink`, `shrink-0`, `grow-N`, `shrink-N`, `basis-N`, `gap-N`, `gap-x-N`, `gap-y-N` (N×4 px, `gap-px` = 1), `p-` / `px-` / `py-` / `pt-` / `pr-` / `pb-` / `pl-` and the `m*` forms on the same scale, `items-start|center|end|stretch`, `self-start|center|end|stretch`, `justify-start|center|end|between|around|evenly`, `w-full`, `w-fit`, `w-screen`, `h-full`, `h-fit`, `h-screen`, `w-1/2` and the other `n/d` fractions, `min-w-*`, `max-w-*`, `min-h-*`, `max-h-*` (`full` is `"100%"`), `text-xs` through `text-3xl`, `rounded`, `rounded-sm|md|lg|full`, `border`, `border-2`, `disabled`, and a short palette (`white`, `black`, `slate-900|600|100`, `stone-900|100`, `amber-700|600|100`) on `bg-`, `text-`, and `border-`.
+Utilities (later tokens win): `flex`, `flex-row`, `flex-col`, `flex-wrap`, `flex-nowrap`, `flex-1`, `flex-none`, `grow`, `shrink`, `shrink-0`, `grow-N`, `shrink-N`, `basis-N`, `gap-N`, `gap-x-N`, `gap-y-N` (N×4 px, `gap-px` = 1), `p-` / `px-` / `py-` / `pt-` / `pr-` / `pb-` / `pl-` and the `m*` forms on the same scale, `items-start|center|end|stretch`, `self-start|center|end|stretch`, `justify-start|center|end|between|around|evenly`, `w-full`, `w-fit`, `w-screen`, `h-full`, `h-fit`, `h-screen`, `w-1/2` and the other `n/d` fractions, `min-w-*`, `max-w-*`, `min-h-*`, `max-h-*` (`full` is `"100%"`), `text-xs` through `text-3xl`, `font-medium`, `font-semibold`, `font-bold`, `leading-none|tight|snug|normal|relaxed|loose`, `rounded`, `rounded-sm|md|lg|full`, `border`, `border-2`, `shadow`, `shadow-md`, `shadow-lg`, `grid`, `grid-cols-N`, `col-span-N`, `absolute`, `left-*`, `top-*`, `right-*`, `bottom-*`, `overflow-hidden`, `overflow-x-auto`, `overflow-y-auto`, `overflow-auto`, `bg-gradient-to-r|l|t|b`, `from-*`, `to-*`, `disabled`, and a short palette (`white`, `black`, `slate-900|600|100`, `stone-900|100`, `amber-700|600|100`) on `bg-`, `text-`, `border-`, `from-`, and `to-`.
 
 Arbitrary values: `w-[13px]`, `h-[13px]`, `min-w-[8px]`, `max-w-[40px]`, `min-h-[0px]`, `max-h-[16px]`, `p-[10px]` and the per-side `p*` / `m*` forms, `gap-[8px]`, `basis-[16px]`, `bg-[#1e293b]`, `text-[#fff]`, `text-[13px]`. A 3-digit hex expands. An 8-digit hex uses the first six.
 
@@ -47,15 +47,16 @@ Inline: `color`, `background`, `font-size`, `padding`, `margin`, `gap`, `radius`
 These are absent on purpose, not partially implemented:
 
 - CSS inheritance, specificity, the cascade beyond source order, media queries, `em`/`rem`
-- `focus:` utilities, `align-content`, `z-index`, grid, absolute/fixed positioning
+- `focus:` utilities, `align-content`, `z-index`, `fixed`, and a four-side inset stretch
 - Hover on a plain `div` (the button animator is the only hover Quinn drives)
 - HTML forms as a DOM (`<form>`, submit, labels-for), contenteditable, rich text, SVG, images
-- Slots / `children` on custom components
-- Upstream `#[component]` props syntax (`prop: impl Fn()` etc.)
+- `leptos_router` (URL, history, params, nested matching). The in-app `<Router>` is `state.route`.
+- Subtree context. `provide_context` writes one process-global `mod.ctx` and does not shadow.
 - `RenderEffect`, resources, suspense, server functions, hydration
 - A second layout engine
+- Gradient, shadow, or scroll bars on a `Grid` div. `Grid` draws a `DrawQuad`. Put those classes on a child view.
 
-`render()` writes `TextInput.text` from `mod.state` on each change, because `on_change` calls `root.render()` so the heading updates. The string survives a class or label reload. The caret can jump. The headless surface still skips `set_text` when the string is already equal; the running examples do not use that surface.
+`bind:value` omits `text:` on the `TextInput`. A sibling that reads the signal still updates, and the caret stays. `value=` with `on:input` still writes `text:` on each `root.render()`, so that path can still move the caret. The string survives either way. The headless surface still skips `set_text` when the string is already equal; the running examples do not use that surface.
 
 ## Public API versus Makepad internals
 

@@ -424,8 +424,18 @@ mod tests {
             ("examples/keyed-list/view.rs", "fn quinn_row(id, label)"),
             ("examples/form/view.rs", "state.name = text"),
             ("examples/retain/view.rs", "fn quinn_retain_step"),
-            ("examples/tailwind-gallery/view.rs", "Distribute.SpaceBetween"),
+            (
+                "examples/tailwind-gallery/view.rs",
+                "Distribute.SpaceBetween",
+            ),
+            (
+                "examples/tailwind-gallery/view.rs",
+                "columns: [\"1fr\", \"1fr\", \"1fr\"]",
+            ),
             ("examples/keyed-list/view.rs", "row_quinn_show_open_1"),
+            ("examples/app-shell/view.rs", "fn quinn_route_1("),
+            ("examples/app-shell/view.rs", "mod.ctx.accent"),
+            ("examples/app-shell/view.rs", "RoundedShadowView"),
         ];
         for (rel, needle) in cases {
             let source = std::fs::read_to_string(root.join(rel))
@@ -631,9 +641,159 @@ mod tests {
             }
         "#;
         let err = parse_model(source).unwrap_err();
+        assert!(err.contains("cannot lower"), "{err}");
+    }
+
+    const P1: &str = r#"
+        struct Profile { name: String, city: String, }
+        #[component]
+        fn Card(
+            #[prop(into)] title: String,
+            #[prop(optional, default = "stone")] tone: String,
+            children: Children,
+        ) -> impl IntoView {
+            view! {
+                <div class="p-3 rounded-lg bg-white shadow-md">
+                    <span class="font-semibold">{title}</span>
+                    <span class="text-xs">{tone}</span>
+                    {children()}
+                </div>
+            }
+        }
+        #[component]
+        fn Note(children: ChildrenFn) -> impl IntoView {
+            view! {
+                <div>{children()("from-fn")}</div>
+            }
+        }
+        #[component]
+        fn Shell() -> impl IntoView {
+            provide_context("accent", "amber");
+            let accent = use_context("accent");
+            let (name, set_name) = signal(String::new());
+            let (profile, set_profile) = signal(Profile { name: "Ada".into(), city: "Manila".into() });
+            view! {
+                <div class="flex flex-col gap-2 p-3">
+                    <span>"Accent: " {accent}</span>
+                    <A href="/">"Home"</A>
+                    <A href="/board">"Board"</A>
+                    <button on:click=move |_| { navigate("/form"); }>"Go form"</button>
+                    <Router>
+                        <Routes>
+                            <Route path="/">
+                                <div>
+                                    <>
+                                        <span>"One"</span>
+                                        <span>"Two"</span>
+                                    </>
+                                    <Card title="Today">
+                                        <span class="leading-snug">"Hello card"</span>
+                                    </Card>
+                                    <Note><span>{arg}</span></Note>
+                                </div>
+                            </Route>
+                            <Route path="/board">
+                                <div class="grid grid-cols-3 gap-2">
+                                    <div class="col-span-2 h-[40px] rounded bg-gradient-to-r from-amber-600 to-stone-900 shadow-lg">
+                                        <span class="text-white font-bold">"Wide"</span>
+                                    </div>
+                                    <div class="absolute left-2 top-1 overflow-hidden">
+                                        <span class="font-medium">"Pin"</span>
+                                    </div>
+                                    <div class="h-[32px] overflow-y-auto overflow-x-auto">
+                                        <span class="leading-relaxed">"Scroll"</span>
+                                    </div>
+                                </div>
+                            </Route>
+                            <Route path="/form">
+                                <div>
+                                    <input bind:value=name placeholder="Name" />
+                                    <span>"Hello, " {name}</span>
+                                    <span>{profile.city}</span>
+                                    <button on:click=move |_| { set_profile.update(|p| { p.city = "Cebu".into(); }); }>"Move"</button>
+                                </div>
+                            </Route>
+                        </Routes>
+                    </Router>
+                </div>
+            }
+        }
+    "#;
+
+    #[test]
+    fn p1_components_context_router_grid_and_bind_lower() {
+        let file = lower_file(P1, shell()).unwrap_or_else(|err| panic!("{err}"));
+        let needles = [
+            "fn quinn_slot_",
+            "\"from-fn\"",
+            "if ok{mod.ctx} == nil",
+            "if ok{mod.ctx.accent} == nil",
+            "mod.ctx.accent = \"amber\"",
+            "mod.ctx.accent",
+            "state.route = \"/\"",
+            "state.route = \"/board\"",
+            "state.route = \"/form\"",
+            "fn quinn_route_1_on(root) {\n            RoundedView {",
+            "fn quinn_route_1(",
+            "fn quinn_route_2(",
+            "fn quinn_route_3(",
+            "if state.route == \"/\"",
+            "Grid {",
+            "columns: [\"1fr\", \"1fr\", \"1fr\"]",
+            "implicit_row_size: 40.",
+            "column_gap: 8.",
+            "row_gap: 8.",
+            "CellPlacement{col_span: 2}",
+            "abs_pos: vec2(8., 4.)",
+            "width: Fit",
+            "clip_x: true",
+            "clip_y: true",
+            "ScrollBars{show_scroll_x: true show_scroll_y: true}",
+            "RobotoFlex.ttf",
+            "weight: 700.",
+            "weight: 600.",
+            "weight: 500.",
+            "line_spacing: 1.375",
+            "line_spacing: 1.625",
+            "draw_bg.color_2:",
+            "gradient_fill_horizontal: 1.",
+            "RoundedShadowView",
+            "shadow_radius: 16.",
+            "shadow_radius: 8.",
+            "profile: {name: \"Ada\", city: \"Manila\"}",
+            "state.profile.city = \"Cebu\"",
+            "text: \"Hello, \" + state.name",
+            "text: \"One\"",
+            "text: \"Two\"",
+            "text: \"stone\"",
+            "text: \"Today\"",
+            "text: arg",
+        ];
+        for needle in needles {
+            assert!(file.contains(needle), "missing {needle}:\n{file}");
+        }
+        let field = file.split("field := TextInput").nth(1).expect("input");
+        let field = field.split("on_change").next().unwrap();
         assert!(
-            err.contains("cannot lower"),
-            "{err}"
+            !field
+                .lines()
+                .any(|line| line.trim_start().starts_with("text:")),
+            "bind:value must not rewrite the input text:\n{field}"
         );
+        assert!(file.contains("state.name = text"));
+        assert!(file.contains("root.render()"));
+        let mut sim = Sim::new(parse_model(P1).unwrap());
+        assert_eq!(sim.text("span"), "Accent: amber");
+        assert_eq!(sim.strings.get("route").map(String::as_str), Some("/"));
+        assert!(sim.click("A_2"));
+        assert_eq!(sim.strings["route"], "/board");
+        assert!(sim.click("go_form"));
+        assert_eq!(sim.strings["route"], "/form");
+        assert!(sim.set_input("field", "Quinn"));
+        assert_eq!(sim.strings["name"], "Quinn");
+        assert_eq!(sim.text("span_11"), "Hello, Quinn");
+        assert_eq!(sim.text("field"), "", "the input text is not rewritten");
+        assert!(sim.click("move"));
+        assert_eq!(sim.strings["profile.city"], "Cebu");
     }
 }

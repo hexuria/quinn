@@ -19,6 +19,7 @@ pub fn emit_rust(model: &Model, shell: &Shell) -> String {
     body.push_str("            }\n");
     body.push_str("        }\n");
     body.push_str("        let state = mod.state\n");
+    body.push_str(&emit_ctx(model));
     if let Some(signal) = &model.frame {
         body.push_str("        fn quinn_frame() {\n");
         body.push_str(&format!("            state.{signal} += 1\n"));
@@ -111,14 +112,25 @@ pub fn emit_rust(model: &Model, shell: &Shell) -> String {
         body.push_str(&emit_row_reset(model));
     }
     let shows = collect_shows(&model.nodes);
-    body.push_str(&emit_show_fns(&model.nodes, &shows));
+    let mut slots = String::new();
+    let mut routes = String::new();
+    let pass_root = has_input(&model.nodes);
+    let show_fns = emit_show_fns(&model.nodes, &shows, &mut slots, &mut routes, pass_root);
     each_for(&model.nodes, &mut |fn_name, params, row_signals, child| {
-        body.push_str(&emit_row_fn(fn_name, params, row_signals, child));
+        body.push_str(&emit_row_fn(
+            fn_name,
+            params,
+            row_signals,
+            child,
+            &mut slots,
+            &mut routes,
+            pass_root,
+        ));
     });
     if model.retain {
         body.push_str(&emit_retain(model));
     }
-    let host = host_fields(&model.root_class);
+    let host = host_fields(&model.root_class, tree_has_absolute(&model.nodes));
     let mut children = String::new();
     let mut cursor = ShowCursor {
         sites: &shows,
@@ -141,8 +153,14 @@ pub fn emit_rust(model: &Model, shell: &Shell) -> String {
             root_flow,
             root_stretch,
             &mut cursor,
+            &mut slots,
+            &mut routes,
+            pass_root,
         ));
     }
+    body.push_str(&slots);
+    body.push_str(&show_fns);
+    body.push_str(&routes);
     let title = shell.title.replace('\\', "\\\\").replace('"', "\\\"");
     body.push_str(&format!(
         r#"        startup() do #(crate::App::script_component(vm)) {{
@@ -187,6 +205,8 @@ fn has_input(nodes: &[ViewNode]) -> bool {
             ViewNode::El(item) => el(item),
             ViewNode::Show { child, .. } => walk(child),
             ViewNode::For { child, .. } => el(child),
+            ViewNode::Slot { nodes, .. } => nodes.iter().any(walk),
+            ViewNode::Routes { routes } => routes.iter().any(|(_, nodes)| nodes.iter().any(walk)),
         }
     }
     nodes.iter().any(walk)
@@ -217,13 +237,18 @@ fn has_list_op(nodes: &[ViewNode], op: ListOp) -> bool {
         }
     }
     fn el(el: &El, op: ListOp) -> bool {
-        el.click.as_ref().is_some_and(|click| act(click, op)) || el.children.iter().any(|node| walk(node, op))
+        el.click.as_ref().is_some_and(|click| act(click, op))
+            || el.children.iter().any(|node| walk(node, op))
     }
     fn walk(node: &ViewNode, op: ListOp) -> bool {
         match node {
             ViewNode::El(item) => el(item, op),
             ViewNode::Show { child, .. } => walk(child, op),
             ViewNode::For { child, .. } => el(child, op),
+            ViewNode::Slot { nodes, .. } => nodes.iter().any(|node| walk(node, op)),
+            ViewNode::Routes { routes } => routes
+                .iter()
+                .any(|(_, nodes)| nodes.iter().any(|node| walk(node, op))),
         }
     }
     nodes.iter().any(|node| walk(node, op))
@@ -266,6 +291,12 @@ fn each_for(nodes: &[ViewNode], visit: &mut dyn FnMut(&str, &[String], &[Signal]
             } => visit(fn_name, params, row_signals, child),
             ViewNode::El(el) => each_for(&el.children, visit),
             ViewNode::Show { child, .. } => each_for(std::slice::from_ref(child), visit),
+            ViewNode::Slot { nodes, .. } => each_for(nodes, visit),
+            ViewNode::Routes { routes } => {
+                for (_, nodes) in routes {
+                    each_for(nodes, visit);
+                }
+            }
         }
     }
 }
@@ -280,7 +311,7 @@ fn row_maps(model: &Model) -> Vec<(String, RowInit)> {
             }
             let init = match &signal.init {
                 Init::Bool(_) => RowInit::Bool,
-                Init::Str(_) => RowInit::Str,
+                Init::Str(_) | Init::Obj(_) => RowInit::Str,
                 Init::Int(_) | Init::Items(_) => RowInit::Int,
             };
             let name = format!("r_{}", signal.read);
@@ -309,7 +340,9 @@ fn row_live_flags(el: &El) -> Vec<String> {
     let mut out = Vec::new();
     fn walk(node: &ViewNode, out: &mut Vec<String>) {
         match node {
-            ViewNode::Show { live_flag, child, .. } => {
+            ViewNode::Show {
+                live_flag, child, ..
+            } => {
                 out.push(live_flag.clone());
                 walk(child, out);
             }
@@ -319,12 +352,43 @@ fn row_live_flags(el: &El) -> Vec<String> {
                 }
             }
             ViewNode::For { .. } => {}
+            ViewNode::Slot { nodes, .. } => {
+                for child in nodes {
+                    walk(child, out);
+                }
+            }
+            ViewNode::Routes { routes } => {
+                for (_, nodes) in routes {
+                    for child in nodes {
+                        walk(child, out);
+                    }
+                }
+            }
         }
     }
     for child in &el.children {
         walk(child, &mut out);
     }
     out
+}
+
+fn seed_obj(fields: &[(String, Init)]) -> String {
+    let body = fields
+        .iter()
+        .map(|(name, init)| format!("{name}: {}", seed_init(init)))
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!("{{{body}}}")
+}
+
+fn seed_init(init: &Init) -> String {
+    match init {
+        Init::Int(value) => value.to_string(),
+        Init::Bool(value) => value.to_string(),
+        Init::Str(value) => format!("\"{}\"", escape_script(value)),
+        Init::Items(_) => "[]".into(),
+        Init::Obj(fields) => seed_obj(fields),
+    }
 }
 
 fn emit_retain(model: &Model) -> String {
@@ -387,6 +451,7 @@ fn seed_lines(model: &Model) -> Vec<String> {
             Init::Int(value) => format!("{}: {value}", signal.read),
             Init::Bool(value) => format!("{}: {value}", signal.read),
             Init::Str(value) => format!("{}: \"{}\"", signal.read, escape_script(value)),
+            Init::Obj(fields) => format!("{}: {}", signal.read, seed_obj(fields)),
             Init::Items(items) => {
                 let rows = items
                     .iter()
@@ -419,7 +484,9 @@ fn live_flags(nodes: &[ViewNode]) -> Vec<String> {
     let mut out = Vec::new();
     fn walk(node: &ViewNode, out: &mut Vec<String>) {
         match node {
-            ViewNode::Show { live_flag, child, .. } => {
+            ViewNode::Show {
+                live_flag, child, ..
+            } => {
                 out.push(live_flag.clone());
                 walk(child, out);
             }
@@ -429,6 +496,18 @@ fn live_flags(nodes: &[ViewNode]) -> Vec<String> {
                 }
             }
             ViewNode::For { .. } => {}
+            ViewNode::Slot { nodes, .. } => {
+                for child in nodes {
+                    walk(child, out);
+                }
+            }
+            ViewNode::Routes { routes } => {
+                for (_, nodes) in routes {
+                    for child in nodes {
+                        walk(child, out);
+                    }
+                }
+            }
         }
     }
     for node in nodes {
@@ -437,7 +516,15 @@ fn live_flags(nodes: &[ViewNode]) -> Vec<String> {
     out
 }
 
-fn emit_row_fn(fn_name: &str, params: &[String], row_signals: &[Signal], child: &El) -> String {
+fn emit_row_fn(
+    fn_name: &str,
+    params: &[String],
+    row_signals: &[Signal],
+    child: &El,
+    slots: &mut String,
+    routes: &mut String,
+    pass_root: bool,
+) -> String {
     let mut args = String::from("id");
     for param in params {
         args.push_str(", ");
@@ -456,6 +543,9 @@ fn emit_row_fn(fn_name: &str, params: &[String], row_signals: &[Signal], child: 
             row_signals,
             &mut cursor,
             &mut fns,
+            slots,
+            routes,
+            pass_root,
         );
     }
     let row = RowEnv {
@@ -468,7 +558,18 @@ fn emit_row_fn(fn_name: &str, params: &[String], row_signals: &[Signal], child: 
         sites: &sites,
         index: 0,
     };
-    let widget = emit_el(child, Some(&row), 3, false, FlowSpec::Column, false, &mut cursor);
+    let widget = emit_el(
+        child,
+        Some(&row),
+        3,
+        false,
+        FlowSpec::Column,
+        false,
+        &mut cursor,
+        slots,
+        routes,
+        pass_root,
+    );
     format!("{fns}        fn {fn_name}({args}) {{\n            let key = \"k\" + id\n{widget}        }}\n")
 }
 
@@ -532,6 +633,18 @@ fn collect_show(
             sites[idx].end = sites.len();
         }
         ViewNode::For { .. } => {}
+        ViewNode::Slot { nodes, .. } => {
+            for child in nodes {
+                collect_show(child, sites, nth);
+            }
+        }
+        ViewNode::Routes { routes } => {
+            for (_, nodes) in routes {
+                for child in nodes {
+                    collect_show(child, sites, nth);
+                }
+            }
+        }
     }
 }
 
@@ -539,20 +652,33 @@ fn collect_show(
 /// stack (the branch is popped onto the parent). Each show is a function whose
 /// `if` calls two functions, one returning the branch widget and one returning
 /// `0`, which a view ignores.
-fn emit_show_fns(nodes: &[ViewNode], sites: &[ShowSite]) -> String {
+fn emit_show_fns(
+    nodes: &[ViewNode],
+    sites: &[ShowSite],
+    slots: &mut String,
+    routes: &mut String,
+    pass_root: bool,
+) -> String {
     let mut out = String::new();
     let mut cursor = ShowCursor { sites, index: 0 };
     for node in nodes {
-        emit_show_fn(node, &mut cursor, &mut out);
+        emit_show_fn(node, &mut cursor, &mut out, slots, routes, pass_root);
     }
     out
 }
 
-fn emit_show_fn(node: &ViewNode, cursor: &mut ShowCursor<'_>, out: &mut String) {
+fn emit_show_fn(
+    node: &ViewNode,
+    cursor: &mut ShowCursor<'_>,
+    out: &mut String,
+    slots: &mut String,
+    routes: &mut String,
+    pass_root: bool,
+) {
     match node {
         ViewNode::El(el) => {
             for child in &el.children {
-                emit_show_fn(child, cursor, out);
+                emit_show_fn(child, cursor, out, slots, routes, pass_root);
             }
         }
         ViewNode::Show {
@@ -567,10 +693,10 @@ fn emit_show_fn(node: &ViewNode, cursor: &mut ShowCursor<'_>, out: &mut String) 
             match &**child {
                 ViewNode::El(el) => {
                     for nested in &el.children {
-                        emit_show_fn(nested, cursor, out);
+                        emit_show_fn(nested, cursor, out, slots, routes, pass_root);
                     }
                 }
-                other => emit_show_fn(other, cursor, out),
+                other => emit_show_fn(other, cursor, out, slots, routes, pass_root),
             }
             let mut body_cursor = ShowCursor {
                 sites: cursor.sites,
@@ -585,6 +711,9 @@ fn emit_show_fn(node: &ViewNode, cursor: &mut ShowCursor<'_>, out: &mut String) 
                     FlowSpec::Column,
                     false,
                     &mut body_cursor,
+                    slots,
+                    routes,
+                    pass_root,
                 ),
                 other => emit_node(
                     other,
@@ -593,6 +722,9 @@ fn emit_show_fn(node: &ViewNode, cursor: &mut ShowCursor<'_>, out: &mut String) 
                     FlowSpec::Column,
                     false,
                     &mut body_cursor,
+                    slots,
+                    routes,
+                    pass_root,
                 ),
             };
             let mut resets = format!("            let was = state.{live_flag}\n");
@@ -609,6 +741,18 @@ fn emit_show_fn(node: &ViewNode, cursor: &mut ShowCursor<'_>, out: &mut String) 
             ));
         }
         ViewNode::For { .. } => {}
+        ViewNode::Slot { nodes, .. } => {
+            for child in nodes {
+                emit_show_fn(child, cursor, out, slots, routes, pass_root);
+            }
+        }
+        ViewNode::Routes { routes: route_list } => {
+            for (_, nodes) in route_list {
+                for child in nodes {
+                    emit_show_fn(child, cursor, out, slots, routes, pass_root);
+                }
+            }
+        }
     }
 }
 
@@ -618,11 +762,23 @@ fn emit_row_show_fns(
     row_signals: &[Signal],
     cursor: &mut ShowCursor<'_>,
     out: &mut String,
+    slots: &mut String,
+    routes: &mut String,
+    pass_root: bool,
 ) {
     match node {
         ViewNode::El(el) => {
             for child in &el.children {
-                emit_row_show_fns(child, args, row_signals, cursor, out);
+                emit_row_show_fns(
+                    child,
+                    args,
+                    row_signals,
+                    cursor,
+                    out,
+                    slots,
+                    routes,
+                    pass_root,
+                );
             }
         }
         ViewNode::Show {
@@ -637,10 +793,28 @@ fn emit_row_show_fns(
             match &**child {
                 ViewNode::El(el) => {
                     for nested in &el.children {
-                        emit_row_show_fns(nested, args, row_signals, cursor, out);
+                        emit_row_show_fns(
+                            nested,
+                            args,
+                            row_signals,
+                            cursor,
+                            out,
+                            slots,
+                            routes,
+                            pass_root,
+                        );
                     }
                 }
-                other => emit_row_show_fns(other, args, row_signals, cursor, out),
+                other => emit_row_show_fns(
+                    other,
+                    args,
+                    row_signals,
+                    cursor,
+                    out,
+                    slots,
+                    routes,
+                    pass_root,
+                ),
             }
             let row = RowEnv {
                 fn_name: "quinn_row",
@@ -661,6 +835,9 @@ fn emit_row_show_fns(
                     FlowSpec::Column,
                     false,
                     &mut body_cursor,
+                    slots,
+                    routes,
+                    pass_root,
                 ),
                 other => emit_node(
                     other,
@@ -669,6 +846,9 @@ fn emit_row_show_fns(
                     FlowSpec::Column,
                     false,
                     &mut body_cursor,
+                    slots,
+                    routes,
+                    pass_root,
                 ),
             };
             let mut resets = String::from("            let key = \"k\" + id\n");
@@ -697,6 +877,36 @@ fn emit_row_show_fns(
             ));
         }
         ViewNode::For { .. } => {}
+        ViewNode::Slot { nodes, .. } => {
+            for child in nodes {
+                emit_row_show_fns(
+                    child,
+                    args,
+                    row_signals,
+                    cursor,
+                    out,
+                    slots,
+                    routes,
+                    pass_root,
+                );
+            }
+        }
+        ViewNode::Routes { routes: route_list } => {
+            for (_, nodes) in route_list {
+                for child in nodes {
+                    emit_row_show_fns(
+                        child,
+                        args,
+                        row_signals,
+                        cursor,
+                        out,
+                        slots,
+                        routes,
+                        pass_root,
+                    );
+                }
+            }
+        }
     }
 }
 
@@ -707,17 +917,26 @@ fn emit_node(
     parent: FlowSpec,
     stretch: bool,
     shows: &mut ShowCursor<'_>,
+    slots: &mut String,
+    routes: &mut String,
+    pass_root: bool,
 ) -> String {
     match node {
         ViewNode::El(el) => {
             let parsed = parse_classes(&el.class);
             if let Some(align) = parsed.align_self {
                 if align != quinn_styles::CrossAlign::Stretch {
-                    return emit_self_wrap(el, align, indent, row, parent, shows);
+                    return emit_self_wrap(
+                        el, align, indent, row, parent, shows, slots, routes, pass_root,
+                    );
                 }
-                return emit_el(el, row, indent, true, parent, true, shows);
+                return emit_el(
+                    el, row, indent, true, parent, true, shows, slots, routes, pass_root,
+                );
             }
-            emit_el(el, row, indent, true, parent, stretch, shows)
+            emit_el(
+                el, row, indent, true, parent, stretch, shows, slots, routes, pass_root,
+            )
         }
         ViewNode::Show { .. } => {
             let pad = " ".repeat(indent * 4);
@@ -747,6 +966,145 @@ fn emit_node(
             call.push(')');
             format!("{pad}for {var} in state.{items} {{\n{pad}    {call}\n{pad}}}\n")
         }
+        ViewNode::Slot {
+            fn_name,
+            nodes,
+            arg,
+        } => {
+            if fn_name.is_empty() {
+                let mut out = String::new();
+                for child in nodes {
+                    out.push_str(&emit_node(
+                        child, indent, row, parent, stretch, shows, slots, routes, pass_root,
+                    ));
+                }
+                return out;
+            }
+            let body = slot_body(nodes, shows, slots, routes, pass_root);
+            let call = script_call(fn_name, pass_root, arg.as_deref());
+            slots.push_str(&format!(
+                "        {} {{\n{body}        }}\n",
+                script_fn(fn_name, pass_root, arg.is_some())
+            ));
+            let pad = " ".repeat(indent * 4);
+            format!("{pad}{call}\n")
+        }
+        ViewNode::Routes { routes: pages } => {
+            let pad = " ".repeat(indent * 4);
+            let mut calls = String::new();
+            for (path, nodes) in pages {
+                let name = format!(
+                    "quinn_route_{}",
+                    routes.matches("if state.route ==").count() + 1
+                );
+                let body = slot_body(nodes, shows, slots, routes, pass_root);
+                let path = escape_script(path);
+                let on = script_call(&format!("{name}_on"), pass_root, None);
+                let off = format!("{name}_off()");
+                routes.push_str(&format!(
+                    "        {} {{\n{body}        }}\n        fn {name}_off() {{\n            0\n        }}\n        {} {{\n            if state.route == \"{path}\" {{\n                {on}\n            }} else {{\n                {off}\n            }}\n        }}\n",
+                    script_fn(&format!("{name}_on"), pass_root, false),
+                    script_fn(&name, pass_root, false),
+                ));
+                calls.push_str(&format!("{pad}{}\n", script_call(&name, pass_root, None)));
+            }
+            calls
+        }
+    }
+}
+
+fn script_fn(name: &str, pass_root: bool, arg: bool) -> String {
+    let mut params = Vec::new();
+    if pass_root {
+        params.push("root");
+    }
+    if arg {
+        params.push("arg");
+    }
+    format!("fn {name}({})", params.join(", "))
+}
+
+fn script_call(name: &str, pass_root: bool, arg: Option<&str>) -> String {
+    let mut params = Vec::new();
+    if pass_root {
+        params.push("root".to_string());
+    }
+    if let Some(arg) = arg {
+        params.push(arg.to_string());
+    }
+    format!("{name}({})", params.join(", "))
+}
+
+/// One script function returns one widget. Several children share a fit column.
+fn slot_body(
+    nodes: &[ViewNode],
+    shows: &mut ShowCursor<'_>,
+    slots: &mut String,
+    routes: &mut String,
+    pass_root: bool,
+) -> String {
+    if nodes.is_empty() {
+        return "            0\n".into();
+    }
+    if nodes.len() == 1 {
+        // A `name := Widget` binding does not yield the widget, so the
+        // function would return nil and the parent would skip it. The value
+        // the function returns is an anonymous widget, the same shape as a
+        // `<Show>` body. Children inside that widget stay named.
+        return emit_returned(&nodes[0], shows, slots, routes, pass_root);
+    }
+    let mut inner = String::new();
+    for node in nodes {
+        inner.push_str(&emit_node(
+            node,
+            4,
+            None,
+            FlowSpec::Column,
+            false,
+            shows,
+            slots,
+            routes,
+            pass_root,
+        ));
+    }
+    format!("            RoundedView {{\n                width: Fit\n                height: Fit\n                flow: Down\n{inner}            }}\n")
+}
+
+/// The widget a slot or route function returns. Named bindings stay inside it.
+fn emit_returned(
+    node: &ViewNode,
+    shows: &mut ShowCursor<'_>,
+    slots: &mut String,
+    routes: &mut String,
+    pass_root: bool,
+) -> String {
+    match node {
+        ViewNode::Slot { fn_name, nodes, .. } if fn_name.is_empty() => {
+            slot_body(nodes, shows, slots, routes, pass_root)
+        }
+        ViewNode::El(el) => emit_el(
+            el,
+            None,
+            3,
+            false,
+            FlowSpec::Column,
+            false,
+            shows,
+            slots,
+            routes,
+            pass_root,
+        ),
+        other => emit_node(
+            other,
+            3,
+            None,
+            FlowSpec::Column,
+            false,
+            shows,
+            slots,
+            routes,
+            pass_root,
+        ),
     }
 }
 
@@ -757,9 +1115,23 @@ fn emit_self_wrap(
     row: Option<&RowEnv<'_>>,
     parent: FlowSpec,
     shows: &mut ShowCursor<'_>,
+    slots: &mut String,
+    routes: &mut String,
+    pass_root: bool,
 ) -> String {
     let pad = " ".repeat(indent * 4);
-    let inner = emit_el(el, row, indent + 1, true, parent, false, shows);
+    let inner = emit_el(
+        el,
+        row,
+        indent + 1,
+        true,
+        parent,
+        false,
+        shows,
+        slots,
+        routes,
+        pass_root,
+    );
     let (width, height, flow, align_line) = match parent {
         FlowSpec::Row => {
             let row_align = match align {
@@ -799,21 +1171,36 @@ fn emit_el(
     parent: FlowSpec,
     stretch: bool,
     shows: &mut ShowCursor<'_>,
+    slots: &mut String,
+    routes: &mut String,
+    pass_root: bool,
 ) -> String {
     let pad = " ".repeat(indent * 4);
-    let widget = widget_name(&el.tag);
     let tag = tag_of(&el.tag);
+    let style = prepared_style(el, tag, parent, stretch);
+    let widget = widget_for(&el.tag, &style);
     let mut lines = Vec::new();
-    if el.tag != "div" && (el.value.is_some() || !el.parts.is_empty()) {
+    // `bind:value` omits `text:` so a reload does not assign the field and
+    // move the caret. The sibling that reads the signal still updates.
+    if el.bind.is_none() && el.tag != "div" && (el.value.is_some() || !el.parts.is_empty()) {
         lines.push(format!("text: {}", text_expr(el, row)));
     }
     if let Some(placeholder) = &el.placeholder {
-        lines.push(format!(
-            "empty_text: \"{}\"",
-            escape_script(placeholder)
-        ));
+        lines.push(format!("empty_text: \"{}\"", escape_script(placeholder)));
     }
     lines.extend(style_lines(el, tag, parent, stretch, row));
+    if style.grid_cols.is_some() {
+        // Grid's implicit rows are 0px unless we set a size, and it rejects
+        // `auto`. The tallest explicit child height is the row; otherwise 40.
+        lines.push(format!(
+            "implicit_row_size: {}",
+            script_num(implicit_row_px(el))
+        ));
+    }
+    if !style.clip && el.children.iter().any(node_has_absolute) {
+        lines.push("clip_x: false".into());
+        lines.push("clip_y: false".into());
+    }
     if let Some(signal) = &el.input {
         lines.push(format!(
             "on_change: |text| {{\n{pad}    state.{signal} = text\n{pad}    root.render()\n{pad}}}"
@@ -846,7 +1233,8 @@ fn emit_el(
     } else {
         parent
     };
-    let child_stretch = el.tag == "div" && child_style.cross_align == Some(quinn_styles::CrossAlign::Stretch);
+    let child_stretch =
+        el.tag == "div" && child_style.cross_align == Some(quinn_styles::CrossAlign::Stretch);
     let mut children = String::new();
     for child in &el.children {
         children.push_str(&emit_node(
@@ -856,6 +1244,9 @@ fn emit_el(
             child_flow,
             child_stretch,
             shows,
+            slots,
+            routes,
+            pass_root,
         ));
     }
     let head = if named {
@@ -900,10 +1291,7 @@ fn emit_stmts(stmts: &[HandlerStmt], row: Option<&RowEnv<'_>>) -> Vec<String> {
     for stmt in stmts {
         match stmt {
             HandlerStmt::Let { name, expr } => {
-                lines.push(format!(
-                    "let {name} = {}",
-                    emit_hx(expr, row, &locals)
-                ));
+                lines.push(format!("let {name} = {}", emit_hx(expr, row, &locals)));
                 locals.insert(name.clone());
             }
             HandlerStmt::Set { signal, expr } => {
@@ -913,9 +1301,7 @@ fn emit_stmts(stmts: &[HandlerStmt], row: Option<&RowEnv<'_>>) -> Vec<String> {
                 let id = emit_hx(id, row, &locals);
                 let label = emit_hx(label, row, &locals);
                 lines.push(format!("quinn_row_reset({id})"));
-                lines.push(format!(
-                    "state.{items}.push({{id: {id}, label: {label}}})"
-                ));
+                lines.push(format!("state.{items}.push({{id: {id}, label: {label}}})"));
             }
             HandlerStmt::Pop { items } => lines.push(format!("state.{items}.pop()")),
             HandlerStmt::Reverse { items } => {
@@ -934,12 +1320,20 @@ fn emit_stmts(stmts: &[HandlerStmt], row: Option<&RowEnv<'_>>) -> Vec<String> {
                     "state.{items} = quinn_swap_key(state.{items}, {a}, {b})"
                 ));
             }
+            HandlerStmt::Navigate(expr) => {
+                lines.push(format!("state.route = {}", emit_hx(expr, row, &locals)));
+            }
         }
     }
     lines
 }
 
-fn emit_set(signal: &str, expr: &HxExpr, row: Option<&RowEnv<'_>>, locals: &std::collections::HashSet<String>) -> String {
+fn emit_set(
+    signal: &str,
+    expr: &HxExpr,
+    row: Option<&RowEnv<'_>>,
+    locals: &std::collections::HashSet<String>,
+) -> String {
     let toggled = matches!(
         expr,
         HxExpr::Not(inner) if matches!(inner.as_ref(), HxExpr::Name(name) if name == signal)
@@ -982,7 +1376,11 @@ fn emit_set(signal: &str, expr: &HxExpr, row: Option<&RowEnv<'_>>, locals: &std:
     format!("state.{signal} = {value}")
 }
 
-fn emit_hx(expr: &HxExpr, row: Option<&RowEnv<'_>>, locals: &std::collections::HashSet<String>) -> String {
+fn emit_hx(
+    expr: &HxExpr,
+    row: Option<&RowEnv<'_>>,
+    locals: &std::collections::HashSet<String>,
+) -> String {
     match expr {
         HxExpr::Int(value) => value.to_string(),
         HxExpr::Bool(value) => if *value { "true" } else { "false" }.into(),
@@ -1055,13 +1453,12 @@ fn text_expr(el: &El, row: Option<&RowEnv<'_>>) -> String {
                 }
             }
             Part::IfBool { signal, yes, no } => {
-                let cond = if row.is_some_and(|row| {
-                    row.signals.iter().any(|item| item.read == *signal)
-                }) {
-                    format!("state.r_{signal}[key] == true")
-                } else {
-                    format!("state.{signal}")
-                };
+                let cond =
+                    if row.is_some_and(|row| row.signals.iter().any(|item| item.read == *signal)) {
+                        format!("state.r_{signal}[key] == true")
+                    } else {
+                        format!("state.{signal}")
+                    };
                 format!(
                     "if {cond} {{ \"{}\" }} else {{ \"{}\" }}",
                     escape_script(yes),
@@ -1073,9 +1470,22 @@ fn text_expr(el: &El, row: Option<&RowEnv<'_>>) -> String {
                 escape_script(empty)
             ),
             Part::Param(name) => name.clone(),
+            Part::Ctx(key) => format!("mod.ctx.{key}"),
         })
         .collect::<Vec<_>>()
         .join(" + ")
+}
+
+fn widget_for(tag: &str, style: &Style) -> String {
+    if tag == "div" && style.grid_cols.is_some() {
+        return "Grid".into();
+    }
+    if tag == "div" && style.shadow.is_some() {
+        // Stock RoundedView has no shadow uniforms. RoundedShadowView is the
+        // same rounded fill, plus shadow_radius / shadow_offset / shadow_color.
+        return "RoundedShadowView".into();
+    }
+    widget_name(tag).into()
 }
 
 fn widget_name(tag: &str) -> &'static str {
@@ -1102,13 +1512,39 @@ fn tag_of(tag: &str) -> Tag {
     }
 }
 
-fn host_fields(class: &str) -> String {
+fn tree_has_absolute(nodes: &[ViewNode]) -> bool {
+    nodes.iter().any(node_has_absolute)
+}
+
+fn node_has_absolute(node: &ViewNode) -> bool {
+    match node {
+        ViewNode::El(el) => {
+            let mut style = Style::default();
+            if !el.class.is_empty() {
+                style.merge_from(&parse_classes(&el.class));
+            }
+            style.absolute || el.children.iter().any(node_has_absolute)
+        }
+        ViewNode::Show { child, .. } => node_has_absolute(child),
+        ViewNode::Slot { nodes, .. } => tree_has_absolute(nodes),
+        ViewNode::Routes { routes } => routes.iter().any(|(_, nodes)| tree_has_absolute(nodes)),
+        ViewNode::For { child, .. } => child.children.iter().any(node_has_absolute),
+    }
+}
+
+fn host_fields(class: &str, release_clip: bool) -> String {
     let mut style = Tag::Div.defaults();
     style.merge_from(&parse_classes(class));
     style.width = Some(SizeSpec::Fill);
     style.height = Some(SizeSpec::Fill);
     let mut lines = layout_pairs(&style, true);
     lines.extend(walk_pairs(&style));
+    // `abs_pos` is a draw-space point. A clipping host hides a widget whose
+    // point sits outside the host's padding box.
+    if release_clip && !style.clip {
+        lines.push(("clip_x".into(), "false".into()));
+        lines.push(("clip_y".into(), "false".into()));
+    }
     lines.push(("show_bg".into(), "true".into()));
     lines.push(("new_batch".into(), "true".into()));
     let bg = style
@@ -1143,10 +1579,18 @@ fn style_lines(
     for when in &el.class_when {
         let mut on = prepared_style(el, tag, parent, stretch);
         on.merge_from(&parse_classes(&when.token));
-        if when.token.split_whitespace().any(|token| token == "flex-nowrap") {
+        if when
+            .token
+            .split_whitespace()
+            .any(|token| token == "flex-nowrap")
+        {
             on.wrap = false;
         }
-        tune_style(&mut on, parent, stretch && el.class.contains("self-stretch"));
+        tune_style(
+            &mut on,
+            parent,
+            stretch && el.class.contains("self-stretch"),
+        );
         let on_map = prop_map(&on, tag);
         let cond = class_cond(&when.signal, row);
         for (key, value) in on_map {
@@ -1157,7 +1601,10 @@ fn style_lines(
                 .get(&key)
                 .cloned()
                 .unwrap_or_else(|| prop_fallback(&key, &base));
-            rendered.insert(key, format!("if {cond} {{ {value} }} else {{ {else_value} }}"));
+            rendered.insert(
+                key,
+                format!("if {cond} {{ {value} }} else {{ {else_value} }}"),
+            );
         }
     }
     for when in &el.style_when {
@@ -1189,6 +1636,18 @@ fn prepared_style(el: &El, tag: Tag, parent: FlowSpec, stretch: bool) -> Style {
 }
 
 fn tune_style(style: &mut Style, parent: FlowSpec, stretch: bool) {
+    // `abs_pos` is one point. A stretched Fill on that walk collapses to
+    // nothing, so an absolute box shrink-wraps unless the class set a size.
+    if style.absolute {
+        if !style.width_explicit {
+            style.width = Some(SizeSpec::Fit);
+            style.width_explicit = true;
+        }
+        if !style.height_explicit {
+            style.height = Some(SizeSpec::Fit);
+            style.height_explicit = true;
+        }
+    }
     if stretch {
         match parent {
             FlowSpec::Row if !style.height_explicit => style.height = Some(SizeSpec::Fill),
@@ -1200,7 +1659,11 @@ fn tune_style(style: &mut Style, parent: FlowSpec, stretch: bool) {
         return;
     }
     let main_width = matches!(parent, FlowSpec::Row);
-    let slot = if main_width { style.width } else { style.height };
+    let slot = if main_width {
+        style.width
+    } else {
+        style.height
+    };
     let explicit = if main_width {
         style.width_explicit
     } else {
@@ -1210,21 +1673,30 @@ fn tune_style(style: &mut Style, parent: FlowSpec, stretch: bool) {
     if fixed && explicit {
         return;
     }
-    if style.flex.grow.is_none() && style.flex.basis.is_none() && !matches!(slot, Some(SizeSpec::Fill))
+    if style.flex.grow.is_none()
+        && style.flex.basis.is_none()
+        && !matches!(slot, Some(SizeSpec::Fill))
     {
         return;
     }
-    let weight = style.flex.grow.unwrap_or(if matches!(slot, Some(SizeSpec::Fill)) {
-        100.0
-    } else {
-        1.0
-    });
+    let weight = style
+        .flex
+        .grow
+        .unwrap_or(if matches!(slot, Some(SizeSpec::Fill)) {
+            100.0
+        } else {
+            1.0
+        });
     let shrink = style.flex.shrink.unwrap_or(0.0);
     let basis = style.flex.basis.unwrap_or(0.0);
     let next = if weight == 100.0 && shrink == 0.0 && basis == 0.0 {
         SizeSpec::Fill
     } else {
-        SizeSpec::Flex { weight, shrink, basis }
+        SizeSpec::Flex {
+            weight,
+            shrink,
+            basis,
+        }
     };
     if main_width {
         style.width = Some(next);
@@ -1247,21 +1719,86 @@ fn prop_map(style: &Style, tag: Tag) -> std::collections::BTreeMap<String, Strin
     map
 }
 
+/// Makepad `Grid` implicit rows are a fixed pixel size and default to 0.
+fn implicit_row_px(el: &El) -> f64 {
+    let mut max = 0.0;
+    fn walk(node: &ViewNode, max: &mut f64) {
+        match node {
+            ViewNode::El(child) => {
+                let mut style = Style::default();
+                if !child.class.is_empty() {
+                    style.merge_from(&parse_classes(&child.class));
+                }
+                if !child.style.is_empty() {
+                    style.merge_from(&quinn_styles::parse_inline(&child.style));
+                }
+                if let Some(SizeSpec::Px(px)) = style.height {
+                    *max = (*max).max(px);
+                }
+            }
+            ViewNode::Show { child, .. } => walk(child, max),
+            ViewNode::Slot { nodes, .. } => {
+                for child in nodes {
+                    walk(child, max);
+                }
+            }
+            ViewNode::Routes { routes } => {
+                for (_, nodes) in routes {
+                    for child in nodes {
+                        walk(child, max);
+                    }
+                }
+            }
+            ViewNode::For { .. } => {}
+        }
+    }
+    for child in &el.children {
+        walk(child, &mut max);
+    }
+    if max > 0.0 {
+        max
+    } else {
+        40.0
+    }
+}
+
 fn layout_pairs(style: &Style, container: bool) -> Vec<(String, String)> {
     let mut lines = Vec::new();
-    let lay_out = container || style.flow.is_some() || style.wrap || style.distribute.is_some()
+    if let Some(cols) = style.grid_cols {
+        let tracks = (0..cols).map(|_| "\"1fr\"").collect::<Vec<_>>().join(", ");
+        lines.push(("columns".into(), format!("[{tracks}]")));
+        if let Some(gap) = style.main_gap() {
+            lines.push(("column_gap".into(), script_num(gap)));
+        }
+        if let Some(gap) = style.cross_gap() {
+            lines.push(("row_gap".into(), script_num(gap)));
+        }
+        if let Some(padding) = inset_script(style.padding) {
+            lines.push(("padding".into(), padding));
+        }
+        push_clip(style, &mut lines);
+        return lines;
+    }
+    let lay_out = container
+        || style.flow.is_some()
+        || style.wrap
+        || style.distribute.is_some()
         || style.main_align.is_some()
         || style.cross_align.is_some()
         || style.gap.is_some()
         || style.gap_x.is_some()
         || style.gap_y.is_some();
     if !lay_out && !style.padding.any() {
+        push_clip(style, &mut lines);
+        push_scroll(style, &mut lines);
         return lines;
     }
     if !lay_out {
         if let Some(padding) = inset_script(style.padding) {
             lines.push(("padding".into(), padding));
         }
+        push_clip(style, &mut lines);
+        push_scroll(style, &mut lines);
         return lines;
     }
     lines.push(("flow".into(), flow_script(style)));
@@ -1289,12 +1826,31 @@ fn layout_pairs(style: &Style, container: bool) -> Vec<(String, String)> {
         lines.push(("align".into(), align));
     }
     if let Some(dist) = style.distribute {
+        lines.push(("distribute".into(), format!("Distribute.{}", dist.script())));
+    }
+    push_clip(style, &mut lines);
+    push_scroll(style, &mut lines);
+    lines
+}
+
+fn push_clip(style: &Style, lines: &mut Vec<(String, String)>) {
+    if style.clip {
+        lines.push(("clip_x".into(), "true".into()));
+        lines.push(("clip_y".into(), "true".into()));
+    }
+}
+
+fn push_scroll(style: &Style, lines: &mut Vec<(String, String)>) {
+    if style.scroll_x || style.scroll_y {
         lines.push((
-            "distribute".into(),
-            format!("Distribute.{}", dist.script()),
+            "scroll_bars".into(),
+            format!(
+                "ScrollBars{{show_scroll_x: {} show_scroll_y: {}}}",
+                if style.scroll_x { "true" } else { "false" },
+                if style.scroll_y { "true" } else { "false" }
+            ),
         ));
     }
-    lines
 }
 
 fn walk_pairs(style: &Style) -> Vec<(String, String)> {
@@ -1320,15 +1876,64 @@ fn walk_pairs(style: &Style) -> Vec<(String, String)> {
     if let Some(margin) = inset_script(style.margin) {
         lines.push(("margin".into(), margin));
     }
+    if style.absolute {
+        let x = style.abs_x.unwrap_or(0.0);
+        let y = style.abs_y.unwrap_or(0.0);
+        lines.push((
+            "abs_pos".into(),
+            format!("vec2({}, {})", script_num(x), script_num(y)),
+        ));
+    }
+    if let Some(span) = style.col_span {
+        lines.push(("cell".into(), format!("CellPlacement{{col_span: {span}}}")));
+    }
     lines
 }
 
 fn paint_pairs(style: &Style, tag: Tag) -> Vec<(String, String)> {
     let mut lines = Vec::new();
-    let paints = matches!(tag, Tag::Button | Tag::Input | Tag::Div);
-    if paints {
+    if style.grid_cols.is_some() {
         if let Some(color) = style.background {
+            lines.push(("show_bg".into(), "true".into()));
             lines.push(("draw_bg.color".into(), color.hex_script()));
+        }
+        return lines;
+    }
+    let paints = matches!(tag, Tag::Button | Tag::Input | Tag::Div);
+    let gradient = style
+        .gradient
+        .filter(|grad| grad.from.is_some() || grad.to.is_some());
+    if paints {
+        if let Some(grad) = gradient.filter(|_| matches!(tag, Tag::Div)) {
+            let (start, end) = if grad.flip {
+                (grad.to, grad.from)
+            } else {
+                (grad.from, grad.to)
+            };
+            if let Some(color) = start.or(style.background) {
+                lines.push(("draw_bg.color".into(), color.hex_script()));
+            }
+            if let Some(color) = end {
+                lines.push(("draw_bg.color_2".into(), color.hex_script()));
+            }
+            let horizontal = matches!(grad.axis, quinn_styles::GradientAxis::Horizontal);
+            lines.push((
+                "draw_bg.gradient_fill_horizontal".into(),
+                if horizontal { "1.".into() } else { "0.".into() },
+            ));
+        } else if let Some(color) = style.background {
+            lines.push(("draw_bg.color".into(), color.hex_script()));
+        }
+        if let Some(shadow) = style.shadow {
+            if matches!(tag, Tag::Div) {
+                lines.push(("draw_bg.shadow_radius".into(), script_num(shadow.radius)));
+                lines.push((
+                    "draw_bg.shadow_offset".into(),
+                    format!("vec2(0., {})", script_num(shadow.offset_y)),
+                ));
+                // Four-digit `#RRGGBBAA` is the theme's translucent black.
+                lines.push(("draw_bg.shadow_color".into(), "#0006".into()));
+            }
         }
         if let Some(color) = style.hover_bg {
             lines.push(("draw_bg.color_hover".into(), color.hex_script()));
@@ -1364,9 +1969,32 @@ fn paint_pairs(style: &Style, tag: Tag) -> Vec<(String, String)> {
             lines.push(("draw_text.disabled".into(), "1.".into()));
         }
     }
-    if let Some(size) = style.font_size {
-        if tag != Tag::Div {
-            lines.push(("draw_text.text_style.font_size".into(), script_num(size)));
+    if tag != Tag::Div {
+        if let Some(weight) = style.font_weight {
+            let mut fields = String::new();
+            if let Some(size) = style.font_size {
+                fields.push_str(&format!("font_size: {} ", script_num(size)));
+            }
+            let leading = style.line_height.unwrap_or(1.2);
+            fields.push_str(&format!("line_spacing: {} ", script_num(leading)));
+            fields.push_str(&format!(
+                "font_family: FontFamily{{latin := FontMember{{res: crate_resource(\"makepad_widgets:resources/RobotoFlex.ttf\") asc: -0.1 desc: 0.0 weight: {}}}}}",
+                script_num(weight)
+            ));
+            lines.push((
+                "draw_text.text_style".into(),
+                format!("TextStyle{{{fields}}}"),
+            ));
+        } else {
+            if let Some(size) = style.font_size {
+                lines.push(("draw_text.text_style.font_size".into(), script_num(size)));
+            }
+            if let Some(leading) = style.line_height {
+                lines.push((
+                    "draw_text.text_style.line_spacing".into(),
+                    script_num(leading),
+                ));
+            }
         }
     }
     if let Some(width) = style.border_width {
@@ -1435,9 +2063,17 @@ fn size_script(size: SizeSpec) -> String {
         SizeSpec::Fit => "Fit".into(),
         SizeSpec::Px(px) => script_num(px),
         SizeSpec::Rel { base, factor } => {
-            format!("Rel{{base: {} factor: {}}}", base.script(), script_num(factor))
+            format!(
+                "Rel{{base: {} factor: {}}}",
+                base.script(),
+                script_num(factor)
+            )
         }
-        SizeSpec::Flex { weight, shrink, basis } => format!(
+        SizeSpec::Flex {
+            weight,
+            shrink,
+            basis,
+        } => format!(
             "Fill{{weight: {} shrink: {} basis: {}}}",
             script_num(weight),
             script_num(shrink),
@@ -1504,16 +2140,20 @@ fn style_when_prop(prop: &str, yes: &str, no: &str) -> Option<(String, String, S
 
 fn prop_fallback(key: &str, base: &Style) -> String {
     match key {
-        "draw_bg.color" | "draw_bg.color_hover" | "draw_bg.color_down" | "draw_bg.color_disabled" => {
-            base.background
-                .map(|color| color.hex_script())
-                .unwrap_or_else(|| "#x000000".into())
-        }
-        "draw_text.color" | "draw_text.color_hover" | "draw_text.color_down" | "draw_text.color_disabled" => {
-            base.color
-                .map(|color| color.hex_script())
-                .unwrap_or_else(|| "#x000000".into())
-        }
+        "draw_bg.color"
+        | "draw_bg.color_hover"
+        | "draw_bg.color_down"
+        | "draw_bg.color_disabled" => base
+            .background
+            .map(|color| color.hex_script())
+            .unwrap_or_else(|| "#x000000".into()),
+        "draw_text.color"
+        | "draw_text.color_hover"
+        | "draw_text.color_down"
+        | "draw_text.color_disabled" => base
+            .color
+            .map(|color| color.hex_script())
+            .unwrap_or_else(|| "#x000000".into()),
         "width" | "height" => "Fit".into(),
         "flow" => "Down".into(),
         "distribute" => "Distribute.Start".into(),
@@ -1550,5 +2190,48 @@ fn script_num(value: f64) -> String {
         format!("{}.", value as i64)
     } else {
         format!("{value}")
+    }
+}
+
+/// `provide_context` fills `mod.ctx` once. A later render, including a hot
+/// reload, leaves a value that is already there.
+fn emit_ctx(model: &Model) -> String {
+    let mut provides = model.ctx_init.clone();
+    collect_provides(&model.nodes, &mut provides);
+    if provides.is_empty() && !model.has_ctx {
+        return String::new();
+    }
+    let mut out =
+        String::from("        if ok{mod.ctx} == nil {\n            mod.ctx = {}\n        }\n");
+    let mut seen = Vec::new();
+    for (key, expr) in provides {
+        if seen.iter().any(|have| have == &key) {
+            continue;
+        }
+        seen.push(key.clone());
+        // A missing field errors on `.key`. `ok{}` is nil until the seed writes it.
+        out.push_str(&format!(
+            "        if ok{{mod.ctx.{key}}} == nil {{\n            mod.ctx.{key} = {expr}\n        }}\n"
+        ));
+    }
+    out
+}
+
+fn collect_provides(nodes: &[ViewNode], out: &mut Vec<(String, String)>) {
+    for node in nodes {
+        match node {
+            ViewNode::El(el) => {
+                out.extend(el.provides.iter().cloned());
+                collect_provides(&el.children, out);
+            }
+            ViewNode::Show { child, .. } => collect_provides(std::slice::from_ref(child), out),
+            ViewNode::For { child, .. } => collect_provides(&child.children, out),
+            ViewNode::Slot { nodes, .. } => collect_provides(nodes, out),
+            ViewNode::Routes { routes } => {
+                for (_, nodes) in routes {
+                    collect_provides(nodes, out);
+                }
+            }
+        }
     }
 }

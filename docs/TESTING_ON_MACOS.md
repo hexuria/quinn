@@ -15,6 +15,8 @@ cargo run -p counter --release
 cargo run -p conditional --release
 cargo run -p keyed-list --release
 cargo run -p form --release
+cargo run -p tailwind-gallery --release
+cargo run -p app-shell --release
 cargo run -p baseline-counter --release
 cargo run -p probe-widget-lifecycle --release
 ```
@@ -24,7 +26,9 @@ What to look at:
 - `counter`: the label starts at `Counter: 0`. Each click of Increment adds one. The button sits in the client area, not in the title band.
 - `conditional`: toggling the switch removes the detail and brings it back. A remounted detail starts again; it does not keep the old count. The sibling counter is unchanged.
 - `keyed-list`: reversing the rows reorders them. Beta's own counter survives the reorder and a removal of a different row.
-- `form`: typing in the field updates the echoed line. Clearing the field empties both. The caret may jump when the heading re-renders; the text should not.
+- `form`: typing in the field updates the echoed line. Clearing the field empties both. This example uses `value=` and `on:input`, which rewrites `TextInput.text` on each render, so the caret may jump. The text should not disappear.
+- `tailwind-gallery`: rows, wrap, a grid, a gradient, a shadow, an absolute label, and a short scrolling note. The window scrolls.
+- `app-shell`: Home, Board, and Form switch the page and leave the typed name and the accent in place. The board has a grid, a gradient, a shadow, and a note you can scroll. The card is a component with a title prop and children. Form shows a stored city. Move to Cebu changes that field only. The name field is `bind:value`: the echo updates and the caret stays where you clicked.
 - `baseline-counter`: `Count: 0` and Increment are inside the window body. The label and the button are light text on a dark control. A click changes the count.
 - `probe-widget-lifecycle`: the process prints `PROBE_OK` and exits 0. `QUINN_PROBE_EXIT=1` makes a failed check a non-zero exit. The log path is `artifacts/probe-widget-lifecycle.log`.
 
@@ -55,20 +59,23 @@ cargo run -p counter --release -- --hot
 cargo run -p conditional --release -- --hot
 cargo run -p keyed-list --release -- --hot
 cargo run -p form --release -- --hot
+cargo run -p tailwind-gallery --release -- --hot
+cargo run -p app-shell --release -- --hot
 ```
 
 `./target/release/<bin> --hot` is the same loop without Cargo as the parent. Edit `view.rs` in that example, not `src/main.rs`. `view.rs` and `hot/ui.rs` are outside `src/`, so `cargo run` does not rebuild. On Linux, `cargo run -p counter --release -- --hot` kept pid 64535 and starttime 1913679 across five saves of `examples/counter/view.rs`. The log had one `Running` line. Saving `src/main.rs` still rebuilds and starts a new process.
 
 `hot/ui.rs` is generated. Do not edit it. `QUINN_SKIP_LOWER=1` skips the startup rewrite so a hand-patched file survives; that is a debug hatch, not this loop.
 
-What reloads in the same window: classes, static text, the click and input handlers, `<Show>`, `<For>`, and placeholders, when the lowerer accepts the file. What does not: a change under `src/`, a `view.rs` the lowerer rejects (the log says `quinn lower failed` and the old script stays), a `<Show>` nested inside a `<For>` row, and the baseline counter (edit its `script_mod!` in `main.rs` directly).
+What reloads in the same window: classes, static text, the click and input handlers, `<Show>`, `<For>` (including a `<Show>` inside a row), placeholders, component markup, grid classes, and gradient or shadow classes, when the lowerer accepts the file. `mod.state` and `mod.ctx` stay. What does not: a change under `src/`, a `view.rs` the lowerer rejects (the log says `quinn lower failed` and the old script stays), a new font asset in `app_main!` (that is a rebuild), and the baseline counter (edit its `script_mod!` in `main.rs` directly).
 
 Leave the process up and set the state you care about first.
 
 - Counter: click until the label reads `Counter: 5`. Change `gap-4` to `gap-8` and `"Increment"` to `"Add one"` in `examples/counter/view.rs`. The count stays 5. The new button still increments. The log contains `quinn lowered view into .../hot/ui.rs`, `hot reload applied`, and `script_reload pid=...`.
 - Keyed list: click Beta a few times. Change the row's classes (`gap-4` to `gap-8`, or `text-lg` to `text-sm`). Beta's count and the order stay.
 - Conditional: tick the sibling, leave the detail open, click the detail. Change the detail's heading or its classes. The sibling count, the open toggle, and the detail's clicks stay. A click after the reload still increments.
-- Form: type a name. Change `"Hello, "` or `"Clear"` or `gap-4`. The field keeps the text. The heading follows it.
+- Form: type a name. Change `"Hello, "` or `"Clear"` or `gap-4`. The field keeps the text. The heading follows it. This field uses `on:input`, so the caret may jump.
+- App shell: open Board, type a name, and leave the accent as it is. Change the `Card` template text, `grid-cols-3` to `grid-cols-2`, and `to-stone-900` to another palette color. The route stays Board, the accent stays, and the typed name stays. `bind:value` does not rewrite the input, so the caret stays where you left it.
 - Baseline: change `increment_button`'s `draw_bg.color` in `examples/baseline-counter/src/main.rs` and save. The button recolors. The count stays. That file is the script block itself. The log contains `hot reload applied`.
 
 Confirm the process with `starttime` in `/proc/<pid>/stat` as well as the window id. The X server recycles window ids across processes. `xprop -id <id> -set WM_NAME` sets a title the frame will not immediately overwrite; `xdotool set_window --name` did not stick on the Linux run.

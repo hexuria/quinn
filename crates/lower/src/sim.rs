@@ -34,6 +34,7 @@ pub struct Sim {
     row_live: HashMap<(i64, String), i64>,
     count_signal: Option<String>,
     row_signal_names: Vec<String>,
+    ctx: HashMap<String, String>,
 }
 
 impl Sim {
@@ -61,8 +62,14 @@ impl Sim {
                     items = rows.clone();
                     item_signals.push(signal.read.clone());
                 }
+                Init::Obj(fields) => flatten_obj(&signal.read, fields, &mut strings, &mut state),
             }
         }
+        let mut ctx = HashMap::new();
+        for (key, expr) in &model.ctx_init {
+            ctx.insert(key.clone(), ctx_literal(expr));
+        }
+        seed_provides(&model.nodes, &mut ctx);
         let mut sim = Self {
             state,
             strings,
@@ -78,6 +85,7 @@ impl Sim {
             row_live: HashMap::new(),
             count_signal: None,
             row_signal_names: Vec::new(),
+            ctx,
         };
         sim.refresh_row_meta();
         sim.render();
@@ -102,6 +110,12 @@ impl Sim {
                     }
                     ViewNode::El(el) => walk(&el.children, names, count),
                     ViewNode::Show { child, .. } => walk(std::slice::from_ref(child), names, count),
+                    ViewNode::Slot { nodes, .. } => walk(nodes, names, count),
+                    ViewNode::Routes { routes } => {
+                        for (_, nodes) in routes {
+                            walk(nodes, names, count);
+                        }
+                    }
                 }
             }
         }
@@ -115,7 +129,8 @@ impl Sim {
         for node in &self.model.nodes.clone() {
             self.render_node(node, &mut live);
         }
-        self.ids.retain(|name, _| live.iter().any(|live| live == name));
+        self.ids
+            .retain(|name, _| live.iter().any(|live| live == name));
     }
 
     fn render_node(&mut self, node: &ViewNode, live: &mut Vec<String>) {
@@ -157,6 +172,23 @@ impl Sim {
                 let signals = row_signals.clone();
                 for (index, item) in self.items.clone().into_iter().enumerate() {
                     self.render_row(child, index, &item, &signals, live);
+                }
+            }
+            ViewNode::Slot { nodes, .. } => {
+                for child in nodes {
+                    self.render_node(child, live);
+                }
+            }
+            ViewNode::Routes { routes } => {
+                let path = self
+                    .strings
+                    .get("route")
+                    .cloned()
+                    .unwrap_or_else(|| "/".into());
+                if let Some((_, nodes)) = routes.iter().find(|(route, _)| route == &path) {
+                    for child in nodes {
+                        self.render_node(child, live);
+                    }
                 }
             }
         }
@@ -226,6 +258,12 @@ impl Sim {
                 }
             }
             ViewNode::For { .. } => {}
+            ViewNode::Slot { nodes, .. } => {
+                for child in nodes {
+                    self.render_row_child(child, prefix, item, signals, live);
+                }
+            }
+            ViewNode::Routes { .. } => {}
         }
     }
 
@@ -286,6 +324,11 @@ impl Sim {
                     out.push_str(if on { yes } else { no });
                 }
                 Part::IfEmpty { .. } => {}
+                Part::Ctx(key) => {
+                    if let Some(text) = self.ctx.get(key) {
+                        out.push_str(text);
+                    }
+                }
             }
         }
         out
@@ -357,7 +400,13 @@ impl Sim {
                         out.push_str(&text);
                     }
                 }
+                Part::Param(name) if name == "arg" => out.push_str("arg"),
                 Part::Param(_) => {}
+                Part::Ctx(key) => {
+                    if let Some(text) = self.ctx.get(key) {
+                        out.push_str(text);
+                    }
+                }
             }
         }
         out
@@ -382,9 +431,9 @@ impl Sim {
         let Some(act) = self.ids.get(name).and_then(|slot| slot.click.clone()) else {
             return false;
         };
-        let row = name.strip_prefix("row:").and_then(|rest| {
-            rest.split(':').next().and_then(|id| id.parse::<i64>().ok())
-        });
+        let row = name
+            .strip_prefix("row:")
+            .and_then(|rest| rest.split(':').next().and_then(|id| id.parse::<i64>().ok()));
         self.apply(act, row)
     }
 
@@ -427,10 +476,7 @@ impl Sim {
     }
 
     pub fn set_input(&mut self, name: &str, value: &str) -> bool {
-        let signal = self
-            .ids
-            .get(name)
-            .and_then(|slot| slot.input.clone());
+        let signal = self.ids.get(name).and_then(|slot| slot.input.clone());
         let Some(signal) = signal else {
             return false;
         };
@@ -560,6 +606,10 @@ impl Sim {
                             self.items.swap(left, right);
                         }
                     }
+                }
+                HandlerStmt::Navigate(expr) => {
+                    let path = self.eval(expr, row, &locals).as_string();
+                    self.strings.insert("route".into(), path);
                 }
             }
         }
@@ -718,7 +768,72 @@ fn remove_named(nodes: &mut Vec<ViewNode>, name: &str) -> bool {
                 }
             }
             ViewNode::For { .. } => {}
+            ViewNode::Slot { nodes, .. } => {
+                if remove_named(nodes, name) {
+                    return true;
+                }
+            }
+            ViewNode::Routes { routes } => {
+                for (_, nodes) in routes {
+                    if remove_named(nodes, name) {
+                        return true;
+                    }
+                }
+            }
         }
     }
     false
+}
+
+fn flatten_obj(
+    prefix: &str,
+    fields: &[(String, Init)],
+    strings: &mut HashMap<String, String>,
+    state: &mut HashMap<String, i64>,
+) {
+    for (name, init) in fields {
+        let key = format!("{prefix}.{name}");
+        match init {
+            Init::Str(value) => {
+                strings.insert(key, value.clone());
+            }
+            Init::Int(value) => {
+                state.insert(key, *value);
+            }
+            Init::Bool(value) => {
+                state.insert(key, if *value { 1 } else { 0 });
+            }
+            Init::Obj(inner) => flatten_obj(&key, inner, strings, state),
+            Init::Items(_) => {}
+        }
+    }
+}
+
+fn ctx_literal(expr: &str) -> String {
+    let expr = expr.trim();
+    if expr.len() >= 2 && expr.starts_with('"') && expr.ends_with('"') {
+        return expr[1..expr.len() - 1].to_string();
+    }
+    expr.to_string()
+}
+
+fn seed_provides(nodes: &[ViewNode], ctx: &mut HashMap<String, String>) {
+    for node in nodes {
+        match node {
+            ViewNode::El(el) => {
+                for (key, expr) in &el.provides {
+                    ctx.entry(key.clone()).or_insert_with(|| ctx_literal(expr));
+                }
+                seed_provides(&el.children, ctx);
+            }
+            ViewNode::Show { child, .. } => seed_provides(std::slice::from_ref(child), ctx),
+            ViewNode::Slot { nodes, .. } => seed_provides(nodes, ctx),
+            ViewNode::Routes { routes } => {
+                for (_, nodes) in routes {
+                    seed_provides(nodes, ctx);
+                }
+            }
+            ViewNode::For { .. } => {}
+        }
+    }
 }

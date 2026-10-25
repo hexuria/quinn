@@ -88,6 +88,14 @@ fn lower_stmt(stmt: BodyStmt, signals: &[Signal]) -> Result<Vec<HandlerStmt>, St
 }
 
 fn lower_expr_stmt(expr: &Expr, signals: &[Signal]) -> Result<Vec<HandlerStmt>, String> {
+    if let Expr::Call(call) = expr {
+        if path_ends(&call.func, &["navigate"]) {
+            let Some(arg) = call.args.first() else {
+                return Err("navigate needs a path".into());
+            };
+            return Ok(vec![HandlerStmt::Navigate(lower_expr(arg, signals)?)]);
+        }
+    }
     let Expr::MethodCall(call) = expr else {
         return Err(reject_expr(expr));
     };
@@ -133,10 +141,11 @@ fn lower_update(
         match kind {
             InitKind::Items => out.push(lower_list_op(signal, &expr)?),
             _ => {
-                let mut stmt = lower_scalar_update(signal, &expr, signals)?;
-                if let Some(param) = closure_param(closure) {
+                let param = closure_param(closure);
+                let mut stmt = lower_scalar_update(signal, &expr, signals, param.as_deref())?;
+                if let Some(param) = &param {
                     if let HandlerStmt::Set { expr, .. } = &mut stmt {
-                        rewrite_name(expr, &param, signal);
+                        rewrite_name(expr, param, signal);
                     }
                 }
                 out.push(stmt);
@@ -174,7 +183,12 @@ fn rewrite_name(expr: &mut HxExpr, from: &str, to: &str) {
     }
 }
 
-fn lower_scalar_update(signal: &str, expr: &Expr, signals: &[Signal]) -> Result<HandlerStmt, String> {
+fn lower_scalar_update(
+    signal: &str,
+    expr: &Expr,
+    signals: &[Signal],
+    param: Option<&str>,
+) -> Result<HandlerStmt, String> {
     match expr {
         Expr::Binary(binary) => {
             let op = match binary.op {
@@ -187,17 +201,46 @@ fn lower_scalar_update(signal: &str, expr: &Expr, signals: &[Signal]) -> Result<
             let right = lower_expr(&binary.right, signals)?;
             Ok(HandlerStmt::Set {
                 signal: signal.to_string(),
-                expr: HxExpr::Binary(op, Box::new(HxExpr::Name(signal.to_string())), Box::new(right)),
+                expr: HxExpr::Binary(
+                    op,
+                    Box::new(HxExpr::Name(signal.to_string())),
+                    Box::new(right),
+                ),
             })
         }
         Expr::Assign(assign) => {
             let expr = lower_expr(&assign.right, signals)?;
-            Ok(HandlerStmt::Set {
-                signal: signal.to_string(),
-                expr,
-            })
+            let path = param
+                .and_then(|param| field_signal(&assign.left, param, signal))
+                .unwrap_or_else(|| signal.to_string());
+            Ok(HandlerStmt::Set { signal: path, expr })
         }
         other => Err(reject_expr(other)),
+    }
+}
+
+fn field_signal(expr: &Expr, param: &str, signal: &str) -> Option<String> {
+    match expr {
+        Expr::Unary(unary) if matches!(unary.op, syn::UnOp::Deref(_)) => {
+            field_signal(&unary.expr, param, signal)
+        }
+        Expr::Field(field) => {
+            let member = match &field.member {
+                syn::Member::Named(name) => name.to_string(),
+                syn::Member::Unnamed(_) => return None,
+            };
+            let base = field_signal(&field.base, param, signal)?;
+            Some(format!("{base}.{member}"))
+        }
+        Expr::Path(path) => {
+            let name = path.path.get_ident()?.to_string();
+            if name == param {
+                Some(signal.to_string())
+            } else {
+                None
+            }
+        }
+        _ => None,
     }
 }
 
@@ -243,10 +286,7 @@ fn lower_list_op(signal: &str, expr: &Expr) -> Result<HandlerStmt, String> {
         }
         "retain" => {
             let Some(Expr::Closure(closure)) = call.args.first() else {
-                return Err(reject(
-                    "retain",
-                    "rows.retain(|row| row.id != <id>)",
-                ));
+                return Err(reject("retain", "rows.retain(|row| row.id != <id>)"));
             };
             let key = retain_key(closure)?;
             Ok(HandlerStmt::RemoveKey {
@@ -343,7 +383,9 @@ fn lower_expr(expr: &Expr, signals: &[Signal]) -> Result<HxExpr, String> {
         Expr::Unary(unary) if matches!(unary.op, syn::UnOp::Not(_)) => {
             Ok(HxExpr::Not(Box::new(lower_expr(&unary.expr, signals)?)))
         }
-        Expr::Unary(unary) if matches!(unary.op, syn::UnOp::Deref(_)) => lower_expr(&unary.expr, signals),
+        Expr::Unary(unary) if matches!(unary.op, syn::UnOp::Deref(_)) => {
+            lower_expr(&unary.expr, signals)
+        }
         Expr::Binary(binary) => {
             let op = match binary.op {
                 syn::BinOp::Add(_) => BinOp::Add,
@@ -368,7 +410,10 @@ fn lower_expr(expr: &Expr, signals: &[Signal]) -> Result<HxExpr, String> {
         }
         Expr::MethodCall(call) if call.method == "get" && call.args.is_empty() => {
             let name = path_ident(&call.receiver)?;
-            if !signals.is_empty() && signals.iter().all(|signal| signal.read != name && signal.write != name)
+            if !signals.is_empty()
+                && signals
+                    .iter()
+                    .all(|signal| signal.read != name && signal.write != name)
             {
                 return Err(format!("unknown signal {name}"));
             }
@@ -430,7 +475,11 @@ fn lower_format(tokens: &proc_macro2::TokenStream) -> Result<HxExpr, String> {
                 name.push(ch);
             }
             let name = name.trim();
-            if name.is_empty() || !name.chars().all(|ch| ch.is_ascii_alphanumeric() || ch == '_') {
+            if name.is_empty()
+                || !name
+                    .chars()
+                    .all(|ch| ch.is_ascii_alphanumeric() || ch == '_')
+            {
                 return Err(reject(
                     "that format!",
                     "format!(\"text {name}\") with a plain identifier",
@@ -459,7 +508,11 @@ enum InitKind {
 }
 
 fn signal_kind(name: &str, signals: &[Signal]) -> InitKind {
-    match signals.iter().find(|signal| signal.read == name).map(|signal| &signal.init) {
+    match signals
+        .iter()
+        .find(|signal| signal.read == name)
+        .map(|signal| &signal.init)
+    {
         Some(crate::model::Init::Items(_)) => InitKind::Items,
         _ => InitKind::Other,
     }
@@ -495,7 +548,8 @@ fn path_ends(expr: &Expr, tail: &[&str]) -> bool {
         .map(|segment| segment.ident.to_string())
         .collect();
     segs.len() >= tail.len()
-        && segs[segs.len() - tail.len()..] == tail.iter().map(|s| (*s).to_string()).collect::<Vec<_>>()
+        && segs[segs.len() - tail.len()..]
+            == tail.iter().map(|s| (*s).to_string()).collect::<Vec<_>>()
 }
 
 fn reject(found: &str, expected: &str) -> String {
@@ -505,7 +559,7 @@ fn reject(found: &str, expected: &str) -> String {
 fn reject_expr(expr: &Expr) -> String {
     let text = short_expr(expr);
     format!(
-        "cannot lower `{text}`. Handlers may set or update a signal with arithmetic (+ - * /), a boolean not, or a string; and may push, pop, reverse, swap, or remove a list by item id. This expression is outside that set"
+        "cannot lower `{text}`. Handlers may set or update a signal with arithmetic (+ - * /), a boolean not, a string, or a field write (profile.name = ...); may navigate(path); and may push, pop, reverse, swap, or remove a list by item id. This expression is outside that set"
     )
 }
 

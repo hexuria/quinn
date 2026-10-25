@@ -33,7 +33,7 @@ A missing `mod.state` is an error, not nil. The seed is `if ok{mod.state} == nil
 
 A `<Show>` inside a row is its own function pair, `row_quinn_show_<signal>_<n>(id, …)`. Those sites are not the host show cursor. `examples/keyed-list` and `examples/tailwind-gallery` both use one.
 
-`TextInput.on_change` is invoked with `vm.call`, which has no widget uid, so `ui.host` from that closure cannot see the app. `on_render` runs on the host, captures it (`let root = ui`), and the closure calls `root.render()`. `Button.on_click` goes through `widget_to_script_call`, which flood-searches from the button, so buttons still call `ui.host.render()`. `render()` applies children with `Apply::Reload`, which rewrites `TextInput.text` from `state.name`. The string survives a reload. The caret can jump.
+`TextInput.on_change` is invoked with `vm.call`, which has no widget uid, so `ui.host` from that closure cannot see the app. `on_render` runs on the host, captures it (`let root = ui`), and the closure calls `root.render()`. `Button.on_click` goes through `widget_to_script_call`, which flood-searches from the button, so buttons still call `ui.host.render()`. `render()` applies children with `Apply::Reload`. An input that sets `text:` (the `value=` / `on:input` path) is rewritten, so the caret can jump. `bind:value` omits `text:`, so the field is left alone and a sibling that reads the signal still updates.
 
 ## Hot reload
 
@@ -48,7 +48,7 @@ cargo run -p counter --release -- --hot
 # edit examples/counter/view.rs
 ```
 
-The same command works for `conditional`, `keyed-list`, `form`, `retain`, and `tailwind-gallery`. `./target/release/<bin> --hot` is the same watcher without Cargo as a parent. Saving `src/main.rs` or `src/ops.rs` still rebuilds and, under `cargo run`, starts a new process.
+The same command works for `conditional`, `keyed-list`, `form`, `retain`, `tailwind-gallery`, and `app-shell`. `./target/release/<bin> --hot` is the same watcher without Cargo as a parent. Saving `src/main.rs` or `src/ops.rs` still rebuilds and, under `cargo run`, starts a new process.
 
 ## What still needs a rebuild
 

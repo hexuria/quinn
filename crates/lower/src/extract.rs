@@ -72,7 +72,11 @@ fn normalize(source: &str, brace: usize, body: &str) -> Result<Extracted, String
         i += body[i..].chars().next().unwrap().len_utf8();
     }
     out.push(';');
-    Ok(Extracted { line, column, code: out })
+    Ok(Extracted {
+        line,
+        column,
+        code: out,
+    })
 }
 
 fn first_token_pos(source: &str, brace: usize, body: &str) -> (usize, usize) {

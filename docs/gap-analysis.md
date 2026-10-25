@@ -1,6 +1,6 @@
 # Gap analysis
 
-P0 from section 4 is implemented. P1 and P2 are not. Status is against the running UI: `view.rs` lowered to Makepad script (`hot/ui.rs`, `mod.state`, `on_render`). The headless Rust graph (`quinn-core`, `MemorySurface`, `reactive_graph`) is named when it can do something the window cannot.
+P0 and P1 from section 4 are implemented. P2 is not. Status is against the running UI: `view.rs` lowered to Makepad script (`hot/ui.rs`, `mod.state`, `on_render`). The headless Rust graph (`quinn-core`, `MemorySurface`, `reactive_graph`) is named when it can do something the window cannot.
 
 Sources checked in this tree and in the pinned Makepad checkout `44ecb822`:
 
@@ -11,7 +11,7 @@ Sources checked in this tree and in the pinned Makepad checkout `44ecb822`:
 - Text and draw: `draw/src/shader/draw_text.rs` (`TextStyle`, `FontMember.weight`), `widgets/core/src/button.rs` (hover/down animator uniforms)
 - Leptos 0.8.0 release notes (https://github.com/leptos-rs/leptos/releases/tag/v0.8.0). 0.8 keeps the 0.7 authoring model. The additions that matter here are store fields implementing `IntoClass` / `IntoStyle` / `AttributeValue`, `Suspend::new` accepting `IntoFuture`, and websocket server functions. Quinn's `reactive_graph` pin is `5ca3a9bf` (`docs/compatibility.md`), the 0.7-era graph, and the examples do not execute it.
 
-`docs/research.md` describes an earlier turtle (row, column, spacing, padding, `Align`, `Fill`/`Fit`/`Fixed`). The pin is past that. Wrap, overlay, `abs_pos`, fill weight/shrink/basis, `Distribute`, min/max, relative sizes, and a `Grid` widget are in `44ecb822`. Quinn now emits the P0 slice of that (wrap on a row, `Distribute`, `RowAlign`, fill weight/shrink/basis, min/max, `Size::Rel`). Overlay, `abs_pos`, and the `Grid` widget are still not emitted.
+`docs/research.md` describes an earlier turtle (row, column, spacing, padding, `Align`, `Fill`/`Fit`/`Fixed`). The pin is past that. Wrap, overlay, `abs_pos`, fill weight/shrink/basis, `Distribute`, min/max, relative sizes, and a `Grid` widget are in `44ecb822`. Quinn now emits the P0 slice of that (wrap on a row, `Distribute`, `RowAlign`, fill weight/shrink/basis, min/max, `Size::Rel`) and the P1 slice (`widgets.Grid`, `abs_pos`, clip, scroll). Overlay as its own flow, a four-side inset, and `z-index` are still not emitted.
 
 ## 1. Leptos syntax parity
 
@@ -22,10 +22,10 @@ Legend: **supported** means a `view.rs` the lowerer accepts and a running exampl
 | Feature | Status | On a script runtime |
 | --- | --- | --- |
 | Elements, string literals, `{move \|\| signal.get()}` text | Partial | The lowerer accepts a closed set of text shapes (`Part` in `crates/lower/src/model.rs`): literals, one signal, `if bool`, `if empty`. A general closure is rejected. Widening the expression parser and emitting script expressions is local to `quinn-lower`. |
-| Fragments and `<>...</>` | Missing | `view!` in the macros expands a fragment to `quinn::fragment` (`crates/macros/src/lib.rs`). The lowerer returns "only elements are supported" (`parse.rs`). Script can emit sibling widgets with no wrapper. Small. |
-| Nested components | Partial | `Detail` and `Row` are inlined when the lowerer understands the call (`examples/conditional/view.rs`, `examples/keyed-list/view.rs`). Arbitrary components, generics, and `impl Fn()` props are not. Each new component shape is more parser, not more runtime, until props and children exist. |
-| `children` / slots | Missing | The macro errors with "child slots on custom components are not in this milestone" (`macros/src/lib.rs`). Script has no slot. A child would be a function the parent calls from `on_render`, the same way `quinn_row` already works. Medium: the lowerer has to pass that function through. |
-| `#[prop(optional)]`, `default`, `into` | Missing | `#[component]` ignores its attribute and wraps the body in an `Owner` (`macros/src/lib.rs`). The lowerer takes function arguments as positional names (`parse.rs` `parse_comp`). Defaults are a parser default in the script seed. `into` is a Rust trait bound and does not exist in script; the lowerer would coerce the few types it already has (int, bool, string, item). Medium. |
+| Fragments and `<>...</>` | Supported | A fragment is flattened into the parent. It is not a widget. |
+| Nested components | Supported | Any `#[component]` the lowerer can parse is a call. The lowerer does not special-case names. Generics are not monomorphized. |
+| `children` / slots | Supported | `{children()}` is `fn quinn_slot_N`. `{children()(expr)}` is a `ChildrenFn` called with that expr (`arg` inside the slot). A script function returns one widget, so the returned widget is anonymous (`name :=` does not yield). Several children share one `Fit` column. Inside a `<For>` row the children stay inlined in the row function. |
+| `#[prop(optional)]`, `default`, `into` | Supported | Omitted optional props are `""`. `default = "..."` fills when the attribute is missing. `into` is accepted; literals and signals lower. There is no Rust `Into` conversion in the script. |
 | Generic components | Missing | Script functions are untyped. A generic component lowers only if monomorphized at the call site into a concrete script function. The lowerer does not do that. Medium, and only for types the seed can represent. |
 
 ### Signals
@@ -57,7 +57,7 @@ Legend: **supported** means a `view.rs` the lowerer accepts and a running exampl
 | `class="..."` and `style="..."` | Partial | Static strings, `class:token=move \|\| flag.get()`, and `style:prop=move \|\| if flag.get() { "a" } else { "b" }`. Unknown utilities are ignored. `class:` toggles one utility against the static style. `style:` requires two literals; a runtime string is a compile error. |
 | `prop:` / `attr:` | Missing | There is no DOM attribute map. A known prop (`placeholder`, `value`) is already a dedicated attribute. Anything else needs a named script field on that widget. Per-widget allowlist, small for each widget, not a general `attr:` namespace. |
 | `on:` with event types | Partial | `on:click`, `on:input`, and `on:change` only. A click body may be several statements: set or update a signal with `+ - * /`, boolean not, or a string, and push, pop, reverse, swap, or remove a list by item id. Anything else is a compile error (`cannot lower`). `MouseEvent` does not exist. Makepad gives the button no event object; `TextInput` passes the string. |
-| `bind:value` | Partial | The form is `value=` plus `on:input` writing the same signal (`examples/form/view.rs`). `on_change` calls `root.render()` because `TextInput` uses `vm.call` with no widget uid (`docs/decisions.md`). The string survives. The caret can jump because `render()` rewrites `text`. A true bind that does not call `render` on each keystroke needs a way to set the heading without reapplying the input. Medium, and it is a Makepad text API question. |
+| `bind:value` | Supported | `bind:value=name` or `bind:value=profile.name` omits `text:` on the `TextInput`, so `Apply::Reload` does not rewrite the field and the caret stays. `on_change` still assigns the signal and calls `root.render()`, and a sibling that reads the signal updates. `value=` plus `on:input` (`examples/form`) still writes `text:` and the caret can jump. |
 | `node_ref` | Missing | Script widgets already have names (`h1 := H1`). A ref is that name, read back with `script_eval!` as `ui.host.h1`. Exposing it as a Rust `NodeRef` crosses back into the shell and does not hot-reload. Small as a script name; a Rust ref is the wrong direction. |
 | Spread `{..attrs}` | Missing | No attribute bag. Would be a script object merged into the widget literal. Medium, and only keys the lowerer knows survive. |
 
@@ -65,8 +65,8 @@ Legend: **supported** means a `view.rs` the lowerer accepts and a running exampl
 
 | Feature | Status | On a script runtime |
 | --- | --- | --- |
-| `provide_context` / `use_context` | Missing | Headless `Owner` could hold it; the window has no owner. `mod.ctx` is a script object any function can read. Small. It will not be typed and it will not scope itself to a subtree unless the lowerer passes it as an argument, which is the slot work above. |
-| Router (`Routes`, `Route`, nested routes, `A`, params, navigate) | Missing | 0.8 made `PossibleRouteMatch` dyn-safe and changed route generation; it is still a URL router. A native window has no URL. An in-app stack is `state.route` plus `<Show>`. Medium. Real paths, queries, and history belong on wasm only, and they are a shell around that signal, not a layout feature. Large if it has to match `leptos_router`. |
+| `provide_context` / `use_context` | Partial | `mod.ctx` is one process-global object. The seed is `if ok{mod.ctx.key} == nil`, so the first value wins and a hot reload does not reset it. A nested provider does not shadow. It is not a Leptos reactive scope. `{accent}` reads `mod.ctx.accent`. A field read such as `{theme.ink}` reads `mod.ctx.Theme.ink` when that local is the context key. |
+| Router (`Routes`, `Route`, nested routes, `A`, params, navigate) | Partial | In-app only. `state.route` is a string. `<A href>` and `navigate("/form")` assign it and call `render()`. Each route is `fn quinn_route_N` choosing `_on` or `_off` (the off branch returns `0`). This is not `leptos_router`: no URL bar, no history, no params, no nested route matching. |
 | Stores (`reactive_stores`, 0.8 `IntoClass` for store fields) | Missing | A store field is a nested script object (`state.user.name`). Updates are assignments plus `render()`. Fine-grained field tracking is the subscriber list script does not have. Medium for nested objects; large if a field write must skip unrelated widgets. |
 | Server functions, `#[server]`, 0.8 websocket server functions | Out of scope | They compile to an HTTP or websocket endpoint and assume a Leptos server and, for hydration, a DOM. Quinn has no server, no request codec, and no hydration. A native app that calls an HTTP API is an ordinary Rust client writing `mod.state` when the response arrives (the resource bridge). Reimplementing `server_fn` would drag in the Leptos server stack this project refused. |
 
@@ -106,7 +106,7 @@ Quinn's parser is a closed utility list (`crates/styles/src/lib.rs`). "Supported
 | Dark mode | Feasible as a signal | No color scheme in the turtle. | `state.dark` picked by the shell, two colors in the class string. Small once `class:` exists. It will not follow the OS unless the shell reads it. |
 | Arbitrary values `w-[13px]`, `bg-[#abc]` | Missing | The inline parser already accepts `width: 13px` and `#rrggbb` (`parse_inline`). | Accept `w-[13px]` in `apply_token`. Small. `bg-[url(...)]` is not a color and stays missing. |
 
-Tailwind, used as a class string that means "row, column, gap, padding, type scale, a flat color, a radius", fits the turtle. Tailwind used as "the CSS layout spec, including grid areas, arbitrary selectors, and variants" does not fit in the parser, and a slice of it (grid, wrap, grow, overlay) fits Makepad only by emitting widgets and fields Quinn ignores today.
+Tailwind, used as a class string that means "row, column, gap, padding, type scale, a flat color, a radius", fits the turtle. Tailwind used as "the CSS layout spec, including grid areas, arbitrary selectors, and variants" does not fit in the parser. Wrap, grow, and a column grid are emitted. Overlay as a flow is not.
 
 ## 3. Layout engine
 
@@ -134,14 +134,14 @@ What the turtle cannot do, from the fields that exist and the ones that do not:
 | `z-index` | No. |
 | Multi-line flex `align-content`, baseline grid, masonry | No. |
 
-Adding Taffy is not justified for wrap, grow, space-between, or grid. Those already exist in this pin and are unused by the lowerer. A second engine would:
+Adding Taffy is not justified for wrap, grow, space-between, or grid. Those already exist in this pin, and the lowerer emits the P0 and P1 slice of them. A second engine would:
 
 - Run a full measure/layout pass beside the turtle, then push rectangles back onto widgets the turtle also wants to walk. One of the two must win, or widgets get laid out twice.
 - Hot reload stays a script `render()` only while positions are turtle fields. A Taffy pass has to run after every `render()` or the new tree keeps the old rectangles. That is another step on the UI thread on every keystroke that already calls `render()`.
 - Binary size and the compile the milestone has been measuring go up by the Taffy crate and the glue. The published incremental rebuild of `counter` is 1.30 s median with Makepad already built (`docs/benchmarks.md`). Taffy itself is small next to Makepad; the cost that matters is the second layout on the hot path, not the compile.
 - It does not help script hot reload. Taffy does not understand `class=` strings. The lowerer would still parse classes, then feed numbers to Taffy instead of to `spacing` and `flow`.
 
-Extending the turtle upstream is justified only for the holes: `align-content` of wrapped lines, a real inset box (left and right both set), and `z-index`. Those are Makepad changes, then a Quinn emitter change. They are not a reason to vendor Taffy. Using `Grid` for `grid-cols-*` is a Quinn emitter change against a widget that already hot-reloads as script.
+Extending the turtle upstream is justified only for the holes: `align-content` of wrapped lines, a real inset box (left and right both set), and `z-index`. Those are Makepad changes, then a Quinn emitter change. They are not a reason to vendor Taffy. `grid-cols-*` already lowers to `widgets.Grid`.
 
 ## 4. Roadmap
 
@@ -169,19 +169,34 @@ Limits that are still true after P0:
 - `focus:` is not mapped. The theme focus color is left alone.
 - `align-content`, a four-side inset stretch, `z-index`, and Taffy are still out. Taffy is still not recommended.
 
-### P1 — practical parity for an app that is more than the four examples
+### P1 — done
 
-| Item | Size | Notes |
-| --- | --- | --- |
-| Fragments, `#[prop]` defaults, and children as script functions | Medium | Slots are the large half. Props without children are the small half. |
-| `mod.ctx` for provide/use | Small | Subtree scope needs the children work. |
-| In-app navigation: `state.route` and `<Show>` | Medium | Not `leptos_router`. A URL bar is wasm-only and can sit on the same signal later. |
-| `grid-cols-*` / gap / span lowered to `widgets.Grid` | Medium | Do not add Taffy for this. |
-| `abs_pos` for `left`/`top`, clip and scroll for overflow | Medium | Four-inset stretch stays out until the turtle grows it. |
-| Font weight and line spacing via `TextStyle` / `FontMember.weight` | Small | Requires the font files. |
-| Two-stop gradient and a shadow on `RoundedView` | Medium | Shader uniforms, not layout. |
-| Nested script objects as a stand-in for stores | Medium | Full store-field tracking is P2. |
-| `bind:value` that updates a sibling without resetting the caret | Medium | Blocked on a text update that is not `Apply::Reload` of `text`. |
+Shipped in `quinn-styles`, `quinn-lower`, `examples/app-shell`, and the bottom of `examples/tailwind-gallery`. `examples/app-shell` is the multi-page shell. It is not `leptos_router`.
+
+| Item | What landed |
+| --- | --- |
+| Fragments, `#[prop]`, children | `<>...</>` flattens. `#[prop(optional)]`, `default`, and `into` parse. `{children()}` and `{children()(expr)}` are script functions (`quinn_slot_N`). The function's return value is an anonymous widget. Several children share a `Fit` column. Components are looked up by name. `Card` is not special-cased. |
+| `mod.ctx` | `provide_context` / `use_context` seed `mod.ctx` once (`ok{mod.ctx.key}`). The value survives `render()` and a hot reload. |
+| In-app router | `<Router>`, `<Routes>`, `<Route path>`, `<A href>`, and `navigate(path)` are `state.route` plus `quinn_route_N` / `_on` / `_off`. |
+| Grid | `grid grid-cols-N gap-*` emits `widgets.Grid` with `columns`, `column_gap`, `row_gap`, and `cell: CellPlacement{col_span: N}`. |
+| Absolute and overflow | `absolute` plus `left-*` / `top-*` (including `left-[16px]` / `top-[176px]`) sets `abs_pos: vec2(x, y)`. `overflow-hidden` sets `clip_x` / `clip_y`. `overflow-y-auto` / `overflow-x-auto` set `scroll_bars: ScrollBars{...}`. |
+| Type | `font-medium` 500, `font-semibold` 600, `font-bold` 700 emit a `TextStyle` on RobotoFlex (`FontMember.weight`). `leading-*` sets `line_spacing`. The example binaries declare `ROBOTO_FLEX_FONT_ASSET` in `app_main!`. |
+| Gradient and shadow | `bg-gradient-to-r from-* to-*` sets `draw_bg.color`, `color_2`, and `gradient_fill_horizontal`. `shadow` / `shadow-md` / `shadow-lg` select `RoundedShadowView` (`shadow_radius`, `shadow_offset`, `shadow_color: #0006`). A gradient without a shadow stays `RoundedView`. |
+| Stores | `signal(Profile { name, city })` seeds `state.profile: {name, city}`. `set_profile.update(\|p\| { p.city = "Cebu".into(); })` assigns `state.profile.city`. `{profile.city}` reads it. |
+| `bind:value` | The input omits `text:`. `on_change` writes the signal and calls `root.render()`. The sibling label updates. The caret stays where it was clicked. |
+
+Limits that are still true after P1:
+
+- `mod.ctx` is one object for the process. A nested `provide_context` does not shadow a key that is already set. Editing the provider literal does not reset a value that is already there.
+- The router is not `leptos_router`. There is no URL bar, no history API, and no route params.
+- A script function returns one widget. The widget a slot or route returns is anonymous, because `name := Widget` does not yield the widget. Named children inside that widget keep their names. Children inside a `<For>` row are inlined, not a separate slot function.
+- `#[prop(into)]` does not insert a Rust `Into` call. A non-signal path is read as a signal.
+- `widgets.Grid` draws with `DrawQuad`. A gradient, a shadow, or `scroll_bars` on the grid div itself is not emitted. Put those on a child `RoundedView` / `RoundedShadowView`. Implicit rows are a fixed pixel size (the tallest explicit child height, otherwise 40). This Grid rejects `auto` tracks, so there is no content-sized row. Every implicit row shares that one size, and the default `align_items` stretches the cell to it.
+- `abs_pos` is one point in draw space, not a position inside the parent, and not a four-side inset. `left` / `top` (and `right` / `bottom` when the other side is unset) set that point. Ancestors that do not say `overflow-hidden` emit `clip_x: false` and `clip_y: false`, because a clipping parent hides a point that sits outside its box. `left-2 top-1` is `(8, 4)` from the draw origin.
+- The stock `RoundedView` shader has gradient uniforms and no shadow uniforms. A shadow selects `RoundedShadowView`, which has the same gradient uniforms. `shadow_color` is `#0006`.
+- Weights use RobotoFlex. The theme face named `font_bold` is IBM Plex SemiBold, a static file, so Quinn does not switch to it for `font-bold`. The example must list `ROBOTO_FLEX_FONT_ASSET` or the glyphs come out as boxes.
+- `bind:value` is the path that skips `text:`. `value=` with `on:input` still writes `text:` and can still move the caret.
+- Column wrap, `hover:` on a `div`, `focus:`, `align-content`, `z-index`, and Taffy stay out.
 
 ### P2 — do not pretend these are layout work
 
@@ -195,4 +210,4 @@ Limits that are still true after P0:
 | `align-content`, inset stretch, `z-index` | Large | Upstream turtle. Revisit only after P0 emits what the turtle can already do. |
 | Taffy | Not recommended | See section 3. Reconsider only if `Grid` plus the turtle holes still cannot express a screen we have to ship. |
 
-Practical parity is P0 plus the P1 navigation, grid, and children items. It is not a Leptos 0.8 port. The authoring syntax can grow. The runtime stays `mod.state` and `render()`.
+Practical parity is P0 plus P1. It is not a Leptos 0.8 port and it is not `leptos_router`. The authoring syntax can grow. The runtime stays `mod.state`, `mod.ctx`, and `render()`.

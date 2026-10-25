@@ -16,6 +16,7 @@ members = [
     "examples/form",
     "examples/retain",
     "examples/tailwind-gallery",
+    "examples/app-shell",
 ]
 
 [workspace.package]

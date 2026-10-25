@@ -102,9 +102,16 @@ pub enum SizeSpec {
     Fill,
     Fit,
     Px(f64),
-    Rel { base: RelBase, factor: f64 },
+    Rel {
+        base: RelBase,
+        factor: f64,
+    },
     /// `Size::Fill { weight, shrink, basis }` with basis in pixels.
-    Flex { weight: f64, shrink: f64, basis: f64 },
+    Flex {
+        weight: f64,
+        shrink: f64,
+        basis: f64,
+    },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -214,6 +221,46 @@ pub struct Style {
     pub border_width: Option<f64>,
     pub border_color: Option<Rgba>,
     pub radius: Option<f64>,
+    /// `grid-cols-N`. The div is a `Grid` when this is set.
+    pub grid_cols: Option<u32>,
+    pub col_span: Option<u32>,
+    pub absolute: bool,
+    /// `left` / `right` in px. One point, not a stretched inset.
+    pub abs_x: Option<f64>,
+    pub abs_y: Option<f64>,
+    pub clip: bool,
+    pub scroll_x: bool,
+    pub scroll_y: bool,
+    /// OpenType weight. 500 medium, 600 semibold, 700 bold.
+    pub font_weight: Option<f64>,
+    /// `TextStyle.line_spacing` multiplier.
+    pub line_height: Option<f64>,
+    pub gradient: Option<Gradient>,
+    pub shadow: Option<Shadow>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum GradientAxis {
+    Horizontal,
+    Vertical,
+}
+
+/// Two-stop fill. `flip` swaps the stops (`to-l`, `to-t`).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Gradient {
+    pub axis: GradientAxis,
+    pub flip: bool,
+    /// Set by `bg-gradient-to-*`. Color tokens leave this false so they do not reset the axis.
+    pub dir_set: bool,
+    pub from: Option<Rgba>,
+    pub to: Option<Rgba>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Shadow {
+    pub radius: f64,
+    pub offset_y: f64,
+    pub color: Rgba,
 }
 
 impl Style {
@@ -319,6 +366,59 @@ impl Style {
         if over.radius.is_some() {
             self.radius = over.radius;
         }
+        if over.grid_cols.is_some() {
+            self.grid_cols = over.grid_cols;
+        }
+        if over.col_span.is_some() {
+            self.col_span = over.col_span;
+        }
+        if over.absolute {
+            self.absolute = true;
+        }
+        if over.abs_x.is_some() {
+            self.abs_x = over.abs_x;
+        }
+        if over.abs_y.is_some() {
+            self.abs_y = over.abs_y;
+        }
+        if over.clip {
+            self.clip = true;
+        }
+        if over.scroll_x {
+            self.scroll_x = true;
+        }
+        if over.scroll_y {
+            self.scroll_y = true;
+        }
+        if over.font_weight.is_some() {
+            self.font_weight = over.font_weight;
+        }
+        if over.line_height.is_some() {
+            self.line_height = over.line_height;
+        }
+        if let Some(over_g) = over.gradient {
+            let slot = self.gradient.get_or_insert(Gradient {
+                axis: GradientAxis::Horizontal,
+                flip: false,
+                dir_set: false,
+                from: None,
+                to: None,
+            });
+            if over_g.from.is_some() {
+                slot.from = over_g.from;
+            }
+            if over_g.to.is_some() {
+                slot.to = over_g.to;
+            }
+            if over_g.dir_set {
+                slot.axis = over_g.axis;
+                slot.flip = over_g.flip;
+                slot.dir_set = true;
+            }
+        }
+        if over.shadow.is_some() {
+            self.shadow = over.shadow;
+        }
     }
 
     pub fn main_gap(&self) -> Option<f64> {
@@ -409,10 +509,22 @@ fn apply_token(style: &mut Style, token: &str) {
         "justify-evenly" => style.distribute = Some(DistributeSpec::Evenly),
         "w-full" => set_width(style, SizeSpec::Fill),
         "w-fit" => set_width(style, SizeSpec::Fit),
-        "w-screen" => set_width(style, SizeSpec::Rel { base: RelBase::Vw, factor: 1.0 }),
+        "w-screen" => set_width(
+            style,
+            SizeSpec::Rel {
+                base: RelBase::Vw,
+                factor: 1.0,
+            },
+        ),
         "h-full" => set_height(style, SizeSpec::Fill),
         "h-fit" => set_height(style, SizeSpec::Fit),
-        "h-screen" => set_height(style, SizeSpec::Rel { base: RelBase::Vh, factor: 1.0 }),
+        "h-screen" => set_height(
+            style,
+            SizeSpec::Rel {
+                base: RelBase::Vh,
+                factor: 1.0,
+            },
+        ),
         "disabled" => style.disabled = true,
         "rounded" | "rounded-md" => style.radius = Some(8.0),
         "rounded-sm" => style.radius = Some(4.0),
@@ -437,8 +549,57 @@ fn apply_token(style: &mut Style, token: &str) {
         "text-xl" => style.font_size = Some(20.0),
         "text-2xl" => style.font_size = Some(24.0),
         "text-3xl" => style.font_size = Some(30.0),
+        "absolute" => style.absolute = true,
+        "overflow-hidden" => style.clip = true,
+        "overflow-x-auto" => style.scroll_x = true,
+        "overflow-y-auto" => style.scroll_y = true,
+        "overflow-auto" => {
+            style.scroll_x = true;
+            style.scroll_y = true;
+        }
+        "font-medium" => style.font_weight = Some(500.0),
+        "font-semibold" => style.font_weight = Some(600.0),
+        "font-bold" => style.font_weight = Some(700.0),
+        "leading-none" => style.line_height = Some(1.0),
+        "leading-tight" => style.line_height = Some(1.25),
+        "leading-snug" => style.line_height = Some(1.375),
+        "leading-normal" => style.line_height = Some(1.5),
+        "leading-relaxed" => style.line_height = Some(1.625),
+        "leading-loose" => style.line_height = Some(2.0),
+        "shadow" | "shadow-sm" => style.shadow = Some(shadow(3.0, 1.0)),
+        "shadow-md" => style.shadow = Some(shadow(8.0, 4.0)),
+        "shadow-lg" => style.shadow = Some(shadow(16.0, 8.0)),
+        "bg-gradient-to-r" => set_gradient_dir(style, GradientAxis::Horizontal, false),
+        "bg-gradient-to-l" => set_gradient_dir(style, GradientAxis::Horizontal, true),
+        "bg-gradient-to-b" => set_gradient_dir(style, GradientAxis::Vertical, false),
+        "bg-gradient-to-t" => set_gradient_dir(style, GradientAxis::Vertical, true),
         _ => apply_prefixed(style, token),
     }
+}
+
+fn shadow(radius: f64, offset_y: f64) -> Shadow {
+    Shadow {
+        radius,
+        offset_y,
+        color: Rgba::new(0, 0, 0),
+    }
+}
+
+fn gradient_slot(style: &mut Style) -> &mut Gradient {
+    style.gradient.get_or_insert(Gradient {
+        axis: GradientAxis::Horizontal,
+        flip: false,
+        dir_set: false,
+        from: None,
+        to: None,
+    })
+}
+
+fn set_gradient_dir(style: &mut Style, axis: GradientAxis, flip: bool) {
+    let slot = gradient_slot(style);
+    slot.axis = axis;
+    slot.flip = flip;
+    slot.dir_set = true;
 }
 
 fn set_width(style: &mut Style, size: SizeSpec) {
@@ -454,11 +615,23 @@ fn set_height(style: &mut Style, size: SizeSpec) {
 fn apply_prefixed(style: &mut Style, token: &str) {
     if let Some(rest) = token.strip_prefix("w-") {
         if let Some(factor) = fraction(rest) {
-            set_width(style, SizeSpec::Rel { base: RelBase::Parent, factor });
+            set_width(
+                style,
+                SizeSpec::Rel {
+                    base: RelBase::Parent,
+                    factor,
+                },
+            );
         }
     } else if let Some(rest) = token.strip_prefix("h-") {
         if let Some(factor) = fraction(rest) {
-            set_height(style, SizeSpec::Rel { base: RelBase::Parent, factor });
+            set_height(
+                style,
+                SizeSpec::Rel {
+                    base: RelBase::Parent,
+                    factor,
+                },
+            );
         }
     } else if let Some(rest) = token.strip_prefix("gap-x-") {
         if let Some(px) = spacing(rest) {
@@ -502,6 +675,53 @@ fn apply_prefixed(style: &mut Style, token: &str) {
         style.color = Some(color);
     } else if let Some(color) = token.strip_prefix("border-").and_then(palette) {
         style.border_color = Some(color);
+    } else if let Some(rest) = token.strip_prefix("grid-cols-") {
+        if let Ok(n) = rest.parse::<u32>() {
+            if n > 0 {
+                style.grid_cols = Some(n);
+            }
+        }
+    } else if let Some(rest) = token.strip_prefix("col-span-") {
+        if let Ok(n) = rest.parse::<u32>() {
+            if n > 0 {
+                style.col_span = Some(n);
+            }
+        }
+    } else if let Some(rest) = token.strip_prefix("left-") {
+        if let Some(px) = spacing(rest) {
+            style.abs_x = Some(px);
+        }
+    } else if let Some(rest) = token.strip_prefix("right-") {
+        if style.abs_x.is_none() {
+            if let Some(px) = spacing(rest) {
+                style.abs_x = Some(px);
+            }
+        }
+    } else if let Some(rest) = token.strip_prefix("top-") {
+        if let Some(px) = spacing(rest) {
+            style.abs_y = Some(px);
+        }
+    } else if let Some(rest) = token.strip_prefix("bottom-") {
+        if style.abs_y.is_none() {
+            if let Some(px) = spacing(rest) {
+                style.abs_y = Some(px);
+            }
+        }
+    } else if let Some(rest) = token.strip_prefix("from-") {
+        if let Some(color) = palette(rest) {
+            gradient_slot(style).from = Some(color);
+        }
+    } else if let Some(rest) = token.strip_prefix("to-") {
+        if matches!(rest, "r" | "l" | "t" | "b" | "tr" | "tl" | "br" | "bl") {
+            return;
+        }
+        if let Some(color) = palette(rest) {
+            gradient_slot(style).to = Some(color);
+        }
+    } else if let Some(rest) = token.strip_prefix("leading-") {
+        if let Some(px) = spacing(rest) {
+            style.line_height = Some(px / 16.0);
+        }
     }
 }
 
@@ -655,6 +875,23 @@ fn apply_arbitrary(style: &mut Style, prefix: &str, value: &str) {
                     _ => "",
                 };
                 paint_edge(&mut style.padding, edge, px);
+            }
+        }
+        "left" => {
+            if let Some(px) = parse_px(value) {
+                style.abs_x = Some(px);
+            }
+        }
+        "top" => {
+            if let Some(px) = parse_px(value) {
+                style.abs_y = Some(px);
+            }
+        }
+        "leading" => {
+            if let Some(px) = parse_px(value) {
+                style.line_height = Some(px / 16.0);
+            } else if let Ok(n) = value.parse::<f64>() {
+                style.line_height = Some(n);
             }
         }
         "m" | "mx" | "my" | "mt" | "mr" | "mb" | "ml" => {
@@ -835,11 +1072,17 @@ mod tests {
         assert_eq!(style.max_height, Some(Bound::Px(64.0)));
         assert_eq!(
             style.width,
-            Some(SizeSpec::Rel { base: RelBase::Parent, factor: 0.5 })
+            Some(SizeSpec::Rel {
+                base: RelBase::Parent,
+                factor: 0.5
+            })
         );
         assert_eq!(
             style.height,
-            Some(SizeSpec::Rel { base: RelBase::Vh, factor: 1.0 })
+            Some(SizeSpec::Rel {
+                base: RelBase::Vh,
+                factor: 1.0
+            })
         );
         assert!(style.width_explicit && style.height_explicit);
     }
@@ -889,8 +1132,14 @@ mod tests {
         let cross = parse_classes("items-stretch items-end self-stretch");
         assert_eq!(cross.cross_align, Some(CrossAlign::End));
         assert_eq!(cross.align_self, Some(CrossAlign::Stretch));
-        assert_eq!(parse_classes("self-start").align_self, Some(CrossAlign::Start));
-        assert_eq!(parse_classes("self-center").align_self, Some(CrossAlign::Center));
+        assert_eq!(
+            parse_classes("self-start").align_self,
+            Some(CrossAlign::Start)
+        );
+        assert_eq!(
+            parse_classes("self-center").align_self,
+            Some(CrossAlign::Center)
+        );
         let grow = parse_classes("grow shrink w-screen gap-x-3");
         assert_eq!(grow.flex.grow, Some(1.0));
         assert_eq!(grow.flex.shrink, Some(1.0));
@@ -912,7 +1161,39 @@ mod tests {
         assert_eq!(style.background, Some(Rgba::new(0xaa, 0xbb, 0xcc)));
         assert_eq!(
             style.width,
-            Some(SizeSpec::Rel { base: RelBase::Parent, factor: 0.25 })
+            Some(SizeSpec::Rel {
+                base: RelBase::Parent,
+                factor: 0.25
+            })
         );
+    }
+
+    #[test]
+    fn p1_grid_overflow_type_gradient_and_shadow() {
+        let style = parse_classes(
+            "grid grid-cols-3 gap-2 col-span-2 absolute left-2 top-[10px] overflow-hidden overflow-y-auto font-bold leading-tight bg-gradient-to-r from-amber-600 to-stone-900 shadow-lg",
+        );
+        assert_eq!(style.grid_cols, Some(3));
+        assert_eq!(style.col_span, Some(2));
+        assert_eq!(style.gap, Some(8.0));
+        assert!(style.absolute);
+        assert_eq!(style.abs_x, Some(8.0));
+        assert_eq!(style.abs_y, Some(10.0));
+        assert!(style.clip);
+        assert!(style.scroll_y);
+        assert_eq!(style.font_weight, Some(700.0));
+        assert_eq!(style.line_height, Some(1.25));
+        let gradient = style.gradient.unwrap();
+        assert_eq!(gradient.axis, GradientAxis::Horizontal);
+        assert!(!gradient.flip);
+        assert_eq!(gradient.from, Some(Rgba::new(217, 119, 6)));
+        assert_eq!(gradient.to, Some(Rgba::new(28, 25, 23)));
+        assert_eq!(style.shadow.unwrap().radius, 16.0);
+        let medium = parse_classes("font-medium font-semibold leading-[1.4] leading-[20px] overflow-x-auto shadow-md bg-gradient-to-b");
+        assert_eq!(medium.font_weight, Some(600.0));
+        assert_eq!(medium.line_height, Some(20.0 / 16.0));
+        assert!(medium.scroll_x);
+        assert_eq!(medium.shadow.unwrap().radius, 8.0);
+        assert_eq!(medium.gradient.unwrap().axis, GradientAxis::Vertical);
     }
 }

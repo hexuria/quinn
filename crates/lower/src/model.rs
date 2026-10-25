@@ -6,6 +6,8 @@ pub enum Init {
     Bool(bool),
     Str(String),
     Items(Vec<ItemSeed>),
+    /// Nested script object. Fields may themselves be objects.
+    Obj(Vec<(String, Init)>),
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -32,9 +34,14 @@ pub enum Part {
         no: String,
     },
     /// Empty string shows `empty`, otherwise the signal's own text.
-    IfEmpty { signal: String, empty: String },
+    IfEmpty {
+        signal: String,
+        empty: String,
+    },
     /// Function parameter of a keyed row (`label`).
     Param(String),
+    /// `mod.ctx.<key>`
+    Ctx(String),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -60,15 +67,38 @@ pub enum HxExpr {
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum HandlerStmt {
-    Let { name: String, expr: HxExpr },
-    Set { signal: String, expr: HxExpr },
-    Push { items: String, id: HxExpr, label: HxExpr },
-    Pop { items: String },
-    Reverse { items: String },
+    Let {
+        name: String,
+        expr: HxExpr,
+    },
+    Set {
+        signal: String,
+        expr: HxExpr,
+    },
+    Push {
+        items: String,
+        id: HxExpr,
+        label: HxExpr,
+    },
+    Pop {
+        items: String,
+    },
+    Reverse {
+        items: String,
+    },
     /// Drop the item whose `id` equals `key`.
-    RemoveKey { items: String, key: HxExpr },
+    RemoveKey {
+        items: String,
+        key: HxExpr,
+    },
     /// Exchange the two items whose `id`s equal `a` and `b`.
-    SwapKey { items: String, a: HxExpr, b: HxExpr },
+    SwapKey {
+        items: String,
+        a: HxExpr,
+        b: HxExpr,
+    },
+    /// `state.route = path` and render. Not a URL bar.
+    Navigate(HxExpr),
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -78,7 +108,10 @@ pub enum Act {
     Clear(String),
     Pop(String),
     Reverse(String),
-    Push { next: String, items: String },
+    Push {
+        next: String,
+        items: String,
+    },
     /// Increment the keyed row count captured by `id`.
     RowInc,
     /// Host handler: statements against `mod.state`.
@@ -116,6 +149,10 @@ pub struct El {
     pub value: Option<String>,
     pub click: Option<Act>,
     pub input: Option<String>,
+    /// `bind:value`. The input omits `text:` so a reload does not move the caret.
+    pub bind: Option<String>,
+    /// `mod.ctx.key = expr` statements emitted just before this widget.
+    pub provides: Vec<(String, String)>,
     pub children: Vec<ViewNode>,
 }
 
@@ -141,6 +178,18 @@ pub enum ViewNode {
         row_signals: Vec<Signal>,
         child: El,
     },
+    /// Child view of a component, emitted as its own script function.
+    /// An empty `fn_name` is a fragment: the nodes are inlined, not wrapped.
+    Slot {
+        fn_name: String,
+        nodes: Vec<ViewNode>,
+        /// Script expression passed into a `ChildrenFn`. `None` is `children()`.
+        arg: Option<String>,
+    },
+    /// In-app routes. `state.route` picks one child. Not `leptos_router`.
+    Routes {
+        routes: Vec<(String, Vec<ViewNode>)>,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -153,6 +202,10 @@ pub struct Model {
     pub keyed: bool,
     /// Emit the retain step used by `QUINN_RETAIN`.
     pub retain: bool,
+    /// Seed `mod.ctx` because a component provides or reads it.
+    pub has_ctx: bool,
+    /// Root `provide_context` lines, emitted at the start of `on_render`.
+    pub ctx_init: Vec<(String, String)>,
 }
 
 impl Model {

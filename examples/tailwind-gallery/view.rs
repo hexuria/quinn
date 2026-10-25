@@ -32,7 +32,7 @@ fn Gallery() -> impl IntoView {
     let (next_id, set_next) = signal(3u64);
 
     view! {
-        <div class="flex flex-col gap-px p-2 bg-stone-100">
+        <div class="flex flex-col gap-px p-2 bg-stone-100 h-full overflow-y-auto">
             <h1 class="text-lg">"Tailwind gallery"</h1>
             <div class="flex flex-row items-center gap-3">
                 <span class="text-lg">"Count: " {move || count.get()}</span>
@@ -122,6 +122,28 @@ fn Gallery() -> impl IntoView {
                 <button class="px-3 py-1" on:click=move |_| { set_items.update(|rows| { rows.reverse(); }); }>"Reverse"</button>
                 <button class="px-3 py-1" on:click=move |_| { set_items.update(|rows| { rows.swap(1, 2); }); }>"Swap"</button>
                 <button class="px-3 py-1" on:click=move |_| { set_items.update(|rows| { rows.remove(1); }); }>"Remove"</button>
+            </div>
+
+            <span class="text-sm font-semibold">"grid"</span>
+            <div class="grid grid-cols-3 gap-2">
+                <div class="col-span-2 h-[28px] rounded bg-gradient-to-r from-amber-600 to-stone-900 shadow-lg">
+                    <span class="text-white text-sm font-bold">"wide"</span>
+                </div>
+                <div class="h-[28px] rounded bg-amber-100 shadow">
+                    <span class="text-sm font-medium">"side"</span>
+                </div>
+            </div>
+            <div class="h-[22px]">
+                <div class="absolute left-1 top-0">
+                    <span class="text-xs leading-tight">"pinned"</span>
+                </div>
+            </div>
+            <div class="h-[36px] overflow-y-auto bg-white rounded shadow-md">
+                <div class="flex flex-col">
+                    <span class="text-sm leading-relaxed">"Scroll the gallery note."</span>
+                    <span class="text-sm leading-relaxed">"It runs past the box."</span>
+                    <span class="text-sm leading-relaxed">"The bar has somewhere to go."</span>
+                </div>
             </div>
         </div>
     }

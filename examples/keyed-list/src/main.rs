@@ -1,66 +1,48 @@
-use quinn::prelude::*;
+use quinn::makepad_widgets::*;
 
-#[derive(Clone)]
-struct Item {
-    id: u64,
-    label: String,
+app_main!(App);
+
+#[derive(Script, ScriptHook)]
+pub struct App {
+    #[live]
+    ui: WidgetRef,
 }
 
-#[component]
-fn Row(item: Item) -> impl IntoView {
-    let (count, set_count) = signal(0i32);
-    let label = item.label;
-    view! {
-        <div class="flex flex-row gap-4 items-center">
-            <span class="text-lg">{label}</span>
-            <button on:click=move |_| { set_count.update(|n| *n += 1); }>
-                {move || count.get()}
-            </button>
-        </div>
+impl MatchEvent for App {
+    fn handle_startup(&mut self, cx: &mut Cx) {
+        quinn::boot_script(cx, &self.ui);
     }
 }
 
-#[component]
-fn KeyedList() -> impl IntoView {
-    let (items, set_items) = signal(vec![
-        Item {
-            id: 1,
-            label: "Alpha".into(),
-        },
-        Item {
-            id: 2,
-            label: "Beta".into(),
-        },
-        Item {
-            id: 3,
-            label: "Gamma".into(),
-        },
-    ]);
-    let (next_id, set_next) = signal(4u64);
+impl AppMain for App {
+    fn script_mod(vm: &mut ScriptVm) -> ScriptValue {
+        quinn::makepad_widgets::script_mod(vm);
+        let component = Self::script_component(vm).script_to_value(vm);
+        quinn::load_hot_view(
+            vm,
+            env!("CARGO_MANIFEST_DIR"),
+            module_path!(),
+            "Keyed list",
+            520,
+            520,
+            component,
+        )
+    }
 
-    view! {
-        <div class="flex flex-col gap-3 p-4">
-            <h1>"Keyed rows"</h1>
-            <For each=move || items.get() key=|item| item.id let:item>
-                <Row item=item />
-            </For>
-            <div class="flex flex-row gap-2">
-                <button on:click=move |_| {
-                    let id = next_id.get();
-                    set_next.set(id + 1);
-                    set_items.update(|rows| {
-                        rows.push(Item { id, label: format!("Item {id}") });
-                    });
-                }>"Add"</button>
-                <button on:click=move |_| {
-                    set_items.update(|rows| { rows.pop(); });
-                }>"Remove last"</button>
-                <button on:click=move |_| {
-                    set_items.update(|rows| { rows.reverse(); });
-                }>"Reverse"</button>
-            </div>
-        </div>
+    fn handle_event(&mut self, cx: &mut Cx, event: &Event) {
+        if let Event::LiveEdit = event {
+            if matches!(cx.live_edit_apply(), Apply::Reload) {
+                eprintln!(
+                    "script_reload pid={} window_stays=1 render=1",
+                    std::process::id()
+                );
+                script_eval!(cx, {
+                    ui.host.render()
+                    true
+                });
+            }
+        }
+        self.match_event(cx, event);
+        self.ui.handle_event(cx, event, &mut Scope::empty());
     }
 }
-
-quinn::run!("Keyed list", 520, 520, view! { <KeyedList /> });

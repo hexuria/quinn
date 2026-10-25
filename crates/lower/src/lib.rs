@@ -1,19 +1,23 @@
 //! Turns a Leptos-looking `view!` / `signal()` component into a Makepad
 //! `script_mod!` the `--hot` watcher can re-read.
 //!
-//! The script is written to a real `.rs` file. `quote!` cannot emit a
-//! `script_mod!` whose spans round-trip through Makepad's extractor.
+//! The script is written to `hot/ui.rs` inside the example crate, next to
+//! `src/` but not part of it. Cargo does not compile that file. Makepad's
+//! watcher does, because the crate directory is the watch root.
 
-use std::collections::{HashMap, HashSet};
+mod emit;
+mod extract;
+mod model;
+mod parse;
+mod sim;
+
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
-use proc_macro2::TokenStream;
-use quinn_core::{Style, Tag};
-use quinn_styles::{parse_classes, FlowSpec, SizeSpec};
-use rstml::node::{Node, NodeAttribute, NodeBlock, NodeElement};
-use syn::spanned::Spanned;
-use syn::{Expr, Item, ItemFn, Stmt};
+pub use extract::extract_hot_script;
+pub use model::{Act, El, Init, ItemSeed, Model, Part, Signal, ViewNode};
+pub use sim::Sim;
 
 #[derive(Clone, Copy, Debug)]
 pub struct Shell {
@@ -22,43 +26,7 @@ pub struct Shell {
     pub height: u32,
 }
 
-#[derive(Clone, Debug, PartialEq)]
-pub struct Signal {
-    pub read: String,
-    pub write: String,
-    pub init: i64,
-}
-
-#[derive(Clone, Debug, PartialEq)]
-pub enum Part {
-    Lit(String),
-    Sig(String),
-}
-
-#[derive(Clone, Debug, PartialEq)]
-pub struct NodeModel {
-    pub name: String,
-    pub tag: String,
-    pub class: String,
-    pub parts: Vec<Part>,
-    /// Signal the click handler increments by one.
-    pub click_inc: Option<String>,
-}
-
-#[derive(Clone, Debug, PartialEq)]
-pub struct Model {
-    pub signals: Vec<Signal>,
-    /// Signal the probe frame driver increments, when the component declares one.
-    pub frame: Option<String>,
-    pub root_class: String,
-    pub nodes: Vec<NodeModel>,
-}
-
 /// Watch `source` and rewrite `output` when the view changes.
-///
-/// Makepad's watcher reloads `output` because that file holds the only
-/// `script_mod!`. Run the built binary directly. `cargo run` restarts the
-/// process when this write lands.
 pub fn spawn_watch(source: impl Into<PathBuf>, output: impl Into<PathBuf>, shell: Shell) {
     let source = source.into();
     let output = output.into();
@@ -83,6 +51,37 @@ pub fn spawn_watch(source: impl Into<PathBuf>, output: impl Into<PathBuf>, shell
     });
 }
 
+static WATCH_ARMED: AtomicBool = AtomicBool::new(false);
+
+/// Start [`spawn_watch`] once per process. `script_mod` runs again on reload.
+pub fn watch_once(source: impl Into<PathBuf>, output: impl Into<PathBuf>, shell: Shell) {
+    if WATCH_ARMED.swap(true, Ordering::SeqCst) {
+        return;
+    }
+    spawn_watch(source, output, shell);
+}
+
+pub fn view_path(manifest_dir: &str) -> PathBuf {
+    Path::new(manifest_dir).join("view.rs")
+}
+
+pub fn hot_ui_path(manifest_dir: &str) -> PathBuf {
+    Path::new(manifest_dir).join("hot").join("ui.rs")
+}
+
+/// Lower `source` into `output` when the text changed.
+pub fn write_lowered(source: &Path, output: &Path, shell: Shell) -> Result<(), String> {
+    let text = std::fs::read_to_string(source)
+        .map_err(|err| format!("read {}: {err}", source.display()))?;
+    let file = lower_file(&text, shell)?;
+    if let Some(parent) = output.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|err| format!("mkdir {}: {err}", parent.display()))?;
+    }
+    write_if_changed(output, &file);
+    Ok(())
+}
+
 fn mtime(path: &Path) -> Option<std::time::SystemTime> {
     std::fs::metadata(path)
         .and_then(|meta| meta.modified())
@@ -94,6 +93,9 @@ fn write_if_changed(path: &Path, body: &str) {
     if prev == body {
         return;
     }
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
     if let Err(err) = std::fs::write(path, body) {
         eprintln!("quinn lower could not write {}: {err}", path.display());
     } else {
@@ -103,730 +105,24 @@ fn write_if_changed(path: &Path, body: &str) {
 
 pub fn lower_file(source: &str, shell: Shell) -> Result<String, String> {
     let model = parse_model(source)?;
-    Ok(emit_rust(&model, shell))
+    Ok(emit::emit_rust(&model, &shell))
 }
 
 pub fn parse_model(source: &str) -> Result<Model, String> {
-    let file = syn::parse_file(source).map_err(|err| err.to_string())?;
-    let mut components = Vec::new();
-    for item in file.items {
-        let Item::Fn(func) = item else {
-            continue;
-        };
-        if func
-            .attrs
-            .iter()
-            .any(|attr| attr.path().is_ident("component"))
-        {
-            components.push(func);
-        }
-    }
-    if components.len() != 1 {
-        return Err(format!(
-            "expected one #[component], found {}",
-            components.len()
-        ));
-    }
-    parse_component(&components[0])
-}
-
-fn parse_component(func: &ItemFn) -> Result<Model, String> {
-    let mut signals = Vec::new();
-    let mut frame = None;
-    let mut view: Option<TokenStream> = None;
-    for stmt in &func.block.stmts {
-        match stmt {
-            Stmt::Local(local) => {
-                signals.push(parse_signal(local)?);
-            }
-            Stmt::Expr(expr, _) => {
-                if is_call(expr, "set_frame_driver") {
-                    frame = Some(parse_frame(expr, &signals)?);
-                } else if is_call(expr, "set_inspector") {
-                    // The probe reads `mod.state` from Rust. Nothing to emit.
-                } else if let Some(tokens) = view_tokens(expr) {
-                    view = Some(tokens);
-                } else {
-                    return Err(format!(
-                        "unsupported statement in {} at {:?}",
-                        func.sig.ident,
-                        expr.span()
-                    ));
-                }
-            }
-            Stmt::Macro(mac) => {
-                if mac
-                    .mac
-                    .path
-                    .segments
-                    .last()
-                    .is_some_and(|segment| segment.ident == "view")
-                {
-                    view = Some(mac.mac.tokens.clone());
-                } else {
-                    return Err(format!("unsupported macro in {}", func.sig.ident));
-                }
-            }
-            Stmt::Item(_) => {
-                return Err("unsupported item in component".into());
-            }
-        }
-    }
-    let Some(tokens) = view else {
-        return Err(format!("{} has no view!", func.sig.ident));
-    };
-    let nodes = rstml::parse2(tokens).map_err(|err| err.to_string())?;
-    let element = single_root(&nodes)?;
-    if element.name().to_string() != "div" {
-        return Err("the component root must be a <div>".into());
-    }
-    let root_class = class_of(element)?;
-    let mut used = HashSet::new();
-    let mut children = Vec::new();
-    for child in element.children() {
-        if is_blank(child) {
-            continue;
-        }
-        children.push(parse_node(child, &signals, &mut used)?);
-    }
-    Ok(Model {
-        signals,
-        frame,
-        root_class,
-        nodes: children,
-    })
-}
-
-fn parse_signal(local: &syn::Local) -> Result<Signal, String> {
-    let syn::Pat::Tuple(tuple) = &local.pat else {
-        return Err("signal bindings must be `let (read, set) = signal(...)`".into());
-    };
-    if tuple.elems.len() != 2 {
-        return Err("signal bindings must be a pair".into());
-    }
-    let read = pat_ident(&tuple.elems[0])?;
-    let write = pat_ident(&tuple.elems[1])?;
-    let Some(init_expr) = &local.init else {
-        return Err(format!("signal {read} has no initializer"));
-    };
-    let Expr::Call(call) = &*init_expr.expr else {
-        return Err(format!("signal {read} must be signal(...)"));
-    };
-    if !is_path(&call.func, "signal") {
-        return Err(format!("signal {read} must be signal(...)"));
-    }
-    let init = match call.args.first() {
-        Some(Expr::Lit(lit)) => match &lit.lit {
-            syn::Lit::Int(value) => value.base10_parse::<i64>().map_err(|err| err.to_string())?,
-            _ => return Err(format!("signal {read} must start as an integer")),
-        },
-        _ => return Err(format!("signal {read} must start as an integer")),
-    };
-    Ok(Signal { read, write, init })
-}
-
-fn parse_frame(expr: &Expr, signals: &[Signal]) -> Result<String, String> {
-    let Expr::Call(call) = expr else {
-        return Err("set_frame_driver must be a call".into());
-    };
-    let Some(arg) = call.args.first() else {
-        return Err("set_frame_driver needs a closure".into());
-    };
-    let Expr::Closure(closure) = arg else {
-        return Err("set_frame_driver needs a closure".into());
-    };
-    let body = closure_stmts(closure)?;
-    if body.len() != 1 {
-        return Err("the frame driver must be a single signal update".into());
-    }
-    Ok(inc_signal(&body[0], signals)?.to_string())
-}
-
-fn parse_node(
-    node: &Node,
-    signals: &[Signal],
-    used: &mut HashSet<String>,
-) -> Result<NodeModel, String> {
-    let Node::Element(element) = node else {
-        return Err("only elements are supported in this lowerer".into());
-    };
-    let tag = element.name().to_string();
-    if matches!(tag.as_str(), "Show" | "show" | "For" | "for") {
-        return Err(format!(
-            "<{tag}> is not lowered yet; conditional and keyed examples still run on the Rust graph"
-        ));
-    }
-    let class = class_of(element).unwrap_or_default();
-    let mut parts = Vec::new();
-    let mut click_inc = None;
-    for attr in element.attributes() {
-        let NodeAttribute::Attribute(attr) = attr else {
-            return Err("computed attribute keys are not supported".into());
-        };
-        let key = attr.key.to_string().replace(' ', "");
-        if key == "class" {
-            continue;
-        }
-        if key == "on:click" {
-            let Some(value) = attr.value() else {
-                return Err("on:click needs a closure".into());
-            };
-            click_inc = Some(parse_click(value, signals)?);
-            continue;
-        }
-        return Err(format!("unsupported attribute `{key}` on <{tag}>"));
-    }
-    for child in element.children() {
-        match child {
-            Node::Text(text) => {
-                let value = text.value_string();
-                if !value.is_empty() {
-                    parts.push(Part::Lit(value));
-                }
-            }
-            Node::RawText(raw) => {
-                let value = raw.to_string_best();
-                if !value.trim().is_empty() {
-                    parts.push(Part::Lit(value));
-                }
-            }
-            Node::Block(block) => parts.push(parse_interp(block, signals)?),
-            Node::Comment(_) | Node::Doctype(_) => {}
-            other => {
-                return Err(format!(
-                    "nested child in <{tag}> is not lowered yet: {other:?}"
-                ));
-            }
-        }
-    }
-    let name = unique_name(&tag, &parts, used);
-    Ok(NodeModel {
-        name,
-        tag,
-        class,
-        parts,
-        click_inc,
-    })
-}
-
-fn parse_click(expr: &Expr, signals: &[Signal]) -> Result<String, String> {
-    let Expr::Closure(closure) = expr else {
-        return Err("on:click must be a closure".into());
-    };
-    let body = closure_stmts(closure)?;
-    if body.len() != 1 {
-        return Err("on:click must be a single signal update".into());
-    }
-    Ok(inc_signal(&body[0], signals)?.to_string())
-}
-
-fn parse_interp(block: &NodeBlock, signals: &[Signal]) -> Result<Part, String> {
-    let NodeBlock::ValidBlock(block) = block else {
-        return Err("invalid interpolation block".into());
-    };
-    if block.stmts.len() != 1 {
-        return Err("interpolation must be one expression".into());
-    }
-    let Stmt::Expr(expr, None) = &block.stmts[0] else {
-        return Err("interpolation must be one expression".into());
-    };
-    let Expr::Closure(closure) = expr else {
-        return Err("interpolation must be {move || signal.get()}".into());
-    };
-    let Expr::MethodCall(call) = &*closure.body else {
-        return Err("interpolation must call .get()".into());
-    };
-    if call.method != "get" {
-        return Err("interpolation must call .get()".into());
-    }
-    let Expr::Path(path) = &*call.receiver else {
-        return Err("interpolation must read a signal".into());
-    };
-    let name = path
-        .path
-        .get_ident()
-        .ok_or("interpolation must read a local signal")?
-        .to_string();
-    if !signals.iter().any(|signal| signal.read == name) {
-        return Err(format!("unknown signal {name}"));
-    }
-    Ok(Part::Sig(name))
-}
-
-fn inc_signal<'a>(expr: &Expr, signals: &'a [Signal]) -> Result<&'a str, String> {
-    let Expr::MethodCall(call) = expr else {
-        return Err("expected set_signal.update(|n| *n += 1)".into());
-    };
-    if call.method != "update" {
-        return Err("only .update(|n| *n += 1) is lowered".into());
-    }
-    let Expr::Path(path) = &*call.receiver else {
-        return Err("update receiver must be the signal setter".into());
-    };
-    let write = path
-        .path
-        .get_ident()
-        .ok_or("update receiver must be a local")?
-        .to_string();
-    let signal = signals
-        .iter()
-        .find(|signal| signal.write == write)
-        .ok_or_else(|| format!("unknown setter {write}"))?;
-    let Some(Expr::Closure(closure)) = call.args.first() else {
-        return Err("update needs a closure".into());
-    };
-    let Expr::Binary(binary) = &*closure.body else {
-        return Err("update must be `*n += 1`".into());
-    };
-    if !matches!(binary.op, syn::BinOp::AddAssign(_)) {
-        return Err("update must be `*n += 1`".into());
-    }
-    let Expr::Lit(lit) = &*binary.right else {
-        return Err("update must add a literal".into());
-    };
-    let syn::Lit::Int(value) = &lit.lit else {
-        return Err("update must add an integer".into());
-    };
-    if value.base10_parse::<i64>().map_err(|err| err.to_string())? != 1 {
-        return Err("update must add 1".into());
-    }
-    Ok(signal.read.as_str())
-}
-
-fn closure_stmts(closure: &syn::ExprClosure) -> Result<Vec<Expr>, String> {
-    match &*closure.body {
-        Expr::Block(block) => {
-            let mut out = Vec::new();
-            for stmt in &block.block.stmts {
-                match stmt {
-                    Stmt::Expr(expr, _) => out.push(expr.clone()),
-                    _ => return Err("closure body must be expressions".into()),
-                }
-            }
-            Ok(out)
-        }
-        other => Ok(vec![other.clone()]),
-    }
-}
-
-fn single_root(nodes: &[Node]) -> Result<&NodeElement<rstml::Infallible>, String> {
-    let mut found = None;
-    for node in nodes {
-        if is_blank(node) {
-            continue;
-        }
-        let Node::Element(element) = node else {
-            return Err("the view root must be an element".into());
-        };
-        if found.is_some() {
-            return Err("the view must have one root element".into());
-        }
-        found = Some(element);
-    }
-    found.ok_or_else(|| "the view is empty".into())
-}
-
-fn class_of(element: &NodeElement<rstml::Infallible>) -> Result<String, String> {
-    for attr in element.attributes() {
-        let NodeAttribute::Attribute(attr) = attr else {
-            continue;
-        };
-        if attr.key.to_string().replace(' ', "") == "class" {
-            return attr
-                .value_literal_string()
-                .ok_or_else(|| "class must be a string literal".into());
-        }
-    }
-    Ok(String::new())
-}
-
-fn is_blank(node: &Node) -> bool {
-    match node {
-        Node::RawText(raw) => raw.to_string_best().trim().is_empty(),
-        Node::Text(text) => text.value_string().trim().is_empty(),
-        Node::Comment(_) => true,
-        _ => false,
-    }
-}
-
-fn is_call(expr: &Expr, name: &str) -> bool {
-    let Expr::Call(call) = expr else {
-        return false;
-    };
-    is_path(&call.func, name)
-}
-
-fn is_path(expr: &Expr, name: &str) -> bool {
-    let Expr::Path(path) = expr else {
-        return false;
-    };
-    path.path
-        .segments
-        .last()
-        .is_some_and(|segment| segment.ident == name)
-}
-
-fn view_tokens(expr: &Expr) -> Option<TokenStream> {
-    let Expr::Macro(mac) = expr else {
-        return None;
-    };
-    mac.mac
-        .path
-        .segments
-        .last()
-        .is_some_and(|segment| segment.ident == "view")
-        .then(|| mac.mac.tokens.clone())
-}
-
-fn pat_ident(pat: &syn::Pat) -> Result<String, String> {
-    let syn::Pat::Ident(ident) = pat else {
-        return Err("expected an identifier".into());
-    };
-    Ok(ident.ident.to_string())
-}
-
-fn unique_name(tag: &str, parts: &[Part], used: &mut HashSet<String>) -> String {
-    let base = if tag == "button" {
-        if let [Part::Lit(text)] = parts {
-            let slug = slug(text);
-            if slug.is_empty() {
-                tag.to_string()
-            } else {
-                slug
-            }
-        } else {
-            tag.to_string()
-        }
-    } else {
-        tag.to_string()
-    };
-    let mut name = base;
-    let mut n = 2;
-    while !used.insert(name.clone()) {
-        name = format!("{tag}_{n}");
-        n += 1;
-    }
-    name
-}
-
-fn slug(text: &str) -> String {
-    let mut out = String::new();
-    for ch in text.chars() {
-        if ch.is_ascii_alphanumeric() {
-            out.push(ch.to_ascii_lowercase());
-        } else if !out.ends_with('_') && !out.is_empty() {
-            out.push('_');
-        }
-    }
-    out.trim_matches('_').to_string()
-}
-
-fn emit_rust(model: &Model, shell: Shell) -> String {
-    let mut body = String::new();
-    body.push_str("        use mod.prelude.widgets.*\n");
-    body.push_str("        let state = mod.state\n");
-    if let Some(signal) = &model.frame {
-        body.push_str("        fn quinn_frame() {\n");
-        body.push_str(&format!("            state.{signal} += 1\n"));
-        body.push_str("            ui.host.render()\n");
-        body.push_str("        }\n");
-    }
-    let host = host_fields(&model.root_class);
-    let mut children = String::new();
-    for node in &model.nodes {
-        children.push_str(&emit_node(node));
-    }
-    let title = shell.title.replace('\\', "\\\\").replace('"', "\\\"");
-    body.push_str(&format!(
-        r#"        startup() do #(crate::App::script_component(vm)) {{
-            ui: Root {{
-                on_startup: || {{
-                    ui.host.render()
-                }}
-                main_window := Window {{
-                    window.inner_size: vec2({width}, {height})
-                    window.title: "{title}"
-                    body +: {{
-                        host := RoundedView {{
-{host}
-                            on_render: || {{
-{children}                            }}
-                        }}
-                    }}
-                }}
-            }}
-        }}
-"#,
-        width = shell.width,
-        height = shell.height,
-    ));
-    format!(
-        r#"// Generated by quinn-lower from src/main.rs. Do not edit.
-// This header is stable so the block token stays on the same line.
-use quinn::makepad_widgets::*;
-
-script_mod! {{
-{body}}}
-"#
-    )
-}
-
-fn host_fields(class: &str) -> String {
-    let mut style = Tag::Div.defaults();
-    style.merge_from(&parse_classes(class));
-    let mut lines = vec![
-        "width: Fill".to_string(),
-        "height: Fill".to_string(),
-        flow_line(style.flow.unwrap_or(FlowSpec::Column)),
-    ];
-    if let Some(gap) = style.gap {
-        lines.push(format!("spacing: {}", script_num(gap)));
-    }
-    if let Some(padding) = uniform_padding(&style) {
-        lines.push(format!("padding: {}", script_num(padding)));
-    }
-    lines.push("show_bg: true".into());
-    lines.push("new_batch: true".into());
-    let bg = style
-        .background
-        .map(|color| color.hex_script())
-        .unwrap_or_else(|| "#xf4f0e6".into());
-    lines.push(format!("draw_bg.color: {bg}"));
-    lines
-        .into_iter()
-        .map(|line| format!("                            {line}\n"))
-        .collect()
-}
-
-fn emit_node(node: &NodeModel) -> String {
-    let widget = match node.tag.as_str() {
-        "h1" => "H1",
-        "h2" => "H2",
-        "button" => "Button",
-        "input" => "TextInput",
-        "div" => "RoundedView",
-        _ => "Label",
-    };
-    let tag = match node.tag.as_str() {
-        "h1" => Tag::H1,
-        "h2" => Tag::H2,
-        "button" => Tag::Button,
-        "input" => Tag::Input,
-        "div" => Tag::Div,
-        "p" => Tag::P,
-        "label" => Tag::Label,
-        _ => Tag::Span,
-    };
-    let mut style = tag.defaults();
-    if !node.class.is_empty() {
-        style.merge_from(&parse_classes(&node.class));
-    }
-    let mut lines = Vec::new();
-    if !node.parts.is_empty() {
-        lines.push(format!("text: {}", text_expr(&node.parts)));
-    }
-    push_control(&mut lines, tag, &style);
-    if let Some(signal) = &node.click_inc {
-        lines.push(format!(
-            "on_click: || {{\n                                    state.{signal} += 1\n                                    ui.host.render()\n                                }}"
-        ));
-    }
-    let inner = lines
-        .into_iter()
-        .map(|line| format!("                                {line}\n"))
-        .collect::<String>();
-    format!(
-        "                                {name} := {widget} {{\n{inner}                                }}\n",
-        name = node.name,
-    )
-}
-
-fn push_control(lines: &mut Vec<String>, tag: Tag, style: &Style) {
-    match style.width {
-        Some(SizeSpec::Fill) => lines.push("width: Fill".into()),
-        Some(SizeSpec::Fit) => lines.push("width: Fit".into()),
-        Some(SizeSpec::Px(px)) => lines.push(format!("width: {}", script_num(px))),
-        None => {}
-    }
-    match style.height {
-        Some(SizeSpec::Fill) => lines.push("height: Fill".into()),
-        Some(SizeSpec::Fit) => lines.push("height: Fit".into()),
-        Some(SizeSpec::Px(px)) => lines.push(format!("height: {}", script_num(px))),
-        None => {}
-    }
-    if let Some(padding) = uniform_padding(style) {
-        if !matches!(
-            tag,
-            Tag::Div | Tag::H1 | Tag::H2 | Tag::Span | Tag::P | Tag::Label
-        ) {
-            lines.push(format!("padding: {}", script_num(padding)));
-        }
-    }
-    if matches!(tag, Tag::Button | Tag::Input | Tag::Div) {
-        if let Some(color) = style.background {
-            let hex = color.hex_script();
-            lines.push(format!("draw_bg.color: {hex}"));
-            if matches!(tag, Tag::Button) {
-                lines.push(format!("draw_bg.color_hover: {hex}"));
-                lines.push(format!("draw_bg.color_down: {hex}"));
-                lines.push(format!("draw_bg.color_focus: {hex}"));
-            }
-        }
-        if let Some(radius) = style.radius {
-            lines.push(format!("draw_bg.border_radius: {}", script_num(radius)));
-        }
-    }
-    if let Some(color) = style.color {
-        let hex = color.hex_script();
-        lines.push(format!("draw_text.color: {hex}"));
-        if matches!(tag, Tag::Button) {
-            lines.push(format!("draw_text.color_hover: {hex}"));
-            lines.push(format!("draw_text.color_down: {hex}"));
-            lines.push(format!("draw_text.color_focus: {hex}"));
-        }
-    }
-    if let Some(size) = style.font_size {
-        lines.push(format!("draw_text.text_style.font_size: {size}"));
-    }
-}
-
-fn uniform_padding(style: &Style) -> Option<f64> {
-    let (left, top, right, bottom) = style.padding.resolve();
-    if style.padding.left.is_none() {
-        return None;
-    }
-    if left == top && top == right && right == bottom {
-        Some(left)
-    } else {
-        None
-    }
-}
-
-fn flow_line(flow: FlowSpec) -> String {
-    match flow {
-        FlowSpec::Column => "flow: Down".into(),
-        FlowSpec::Row => "flow: Right".into(),
-    }
-}
-
-fn text_expr(parts: &[Part]) -> String {
-    parts
-        .iter()
-        .map(|part| match part {
-            Part::Lit(text) => format!("\"{}\"", escape_script(text)),
-            Part::Sig(name) => format!("state.{name}"),
-        })
-        .collect::<Vec<_>>()
-        .join(" + ")
-}
-
-fn escape_script(text: &str) -> String {
-    text.replace('\\', "\\\\").replace('"', "\\\"")
-}
-
-fn script_num(value: f64) -> String {
-    if value.fract() == 0.0 && value.abs() < 1e12 {
-        format!("{}.", value as i64)
-    } else {
-        format!("{value}")
-    }
-}
-
-/// Headless stand-in for `on_render` + named `:=` identity.
-///
-/// A click updates `mod.state` and renders again. A node whose name is still
-/// in the template keeps its id. A name that disappeared is gone, and a click
-/// on it does nothing.
-#[derive(Clone, Debug)]
-pub struct Sim {
-    pub state: HashMap<String, i64>,
-    ids: HashMap<String, u64>,
-    texts: HashMap<String, String>,
-    next: u64,
-    model: Model,
-}
-
-impl Sim {
-    pub fn new(model: Model) -> Self {
-        let state = model
-            .signals
-            .iter()
-            .map(|signal| (signal.read.clone(), signal.init))
-            .collect();
-        let mut sim = Self {
-            state,
-            ids: HashMap::new(),
-            texts: HashMap::new(),
-            next: 1,
-            model,
-        };
-        sim.render();
-        sim
-    }
-
-    pub fn render(&mut self) {
-        let mut live = Vec::new();
-        for node in &self.model.nodes {
-            let text = node
-                .parts
-                .iter()
-                .map(|part| match part {
-                    Part::Lit(text) => text.clone(),
-                    Part::Sig(name) => self.state.get(name).copied().unwrap_or(0).to_string(),
-                })
-                .collect::<String>();
-            let id = if let Some(id) = self.ids.get(&node.name).copied() {
-                id
-            } else {
-                let id = self.next;
-                self.next += 1;
-                self.ids.insert(node.name.clone(), id);
-                id
-            };
-            live.push(node.name.clone());
-            self.texts.insert(node.name.clone(), text);
-            let _ = id;
-        }
-        self.ids
-            .retain(|name, _| live.iter().any(|live| live == name));
-        self.texts
-            .retain(|name, _| live.iter().any(|live| live == name));
-    }
-
-    pub fn id(&self, name: &str) -> Option<u64> {
-        self.ids.get(name).copied()
-    }
-
-    pub fn text(&self, name: &str) -> String {
-        self.texts.get(name).cloned().unwrap_or_default()
-    }
-
-    pub fn click(&mut self, name: &str) -> bool {
-        let Some(node) = self.model.nodes.iter().find(|node| node.name == name) else {
-            return false;
-        };
-        if self.ids.get(name).is_none() {
-            return false;
-        }
-        let Some(signal) = node.click_inc.clone() else {
-            return false;
-        };
-        if let Some(value) = self.state.get_mut(&signal) {
-            *value += 1;
-        }
-        self.render();
-        true
-    }
-
-    pub fn drop_named(&mut self, name: &str) {
-        self.model.nodes.retain(|node| node.name != name);
-        self.render();
-    }
+    parse::parse_model(source)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn shell() -> Shell {
+        Shell {
+            title: "Counter",
+            width: 480,
+            height: 360,
+        }
+    }
 
     const COUNTER: &str = r#"
         #[component]
@@ -844,19 +140,12 @@ mod tests {
         }
     "#;
 
-    fn shell() -> Shell {
-        Shell {
-            title: "Counter",
-            width: 480,
-            height: 360,
-        }
-    }
-
     #[test]
     fn counter_script_uses_state_render_and_on_click() {
         let file = lower_file(COUNTER, shell()).unwrap();
         assert_eq!(file.matches("script_mod!").count(), 1);
         assert!(!file.contains("script_eval"));
+        assert!(file.contains("if ok{mod.state} == nil"));
         assert!(file.contains("let state = mod.state"));
         assert!(file.contains("spacing: 16."));
         assert!(file.contains("padding: 16."));
@@ -866,8 +155,13 @@ mod tests {
         assert!(file.contains("state.count += 1"));
         assert!(file.contains("ui.host.render()"));
         assert!(file.contains("fn quinn_frame()"));
+        assert!(file.contains("mod.quinn_frame = quinn_frame"));
         assert!(file.contains("increment := Button"));
         assert!(file.contains("h1 := H1"));
+        let extracted = extract_hot_script(&file).unwrap();
+        assert!(extracted.code.contains("#(0)"));
+        assert!(extracted.code.ends_with(';'));
+        assert!(extracted.code.contains("state.count"));
     }
 
     #[test]
@@ -882,6 +176,10 @@ mod tests {
                 .unwrap()
         };
         assert_eq!(line(&before), line(&after));
+        let left = extract_hot_script(&before).unwrap();
+        let right = extract_hot_script(&after).unwrap();
+        assert_eq!(left.line, right.line);
+        assert_eq!(left.column, right.column);
     }
 
     #[test]
@@ -923,5 +221,217 @@ mod tests {
         assert!(next.id("add_one").is_some());
         assert!(next.click("add_one"));
         assert_eq!(next.state["count"], 2);
+    }
+
+    const CONDITIONAL: &str = r#"
+        #[component]
+        fn Detail() -> impl IntoView {
+            let (clicks, set_clicks) = signal(0);
+            view! {
+                <div class="flex flex-col gap-2 p-4 rounded bg-amber-100">
+                    <h2>"Detail is mounted"</h2>
+                    <button on:click=move |_| { set_clicks.update(|n| *n += 1); }>
+                        "Detail clicks: " {move || clicks.get()}
+                    </button>
+                </div>
+            }
+        }
+        #[component]
+        fn Conditional() -> impl IntoView {
+            let (open, set_open) = signal(true);
+            let (ticks, set_ticks) = signal(0);
+            view! {
+                <div class="flex flex-col gap-4 p-4">
+                    <h1>"Sibling ticks: " {move || ticks.get()}</h1>
+                    <button on:click=move |_| { set_ticks.update(|n| *n += 1); }>"Tick sibling"</button>
+                    <button on:click=move |_| { set_open.update(|open| *open = !*open); }>
+                        {move || if open.get() { "Hide detail" } else { "Show detail" }}
+                    </button>
+                    <Show when=move || open.get()><Detail /></Show>
+                </div>
+            }
+        }
+    "#;
+
+    #[test]
+    fn show_unmount_resets_detail_and_keeps_the_sibling() {
+        let mut sim = Sim::new(parse_model(CONDITIONAL).unwrap());
+        let sibling = sim.id("h1").unwrap();
+        let ticks = sim.id("tick_sibling").unwrap();
+        assert!(sim.text("toggle").contains("Hide detail"));
+        assert!(sim.visible("detail"));
+        let detail = sim.id("detail").unwrap();
+        assert!(sim.click("button"));
+        assert_eq!(sim.state["detail_clicks"], 1);
+        assert!(sim.text("button").contains("Detail clicks: 1"));
+        assert!(sim.click("tick_sibling"));
+        assert_eq!(sim.state["ticks"], 1);
+        assert!(sim.click("toggle"));
+        assert!(!sim.visible("detail"));
+        assert!(sim.id("button").is_none());
+        assert!(!sim.click("button"));
+        assert_eq!(sim.state["detail_clicks"], 0);
+        assert_eq!(sim.state["ticks"], 1);
+        assert_eq!(sim.id("h1"), Some(sibling));
+        assert_eq!(sim.id("tick_sibling"), Some(ticks));
+        assert!(sim.click("toggle"));
+        assert!(sim.visible("detail"));
+        assert_ne!(sim.id("detail"), Some(detail));
+        assert_eq!(sim.state["detail_clicks"], 0);
+        assert!(sim.text("button").contains("Detail clicks: 0"));
+        assert_eq!(sim.id("h1"), Some(sibling));
+        let file = lower_file(CONDITIONAL, shell()).unwrap();
+        assert!(file.contains("fn quinn_show_open_1()"));
+        assert!(file.contains("if state.open"));
+        assert!(file.contains("state.detail_clicks = if state.open"));
+        assert!(file.contains("state.open = !state.open"));
+        assert!(file.contains("quinn_show_open_1_off"));
+    }
+
+    const LIST: &str = r#"
+        struct Item { id: u64, label: String, }
+        #[component]
+        fn Row(item: Item) -> impl IntoView {
+            let (count, set_count) = signal(0i32);
+            let label = item.label;
+            view! {
+                <div class="flex flex-row gap-4 items-center">
+                    <span class="text-lg">{label}</span>
+                    <button on:click=move |_| { set_count.update(|n| *n += 1); }>
+                        {move || count.get()}
+                    </button>
+                </div>
+            }
+        }
+        #[component]
+        fn KeyedList() -> impl IntoView {
+            let (items, set_items) = signal(vec![
+                Item { id: 1, label: "Alpha".into() },
+                Item { id: 2, label: "Beta".into() },
+                Item { id: 3, label: "Gamma".into() },
+            ]);
+            let (next_id, set_next) = signal(4u64);
+            view! {
+                <div class="flex flex-col gap-3 p-4">
+                    <h1>"Keyed rows"</h1>
+                    <For each=move || items.get() key=|item| item.id let:item>
+                        <Row item=item />
+                    </For>
+                    <div class="flex flex-row gap-2">
+                        <button on:click=move |_| {
+                            let id = next_id.get();
+                            set_next.set(id + 1);
+                            set_items.update(|rows| { rows.push(Item { id, label: format!("Item {id}") }); });
+                        }>"Add"</button>
+                        <button on:click=move |_| { set_items.update(|rows| { rows.pop(); }); }>"Remove last"</button>
+                        <button on:click=move |_| { set_items.update(|rows| { rows.reverse(); }); }>"Reverse"</button>
+                    </div>
+                </div>
+            }
+        }
+    "#;
+
+    #[test]
+    fn keyed_count_follows_beta_across_reorder_and_removal() {
+        let mut sim = Sim::new(parse_model(LIST).unwrap());
+        assert_eq!(sim.item_ids(), vec![1, 2, 3]);
+        assert!(sim.click_row(2));
+        assert_eq!(sim.row_count(2), 1);
+        assert!(sim.click("reverse"));
+        assert_eq!(sim.item_ids(), vec![3, 2, 1]);
+        assert_eq!(sim.row_count(2), 1);
+        assert_eq!(sim.item_label(2), "Beta");
+        assert!(sim.click("remove_last"));
+        assert_eq!(sim.item_ids(), vec![3, 2]);
+        assert_eq!(sim.row_count(2), 1);
+        assert!(sim.click_row(2));
+        assert_eq!(sim.row_count(2), 2);
+        assert!(sim.click("reverse"));
+        assert!(sim.click("remove_last"));
+        assert_eq!(sim.item_ids(), vec![2]);
+        assert!(sim.click("remove_last"));
+        assert!(sim.item_ids().is_empty());
+        assert!(!sim.click_row(2));
+        assert_eq!(sim.row_count(2), 2);
+        assert!(sim.click("add"));
+        assert_eq!(sim.item_ids(), vec![4]);
+        assert_eq!(sim.item_label(4), "Item 4");
+        assert_eq!(sim.row_count(4), 0);
+        let file = lower_file(LIST, shell()).unwrap();
+        assert!(file.contains("for item in state.items"));
+        assert!(file.contains("fn quinn_row(id, label)"));
+        assert!(file.contains("quinn_row_bump(id)"));
+        assert!(file.contains("fn quinn_reverse"));
+    }
+
+    const FORM: &str = r#"
+        #[component]
+        fn Form() -> impl IntoView {
+            let (name, set_name) = signal(String::new());
+            view! {
+                <div class="flex flex-col gap-4 p-4">
+                    <h1>
+                        "Hello, "
+                        {move || if name.get().is_empty() { "there".to_string() } else { name.get() }}
+                    </h1>
+                    <input
+                        placeholder="Your name"
+                        value=move || name.get()
+                        on:input=move |value: String| { set_name.set(value); }
+                    />
+                    <button on:click=move |_| { set_name.set(String::new()); }>"Clear"</button>
+                </div>
+            }
+        }
+    "#;
+
+    #[test]
+    fn form_text_survives_a_class_edit() {
+        let mut sim = Sim::new(parse_model(FORM).unwrap());
+        assert_eq!(sim.text("h1"), "Hello, there");
+        assert!(sim.set_input("field", "Ada"));
+        assert_eq!(sim.strings["name"], "Ada");
+        assert_eq!(sim.text("h1"), "Hello, Ada");
+        assert_eq!(sim.text("field"), "Ada");
+        assert!(sim.click("clear"));
+        assert_eq!(sim.text("h1"), "Hello, there");
+        assert!(sim.set_input("field", "Ada"));
+        let edited = FORM.replace("gap-4", "gap-8");
+        let model = parse_model(&edited).unwrap();
+        sim.reload(model);
+        assert_eq!(sim.strings["name"], "Ada");
+        assert_eq!(sim.text("h1"), "Hello, Ada");
+        assert_eq!(sim.text("field"), "Ada");
+        let file = lower_file(FORM, shell()).unwrap();
+        assert!(file.contains("let root = ui"));
+        assert!(file.contains("on_change: |text|"));
+        assert!(file.contains("state.name = text"));
+        assert!(file.contains("root.render()"));
+        assert!(file.contains("empty_text: \"Your name\""));
+        assert!(file.contains("if state.name == \"\""));
+    }
+
+    #[test]
+    fn example_views_lower_to_script_state() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let cases = [
+            ("examples/counter/view.rs", "state.count += 1"),
+            ("examples/conditional/view.rs", "quinn_show_open_1_on"),
+            ("examples/keyed-list/view.rs", "fn quinn_row(id, label)"),
+            ("examples/form/view.rs", "state.name = text"),
+            ("examples/retain/view.rs", "fn quinn_retain_step"),
+        ];
+        for (rel, needle) in cases {
+            let source = std::fs::read_to_string(root.join(rel))
+                .unwrap_or_else(|err| panic!("read {rel}: {err}"));
+            let file = lower_file(&source, shell()).unwrap_or_else(|err| panic!("{rel}: {err}"));
+            assert!(
+                file.contains(needle),
+                "{rel} script missing {needle}:\n{file}"
+            );
+            let extracted = extract_hot_script(&file).unwrap();
+            assert!(extracted.code.contains("#(0)"), "{rel}");
+            assert_eq!(extracted.code.matches("script_mod").count(), 0);
+        }
     }
 }

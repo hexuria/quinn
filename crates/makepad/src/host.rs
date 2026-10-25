@@ -565,6 +565,114 @@ pub fn with_current_cx<R>(body: impl FnOnce(&mut Cx) -> R) -> R {
     body(cx())
 }
 
+/// Widgets under a script host, counted by walking `View::children`.
+///
+/// The script path does not mount a Rust [`quinn_core::Runtime`], so
+/// [`crate::session_stats`] stays at zero there. This census is the count
+/// the retain probe prints.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct WidgetCensus {
+    pub widgets: usize,
+    pub buttons: usize,
+    pub host_children: usize,
+}
+
+pub fn census_host(host: &WidgetRef) -> WidgetCensus {
+    let mut census = WidgetCensus::default();
+    let children = view_children(host);
+    census.host_children = children.len();
+    for child in children {
+        walk_census(&child, &mut census);
+    }
+    census
+}
+
+fn view_children(widget: &WidgetRef) -> Vec<WidgetRef> {
+    widget
+        .as_view()
+        .borrow()
+        .map(|view| view.children.iter().map(|(_, child)| child.clone()).collect())
+        .unwrap_or_default()
+}
+
+fn walk_census(widget: &WidgetRef, census: &mut WidgetCensus) {
+    census.widgets += 1;
+    if widget.borrow::<Button>().is_some() {
+        census.buttons += 1;
+    }
+    for child in view_children(widget) {
+        walk_census(&child, census);
+    }
+}
+
+/// Eval `hot/ui.rs` as the app's `script_mod`.
+///
+/// The file path, line, and column are the key Makepad's `--hot` watcher
+/// uses. The code string is the same normalization the watcher applies, so a
+/// later edit of this file overrides this body instead of being rejected as a
+/// different block.
+pub fn eval_hot_file(
+    vm: &mut ScriptVm,
+    path: &std::path::Path,
+    manifest_dir: &str,
+    module_path: &str,
+    component: ScriptValue,
+) -> ScriptValue {
+    let source = std::fs::read_to_string(path)
+        .unwrap_or_else(|err| panic!("read hot script {}: {err}", path.display()));
+    let extracted = quinn_lower::extract_hot_script(&source)
+        .unwrap_or_else(|err| panic!("extract hot script {}: {err}", path.display()));
+    let file = path
+        .canonicalize()
+        .unwrap_or_else(|_| path.to_path_buf())
+        .to_string_lossy()
+        .replace('\\', "/");
+    vm.eval(ScriptMod {
+        cargo_manifest_path: manifest_dir.trim_start_matches(r"\\?\").to_string(),
+        module_path: module_path.to_string(),
+        file,
+        line: extracted.line,
+        column: extracted.column,
+        code: extracted.code,
+        values: vec![component],
+    })
+}
+
+/// Lower `view.rs` to `hot/ui.rs` on the first eval, watch `view.rs` when the
+/// process was started with `--hot`, and eval the generated script.
+///
+/// `view.rs` and `hot/ui.rs` sit next to `src/`, not inside it. Cargo's
+/// fingerprint does not include them, so `cargo run -- --hot` stays up while
+/// the view is edited. Makepad watches `hot/ui.rs` because that path is the
+/// `ScriptMod` file.
+pub fn load_hot_view(
+    vm: &mut ScriptVm,
+    manifest_dir: &str,
+    module_path: &str,
+    title: &'static str,
+    width: u32,
+    height: u32,
+    component: ScriptValue,
+) -> ScriptValue {
+    let view = quinn_lower::view_path(manifest_dir);
+    let hot = quinn_lower::hot_ui_path(manifest_dir);
+    if !vm.is_reload() {
+        let shell = quinn_lower::Shell {
+            title,
+            width,
+            height,
+        };
+        if std::env::var("QUINN_SKIP_LOWER").is_err() {
+            quinn_lower::write_lowered(&view, &hot, shell)
+                .unwrap_or_else(|err| panic!("lower {title} view: {err}"));
+        }
+        if std::env::args().any(|arg| arg == "--hot") {
+            quinn_lower::watch_once(view, hot.clone(), shell);
+        }
+    }
+    eval_hot_file(vm, &hot, manifest_dir, module_path, component)
+}
+
 /// Install the frame probe on a shell whose widgets already came from script.
 ///
 /// Unlike [`startup`], this does not mount a Rust `view!`. Clicks are script

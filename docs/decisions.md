@@ -2,7 +2,14 @@
 
 ## UI runtime — Makepad script, not a signal graph
 
-Chosen: option (c). `view!`, `#[component]`, and `signal()` / `get` / `set` / `update` stay as the authoring syntax. On the counter they lower into Makepad script (`mod.state`, `on_render`, `on_click`) in `examples/counter/src/ui_script.rs`. `reactive_graph` is not the counter's runtime. It still runs the conditional, keyed-list, form, and retain examples, and the `quinn-core` tests, until that lowerer covers `<Show>`, `<For>`, and inputs.
+Chosen: option (c), for every example. `view!`, `#[component]`, and `signal()` / `get` / `set` / `update` stay as the authoring syntax. `quinn-lower` turns that syntax into Makepad script (`mod.state`, `on_render`, `on_click`, `on_change`) in `hot/ui.rs`. The counter, conditional, keyed list, form, and retain examples all boot that script. They do not call `startup`, so they do not mount an `Owner`.
+
+`reactive_graph` is still a dependency, for two narrow reasons:
+
+1. A component body that Rust actually compiles (`quinn-core` tests, `crates/quinn/tests/markup.rs`) typechecks through `quinn::signal`. `view.rs` is not a Rust module, so the running examples never execute those closures.
+2. `MemorySurface` still checks owner cleanup, keyed node ids, and handler maps without a window. `quinn-lower`'s `Sim` is the same rules for the script that actually runs. Both stay green. The script sim is the source of truth for the UI.
+
+Nothing in the example event loop reads or writes a `reactive_graph` signal.
 
 ### What Splash / ScriptVm actually has
 
@@ -23,13 +30,20 @@ Checked on Makepad `44ecb822` (dev). There is no signal, effect, or observable t
 
 ### What (c) gives, and what it does not
 
-Hot reload covers the lowered script: classes, static text, the `on_click` body, and `on_render`. `mod.state` survives because the seed lives in `seed.rs` and skips itself on reload. After a reload the counter calls `ui.host.render()` so the new `on_render` runs under `Apply::Reload`. `request_style_reload()` is the wrong follow-up here. It forces `ScriptReapply`, which keeps the old label text.
+Hot reload covers whatever `view.rs` the lowerer can emit: classes, static text, the `on_click` / `on_change` bodies, `<Show>`, `<For>`, and inputs. `mod.state` survives because the seed is `if ok{mod.state} == nil` and `mod` outlives the reloaded scope. After a reload the shell calls `ui.host.render()` so the new `on_render` runs under `Apply::Reload`. `request_style_reload()` is the wrong follow-up. It forces `ScriptReapply`, which keeps the old label text.
 
-State preservation is the script object, not a Rust `Owner`. Keyed widget identity is the `name :=` id. Anonymous `for` children are positional; a row count that must survive reorder or reload has to live on `mod.state` under a stable key, which is also what survives a widget slot being reused. The lowerer does not emit `<For>` or `<Show>` yet. Those examples stay on the Rust graph, where the existing tests still check owner cleanup and keyed node ids.
+State preservation is the script object, not a Rust `Owner`. A `<Show>` that turns off clears the child's fields and returns `0` instead of the child widget, so the next mount starts clean and the sibling's fields stay. A row count lives on `state.counts["k"+id]` because anonymous `for` children are positional. A reload replaces `on_click` because `Apply::Reload` writes the new closure onto the widget.
 
-Script is dynamic. The first compile still typechecks the Rust syntax. A hot edit is checked by the script parser (`validate_extracted_script_mod`); a shape the lowerer does not know is logged and not written. There is no fine-grained subscriber list. A click writes the field and calls `render()`, which is what Makepad's own counter does.
+`TextInput` fires `on_change` with `vm.call`, which has no widget uid. `ui.host` from that closure cannot see the app (`widget 'host' not found`, or `widget has no uid` if a top-level function calls it). `on_render` captures the host (`let root = ui`) and the closure calls `root.render()`. Buttons still use `ui.host.render()`; `widget_to_script_call` flood-searches from the button.
 
-One measured save on this machine: process 53851, X window `0x1c00002`, starttime unchanged. The label read `Counter: 5` with button `Increment`. Editing `gap-4` to `gap-8` and `Increment` to `Add one` in `examples/counter/src/main.rs` rewrote `ui_script.rs`. The log was `hot reload applied 1 override(s)` for that file at line 6, then `script_reload pid=53851`. The same window showed `Counter: 5` and `Add one`. Another click showed `Counter: 6`. The wait from the save to that log line was about 200 ms and includes the lowerer's poll, so it is not a paint median.
+Script is dynamic. A hot edit the lowerer does not know is logged and not written. There is no fine-grained subscriber list. A click writes the field and calls `render()`.
+
+Measured on 25 Oct 2026, about 12:53–1:02 PM Asia/Manila, Linux X11, llvmpipe, release binaries. Each row is one process. `starttime` is field 22 of `/proc/<pid>/stat`. The X server reused window id `0x1c00002` across processes, so the pid and the starttime are the identity. Save-to-visible medians are in [benchmarks.md](benchmarks.md).
+
+- Counter, `cargo run -p counter --release -- --hot`. pid 64535, starttime 1913679. At count 5, `gap-4` → `gap-8` and `Increment` → `Add one`. The log stayed a single `Running` line, then `script_reload pid=64535`. The same window showed `Counter: 5` and `Add one`. A click showed `Counter: 6`.
+- Keyed list, pid 65587, starttime 1942631. Beta was 2, order Alpha, Beta, Gamma. The row's `gap-4` → `gap-8` and `text-lg` → `text-sm`. Beta stayed 2 and the order stayed.
+- Conditional, pid 66075, starttime 1953109. Sibling ticks were 2, the detail was open with 1 click. The detail heading and its panel class changed (`Detail stays`, white panel). Sibling stayed 2, the toggle still read `Hide detail`, detail clicks stayed 1, and a click after the reload made 2.
+- Form, pid 66471, starttime 1960143. The field held `Ada`. `Hello, ` → `Hi, `, `Clear` → `Reset`, `gap-4` → `gap-8`. The heading became `Hi, Ada` and the field still showed `Ada`.
 
 ## Earlier choice — `reactive_graph` instead of forking Leptos
 
@@ -45,9 +59,9 @@ This was the choice against Tachys and leptos-native. It is not the UI runtime c
 
 ## Makepad as the only renderer
 
-Widgets are constructed with `ScriptVm::eval` + `WidgetRef::script_from_value` so shaders and prototypes (`RoundedView`, `H1`, `Button`, `TextInput`) apply. `div` is `RoundedView` because a plain `View`'s `DrawQuad` has no color. Text tags are `Label` / `H1` / `H2`. There is no public remove API; `View.children` is public and is the vec draw walks, so removal and reorder edit that vec and drop the `WidgetRef`. The widget-tree edge is a weak ref (`widget_tree.rs` `insert_child`).
+The running examples construct widgets from the lowered `script_mod!`. `div` is `RoundedView` because a plain `View`'s `DrawQuad` has no color. Text tags are `Label` / `H1` / `H2`. `button` is `Button`. `input` is `TextInput`. Removal is "on_render did not return that child".
 
-`WidgetRef` is not `Send`. The reactive graph stays `Send`. The bridge is an id plus a thread-local command queue flushed on the UI thread.
+The headless surface still builds widgets with `ScriptVm::eval` + `WidgetRef::script_from_value`. `View.children` is public and is the vec draw walks, so that surface's removal and reorder edit the vec. The widget-tree edge is a weak ref (`widget_tree.rs` `insert_child`). `WidgetRef` is not `Send`. The reactive graph stays `Send`. That bridge is an id plus a thread-local command queue flushed on the UI thread. The example event loops do not flush it.
 
 ## Sync effects, not `RenderEffect`
 
@@ -72,14 +86,14 @@ Widgets are constructed with `ScriptVm::eval` + `WidgetRef::script_from_value` s
 
 ## Live reload
 
-Splash reload of `script_mod` preserves `mod.state` in the baseline counter (`if !vm.is_reload()`). `Apply::ScriptReapply` keeps runtime widget state; a full script reload rebuilds the shell. The counter's `view!` is lowered to `ui_script.rs` and reloads in-process; see the UI runtime section. The conditional, keyed-list, and form examples are still compiled Rust. Changing those, or any of their signal logic, needs a rebuild and a new process. A release rebuild after `touch examples/counter/src/main.rs`, with Makepad already built, took 1.30 s median (three wall-clock runs, 1.25–1.32 s). One of those rebuilds plus a new process reaching `QUINN_READY` took 1.44 s. Reactive style and text updates apply to the existing `WidgetRef` without recreating it. ra-jit is not in the Makepad tree and is not a prerequisite.
+Splash reload of `script_mod` preserves `mod.state` because the seed checks `ok{mod.state}` and `mod` is the VM modules object. `Apply::ScriptReapply` keeps runtime widget state; a full script reload re-runs `on_render` under `Apply::Reload`. Every example's `view.rs` reloads in-process. A release rebuild after `touch examples/counter/src/main.rs`, with Makepad already built, took 1.30 s median (three wall-clock runs, 1.25–1.32 s). That number is a Rust rebuild, which is what a `src/` edit still costs. One of those rebuilds plus a new process reaching `QUINN_READY` took 1.44 s. ra-jit is not in the Makepad tree and is not a prerequisite.
 
-Disk hot reload is Makepad's `--hot` watcher, started from `app_main!`. It re-reads `script_mod!` blocks from the Rust file. `script_eval!` in that same file makes the matcher reject the edit (`runtime has N, file has 1`). `quinn::run!` builds its shell with `ScriptVm::eval` of a string, so the watcher has no block to extract. The counter keeps the shell in `examples/counter/src/chrome.rs` as a real `script_mod!`. The baseline's evals live in `script_ops.rs`.
+Disk hot reload is Makepad's `--hot` watcher, started from `app_main!`. It re-reads literal `script_mod!` blocks. The block it re-reads is `hot/ui.rs`, which the lowerer rewrites when `view.rs` changes. `script_eval!` in that same file makes the matcher reject the edit (`runtime has N, file has 1`). `quinn::run!` builds its shell with `ScriptVm::eval` of a string, so the watcher has no block to extract. The examples do not use `run!`. The baseline's evals live in `script_ops.rs`.
 
-`Apply::Reload` stores the new script and leaves existing draw colors alone. Both windows call `request_style_reload()` when a file edit arrives as `Reload`, and the next tick uses `Apply::ScriptReapply`. The count stays. The color changes. An `on_render` label keeps the text it already has. Measured write-to-red-pixel medians were 85 ms for the counter page and 136 ms for the baseline button, same PID and same X window id the whole time. See [benchmarks.md](benchmarks.md).
+The color-only rows in [benchmarks.md](benchmarks.md) are the earlier `ScriptReapply` path (`request_style_reload()`). Draw colors updated and text the widget already held stayed. The view path does not do that. It calls `render()` under `Apply::Reload`, so the label string and the handlers update, and `mod.state` keeps the count, the row map, the toggle, and the typed text. Write-to-red-pixel medians on the old path were 85 ms for the counter page and 136 ms for the baseline button.
 
 `QUINN_LIVE=1` is a separate harness. It queues a synthetic buffer inside the already-running process. It does not edit the disk. The 74–85 ms figures from that harness are not the disk-watcher numbers.
 
 ## Script heap after unmount
 
-Creating a widget calls `ScriptVm::eval`, which allocates a scope object. The paint loop's `ScriptVm::gc` does not return that capacity to the allocator, so a burst of mounts leaves a high-water RSS even after the `WidgetRef`s are gone. `quinn::reclaim_script_heap` runs `gc_and_compact` and, on Linux, `malloc_trim`. After 2,000 native cycles the high water was about 528 MiB and the resting RSS was 129 MiB, from a 117 MiB start. A second burst high-watered at the same level and rested at 133 MiB. Node, widget, and handler counts were unchanged. The retain example calls this between bursts so the resting set is what gets recorded.
+The previous reactive mount called `ScriptVm::eval` per widget. The paint loop's `ScriptVm::gc` does not return that capacity, so 2,000 of those cycles high-watered near 528 MiB and rested near 129 MiB from a 117 MiB start. That table is historical. The script retain example does not eval a widget per cycle. `render()` rebuilds the host's children, and `quinn::reclaim_script_heap` (`gc_and_compact`, and on Linux `malloc_trim`) runs between bursts. On 25 Oct 2026 (release, llvmpipe, `QUINN_RETAIN=2000`) resting widgets stayed 4, buttons stayed 1, host children stayed 2, and the second burst's high water was 238,564 KiB against a 234,640 KiB start. The Rust node and handler maps stay at zero because that graph is not mounted. See [benchmarks.md](benchmarks.md).

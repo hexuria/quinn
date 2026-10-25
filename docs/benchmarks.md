@@ -81,18 +81,24 @@ Per label, the median create is about 134 µs on both.
 
 ## Retention
 
-`quinn-core`'s `retention_cycles_do_not_accumulate_nodes_or_handlers` runs 2,000 conditional mount/unmount and keyed add/remove cycles on `MemorySurface`. Node count, alive widgets, and click handlers return to the settled baseline. Cleanups run.
+`quinn-core`'s `retention_cycles_do_not_accumulate_nodes_or_handlers` runs 2,000 conditional mount/unmount and keyed add/remove cycles on `MemorySurface`. Node count, alive widgets, and click handlers return to the settled baseline. Cleanups run. That test is the headless Rust graph. It is not what `examples/retain` does now.
 
-The native run is `examples/retain` with `QUINN_RETAIN=N`. Each cycle toggles a conditional `Detail` and pushes or pops a keyed `Row`, then `flush_now`. Two bursts of N cycles run back to back. Counts are taken at rest, with the show closed and a single row left.
+The native run is `examples/retain` with `QUINN_RETAIN=N`, release, script path. Each cycle calls `mod.quinn_retain_step`, which toggles `state.open` and pushes or pops one keyed row, then `ui.host.render()`. One step per draw, because `render()` is applied by the script task pump at the end of the event. Two bursts of N cycles run back to back. The census is `census_host` on the next draw: widgets under the host, buttons, and the host's direct children. `session_stats()` stays empty. That struct counts the Rust runtime, which this example does not mount. `quinn::reclaim_script_heap` runs before each resting RSS sample.
 
-`ScriptVm::eval` allocates a scope object per widget. Makepad's paint-loop `gc()` fills free lists and does not return that capacity, so RSS during a burst climbs until something compacts the heap. `quinn::reclaim_script_heap` calls `ScriptVm::gc_and_compact` and, on Linux, `malloc_trim`. The table below is after that call.
+Taken 25 Oct 2026, about 12:50 PM Asia/Manila, `./target/release/retain`, `QUINN_RETAIN=2000`, `QUINN_RETAIN_OUT` set, no `QUINN_EXIT` (that flag quits on the first frame and would cancel the job). The process exited 0. No script errors.
+
+| Cycles per burst | RSS before | High water, burst 1 | Rest | High water, burst 2 | Rest | Widgets rest / max / after | Buttons rest / max / after | Host children |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| 2,000 | 234,640 KiB | 237,952 KiB | 237,596 KiB | 238,564 KiB | 237,604 KiB | 4 / 9 / 4, and the same on burst 2 | 1 / 3 / 1, and the same on burst 2 | 2 → 2 → 2 |
+
+Rest is the closed show plus one row (heading, row view, span, button). The max is that row, a second row, and the mounted detail. The second burst does not raise the widget or button counts. RSS climbs about 3 MiB on the first burst and the second rest is 8 KiB above the first rest.
+
+The table below is the previous reactive mount, kept so the 400 MiB spike is not mistaken for this path. That run called `ScriptVm::eval` per widget and `flush_now`. Do not compare its node or handler columns to the script census.
 
 | Cycles per burst | RSS before | High water, burst 1 | Rest | High water, burst 2 | Rest | Nodes / widgets at rest | Handlers |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | 500 | 116,984 KiB | 219,764 KiB | 120,552 KiB | 221,392 KiB | 121,536 KiB | 7 → 7, max 12 | 1 → 1 → 1 |
 | 2,000 | 116,920 KiB | 527,848 KiB | 129,468 KiB | 532,456 KiB | 133,308 KiB | 7 → 7, max 12 | 1 → 1 → 1 |
-
-Host children stay at 1. Cleanups go 1 → 501 → 1,001 for 500 cycles, and 1 → 2,001 → 4,001 for 2,000. The second burst's high water matches the first, so the 400 MiB spike is the script heap for that burst, not a widget map that keeps growing. Resting RSS is not perfectly flat: about 12 MiB remains after the first 2,000 cycles and about 4 MiB more after the second. Widget, node, and handler counts do not follow that curve.
 
 ## Live script reload
 
@@ -104,9 +110,9 @@ Makepad's real desktop path is the `--hot` flag. `app_main!` then starts the fil
 
 The watcher rejects a file when the number of compiled script bodies for that path differs from the number of `script_mod!` blocks in the file. `script_eval!` bodies count. With those evals in `examples/baseline-counter/src/main.rs` the log was `runtime has 3, file has 1` and the pixels did not change, while the PID and X window stayed. Those evals now live in `script_ops.rs`, so `main.rs` has one block. `quinn::run!` evaluates its shell from a string, which the extractor cannot see.
 
-The color rows below are from that `ScriptReapply` follow-up. `request_style_reload()` makes the next tick re-apply with `Apply::ScriptReapply`. Draw colors update. Text the widget already holds stays. Changing `"Count: "` to `"Total: "` did not change the on-screen string. Changing `draw_bg.color` did. The counter no longer does this. `quinn-lower` writes the `view!` into `examples/counter/src/ui_script.rs`, and a reload calls `render()` under `Apply::Reload`, so the label string and the `on_click` body update. The conditional, keyed-list, and form examples are still Rust and still need a rebuild.
+The color rows below are from that `ScriptReapply` follow-up. `request_style_reload()` makes the next tick re-apply with `Apply::ScriptReapply`. Draw colors update. Text the widget already holds stays. Changing `"Count: "` to `"Total: "` did not change the on-screen string. Changing `draw_bg.color` did. The examples no longer do this. `quinn-lower` writes `view.rs` into `hot/ui.rs`, and a reload calls `render()` under `Apply::Reload`, so markup, classes, and handlers update. `mod.state` keeps the count, the keyed map, the toggle, and the typed string.
 
-Five disk edits in one process each, timed from `write()` returning to a frame that contains the new red (`#xff3300`):
+Five disk edits in one process each, timed from `write()` returning to a frame that contains the new red (`#xff3300`). Historical. The files they name (`chrome.rs`, the color edit in `main.rs`) are not the current view path:
 
 | App | What changed | PID / X id held | Visible recolor |
 | --- | --- | --- | --- |
@@ -114,6 +120,19 @@ Five disk edits in one process each, timed from `write()` returning to a frame t
 | `counter --hot` | page `draw_bg.color` in `chrome.rs` (that file is gone; this row is the earlier color-only run) | pid 48220, starttime 1155946, window `0x1c00002` for all five | 72, 79, 85, 100, 111 ms (median 85) |
 
 The baseline samples scanned the whole window for red pixels, so that median includes a few milliseconds of polling. The counter samples read one pixel. A separate single take of each app, with the title bar set to the PID and window id, kept both across the edit: baseline pid 49423 / `0x1e00002`, counter pid 49597 / `0x1e00002`. Both still showed 5 after the recolor. `/proc/<pid>/stat` starttime did not move, so the process was not replaced.
+
+### View reload, save to a changed frame
+
+25 Oct 2026, about 12:53–1:02 PM Asia/Manila. Release binaries, `MAKEPAD_GPU=gl`, `LIBGL_ALWAYS_SOFTWARE=1`, display `:1`, Mesa llvmpipe. The clock starts when `write()` of `view.rs` returns and stops on the first 30 fps raw x11grab frame whose pixels differ. Five forward edits per example, one process each. `starttime` is field 22 of `/proc/<pid>/stat` and did not change. Window id `0x1c00002` was reused by the X server across processes; the pid is what stayed. The counter was `cargo run -p counter --release -- --hot` (one `Running` line in the log). The other three were `./target/release/<name> --hot`.
+
+| Example | Edit in `view.rs` | What stayed | PID / starttime | Samples (ms) | Median |
+| --- | --- | --- | --- | --- | --- |
+| counter | `gap-4` → `gap-8`, `Increment` → `Add one` | count 5, then a click made 6 | 64535 / 1913679 | 262.6, 295.5, 263.6, 296.2, 263.4 | 263.6 |
+| keyed-list | row `gap-4` → `gap-8`, `text-lg` → `text-sm` | Beta at 2, order Alpha, Beta, Gamma | 65587 / 1942631 | 295.1, 263.8, 261.5, 229.2, 230.8 | 261.5 |
+| conditional | detail heading `Detail is mounted` → `Detail stays`, panel `bg-amber-100` → `bg-white`, `gap-2` → `gap-4` | sibling ticks 2, still open, detail clicks 1 (a later click made 2) | 66075 / 1953109 | 229.2, 218.7, 231.7, 296.3, 197.0 | 229.2 |
+| form | `Hello, ` → `Hi, `, `Clear` → `Reset`, `gap-4` → `gap-8` | field text `Ada`, heading followed it (`Hi, Ada`) | 66471 / 1960143 | 229.9, 262.6, 264.5, 262.6, 262.2 | 262.6 |
+
+The lowerer's poll is inside these numbers. They are not the old ~200 ms log-line sample, and they are not the red-pixel medians above.
 
 ## Wasm
 

@@ -1,37 +1,48 @@
-use quinn::prelude::*;
+use quinn::makepad_widgets::*;
 
-#[component]
-fn Detail() -> impl IntoView {
-    let (clicks, set_clicks) = signal(0);
-    view! {
-        <div class="flex flex-col gap-2 p-4 rounded bg-amber-100">
-            <h2>"Detail is mounted"</h2>
-            <button on:click=move |_| { set_clicks.update(|n| *n += 1); }>
-                "Detail clicks: " {move || clicks.get()}
-            </button>
-        </div>
+app_main!(App);
+
+#[derive(Script, ScriptHook)]
+pub struct App {
+    #[live]
+    ui: WidgetRef,
+}
+
+impl MatchEvent for App {
+    fn handle_startup(&mut self, cx: &mut Cx) {
+        quinn::boot_script(cx, &self.ui);
     }
 }
 
-#[component]
-fn Conditional() -> impl IntoView {
-    let (open, set_open) = signal(true);
-    let (ticks, set_ticks) = signal(0);
+impl AppMain for App {
+    fn script_mod(vm: &mut ScriptVm) -> ScriptValue {
+        quinn::makepad_widgets::script_mod(vm);
+        let component = Self::script_component(vm).script_to_value(vm);
+        quinn::load_hot_view(
+            vm,
+            env!("CARGO_MANIFEST_DIR"),
+            module_path!(),
+            "Conditional",
+            520,
+            420,
+            component,
+        )
+    }
 
-    view! {
-        <div class="flex flex-col gap-4 p-4">
-            <h1>"Sibling ticks: " {move || ticks.get()}</h1>
-            <button on:click=move |_| { set_ticks.update(|n| *n += 1); }>
-                "Tick sibling"
-            </button>
-            <button on:click=move |_| { set_open.update(|open| *open = !*open); }>
-                {move || if open.get() { "Hide detail" } else { "Show detail" }}
-            </button>
-            <Show when=move || open.get()>
-                <Detail />
-            </Show>
-        </div>
+    fn handle_event(&mut self, cx: &mut Cx, event: &Event) {
+        if let Event::LiveEdit = event {
+            if matches!(cx.live_edit_apply(), Apply::Reload) {
+                eprintln!(
+                    "script_reload pid={} window_stays=1 render=1",
+                    std::process::id()
+                );
+                script_eval!(cx, {
+                    ui.host.render()
+                    true
+                });
+            }
+        }
+        self.match_event(cx, event);
+        self.ui.handle_event(cx, event, &mut Scope::empty());
     }
 }
-
-quinn::run!("Conditional", 520, 420, view! { <Conditional /> });

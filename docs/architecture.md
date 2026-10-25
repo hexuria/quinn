@@ -1,61 +1,71 @@
 # Architecture
 
-`quinn` is the crate applications import. The counter lowers `view!` and `signal()` into a Makepad `script_mod!` (`quinn-lower` writes `examples/counter/src/ui_script.rs`). State is `mod.state`. Clicks are `Button.on_click`. `on_render` rebuilds the named children when `render()` runs. The other examples still expand `view!` to `el` / `show` / `for_each` builders in `quinn-core` and mount those on a `Surface`. The only production surface is Makepad. Tests of that Rust graph use `MemorySurface`, which records creates, text writes, and child order and never reuses an id.
+`quinn` is the crate applications import. A running example does not mount a Rust signal graph. `quinn-lower` reads `view.rs` (Leptos-looking `view!`, `#[component]`, and `signal()` / `get` / `set` / `update`) and writes one Makepad `script_mod!` to `hot/ui.rs`. State is `mod.state`. Clicks are `Button.on_click`. Typing is `TextInput.on_change`. `on_render` rebuilds children when `render()` runs.
+
+`view.rs` sits next to `src/`. Cargo does not compile it. `hot/` is gitignored and is not a Rust module either. Saving `view.rs` does not restart `cargo run`.
 
 ```
-view! / #[component]  (quinn-macros, rstml)
+view.rs   view! / #[component] / signal()     (not compiled)
         │
         ▼
-el / show / for_each / scope_owner   (quinn-core)
-        │  ImmediateEffect (quinn-reactive → reactive_graph)
-        ▼
-Surface::create / set_text / set_style / set_order / remove
+quinn-lower   parse → script text
         │
         ▼
-MakepadSurface  →  WidgetRef via script_from_value(Apply::New)
-                   View.children + widget_tree_insert_child
+hot/ui.rs   script_mod!     mod.state, on_render, on_click, on_change
+        │
+        ▼
+Makepad ScriptVm + widgets     RoundedView, H1, Button, TextInput
 ```
 
-## Identity
+The Rust builders (`el`, `show`, `for_each`, `Owner`, `MemorySurface`) are still in `quinn-core`. Unit tests and `crates/quinn/tests/markup.rs` use them. The example binaries call `boot_script` and do not call `startup`, so they never mount that graph. `reactive_graph` stays linked because `quinn::signal` is the type of a component body when that body is compiled (the tests). It is not the UI runtime.
 
-A mounted node id **is** `WidgetUid.0` (or a monotonic id on `MemorySurface`). The runtime does not keep a parallel widget. It keeps, per id:
+## Script state
 
-- the `Owner` created for that node
-- extra owners handed to `scope_owner` (the `#[component]` owner, so signals in the function body live until the root node of that component unmounts)
-- click and input listeners
-- the `Show` / `For` driver, if this node is a host
+A missing `mod.state` is an error, not nil. The seed is `if ok{mod.state} == nil { mod.state = { ... } }`. `mod` is the VM's modules object, shared by every script body, so a reload that replaces the view's scope keeps the object. `let state = mod.state` then reads it.
 
-`#[component]` expands to `Owner::new()`, runs the body inside `owner.with`, and returns `scope_owner(owner, view)`. Signals created in the body are registered on that owner. Unmount drops the node, which drops the owner, which runs `on_cleanup` and drops the effect `Arc`.
+`script_eval!` from Rust is a different body. It sees `mod` and `ui`, not the functions defined in `hot/ui.rs`. The lowerer publishes the ones Rust calls: `mod.quinn_frame`, `mod.quinn_retain_step`, `mod.quinn_retain_reset`.
 
-## Updates
+## Show, For, and inputs
 
-`ImmediateEffect::new_scoped` is the only effect. It runs on the thread that wrote the signal, which is the UI thread for Makepad events and the test thread for unit tests. The effect pushes a command (`Text`, `Style`, `Show`, `List`) onto a thread-local queue. It does not touch `Cx`. `Runtime::flush` applies the queue, up to 32 passes, so a show that mounts a child can queue that child's text in the same turn.
+`<Show>` is not an inline `if` in `on_render`. A statement `if` whose branches are different shapes unbalances the script stack. The lowerer emits two functions, `quinn_show_<signal>_<n>_on` (returns the child widget) and `_off` (returns `0`, which a view skips). `on_render` calls `quinn_show_<signal>_<n>()`. That function records whether the condition was already true and, on a fresh mount, zeroes the signals that belong to the child. A sibling's fields are not touched. Hiding clears the child's fields so a remount does not keep the old clicks.
 
-`set_text` and `set_style` no-op when the value is unchanged. That is what keeps a text field's caret alive: the `value` effect writes the same string the input just produced, and the surface skips `TextInput::set_text`.
+`<For>` emits `fn quinn_row(...)` and `for item in state.items { quinn_row(item.id, item.label) }`. Anonymous children match by index, so a row's own count cannot live on the widget. It lives on `state.counts` under the string key `"k"+id`, which survives reorder, slot reuse, and reload. There is no script `reverse`; the lowerer emits `quinn_reverse`.
 
-Commands carry ids, not `WidgetRef`, because effects are `Send + Sync` and `WidgetRef` is not.
+A `Show` inside a row is not lowered correctly. The row function does not allocate show sites. None of the examples do that.
 
-## Lists and conditionals
+`TextInput.on_change` is invoked with `vm.call`, which has no widget uid, so `ui.host` from that closure cannot see the app. `on_render` runs on the host, captures it (`let root = ui`), and the closure calls `root.render()`. `Button.on_click` goes through `widget_to_script_call`, which flood-searches from the button, so buttons still call `ui.host.render()`. `render()` applies children with `Apply::Reload`, which rewrites `TextInput.text` from `state.name`. The string survives a reload. The caret can jump.
 
-`<Show>` mounts a host `div` and, when `when()` is true, mounts the child factory. The factory runs from `flush`, not from inside the effect, so reads inside the child subscribe to the child's effect rather than to the show effect. Turning the condition off unmounts that child and leaves siblings alone. Turning it on mounts a new child.
+## Hot reload
 
-`<For>` does the same with a host. The effect is the only reader of `each()`. It stores the `Vec` and queues a reconcile. Reconcile keeps the node id for a key that is still present, mounts a view for a new key, unmounts missing keys, then `set_order` rewrites `View.children`. An existing row is not rebuilt, so a per-row signal created inside that row survives a reorder. Fields of the list item captured at creation are not pushed into an existing row; a row that needs live item data should read a signal.
+With `--hot`, a thread in the process watches `view.rs` (about 80 ms, then 40 ms) and rewrites `hot/ui.rs` when the lowerer accepts the file. Makepad's watcher keys the block by file, line, and column. The header above `script_mod!` stays a fixed height. On `Apply::Reload` the shell calls `ui.host.render()`, so the new `on_render` runs and label text updates. `request_style_reload()` is the wrong follow-up: it forces `ScriptReapply`, which keeps the old label string.
 
-## Threading
+A shape the lowerer does not parse is logged (`quinn lower failed`) and the previous `hot/ui.rs` stays. `QUINN_SKIP_LOWER=1` skips the rewrite on startup. That is a debug hatch for a hand-patched `hot/ui.rs`, not the loop to use.
 
-`MakepadSurface` methods take no `Cx`. `startup` / `on_actions` call `with_cx`, which stores `*mut Cx` in a thread-local for the duration of the call and clears it afterwards. That pointer is only dereferenced on the UI thread while the original borrow is live. Listeners run, then `flush` runs, still inside `with_cx`. A listener must not re-enter `on_actions`.
+Recommended:
 
-## Counter script
+```bash
+cargo run -p counter --release -- --hot
+# edit examples/counter/view.rs
+```
 
-`quinn-lower` reads the `#[component]` in `examples/counter/src/main.rs` and writes one `script_mod!` to `ui_script.rs`. The seed is a separate file so a `script_eval!` is not in the file Makepad matches. With `--hot`, the process watches `main.rs` and rewrites `ui_script.rs` on save. Makepad reloads that block with `Apply::Reload`, then the app calls `ui.host.render()`. Run `target/release/counter --hot` directly. `cargo run` rebuilds when `ui_script.rs` changes and starts a new process.
+The same command works for `conditional`, `keyed-list`, `form`, and `retain`. `./target/release/<bin> --hot` is the same watcher without Cargo as a parent. Saving `src/main.rs` or `src/ops.rs` still rebuilds and, under `cargo run`, starts a new process.
 
-`<Show>`, `<For>`, and inputs are rejected by the lowerer. Those examples still use the Rust builders.
+## What still needs a rebuild
+
+- Anything in `src/` (the shell, `ops.rs`, a new probe).
+- A `view.rs` edit the lowerer rejects.
+- A `Show` nested in a `For` row.
+- The baseline counter, which is hand-written Makepad script, not a `view.rs`.
+
+## Headless graph
+
+`#[component]` in compiled Rust expands to `Owner::new()`, runs the body inside `owner.with`, and returns `scope_owner(owner, view)`. Signals created in the body are registered on that owner. Unmount drops the node, which drops the owner, which runs `on_cleanup` and drops the effect. `ImmediateEffect` is the only effect. It pushes a command (`Text`, `Style`, `Show`, `List`) onto a thread-local queue. `Runtime::flush` applies the queue. Tests use `MemorySurface`, which never reuses an id. That is how `retention_cycles_do_not_accumulate_nodes_or_handlers` still runs without a window.
+
+The script examples do not have that owner. Unmount is "the widget is not returned from `on_render`", and the child's fields on `mod.state` are cleared by the show function. Keyed identity is the id on `state.counts`, not a Rust node id. `quinn-lower`'s `Sim` is the test for those rules.
 
 ## Shell
 
-`run!` expands, in the application crate, to `app_main!`, a string shell, `Script` / `ScriptHook`, and `MatchEvent`. The shell is one `RoundedView` named `host` with a light background (`#xf4f0e6`) and `new_batch: true`. Rust mounts into that view on `Event::Startup`, which `app_main!` delivers after `script_mod` has built the widgets (`platform/src/app_main.rs`). The counter does not use `run!`. Its host and children are the lowered script.
-
-`script_mod!` cannot be emitted from `macro_rules` because Makepad's `#(expr)` interpolation uses `#`, which `macro_rules` treats as syntax. `run!` is a proc macro and splices a `#` token.
+Each example's `src/main.rs` is an `app_main!` shell. `script_mod` calls `load_hot_view`, which lowers `view.rs` on the first eval and `eval`s `hot/ui.rs`. The host is the `RoundedView` named `host`. `boot_script` checks that view exists and installs the frame probe. `script_eval!` in `main.rs` would make Makepad's extractor reject `hot/ui.rs` if it lived in the same file; the evals that must stay in Rust are in `examples/counter/src/ops.rs`, or they call `mod.*` from `main.rs` only when that file is not the watched script.
 
 ## What is intentionally not a second system
 

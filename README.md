@@ -22,7 +22,7 @@ fn Counter() -> impl IntoView {
 quinn::run!("Counter", 480, 360, view! { <Counter /> });
 ```
 
-The syntax above is what you write. `examples/counter` lowers it into a Makepad `script_mod!` (`mod.state`, `on_render`, `on_click`) so `--hot` can reload the view in the same process. `run!` is what `conditional`, `keyed-list`, and `form` still use. It has to sit at the crate root and expands to a Makepad `app_main!` shell. Those three still run on `reactive_graph`. Rust 1.99.0 is pinned in `rust-toolchain.toml`.
+The syntax above is what you write in `view.rs`. The running examples lower it into a Makepad `script_mod!` (`mod.state`, `on_render`, `on_click`, `on_change`) so `--hot` can reload the view in the same process. `view.rs` is not a Rust module. `run!` still expands to an `app_main!` shell for a compiled component, and the headless tests still use `reactive_graph`. The example windows do not. Rust 1.99.0 is pinned in `rust-toolchain.toml`.
 
 ## Test the reactive core
 
@@ -39,12 +39,12 @@ Linux, software OpenGL (llvmpipe) under Xvfb:
 ```bash
 export MAKEPAD_GPU=gl
 export LIBGL_ALWAYS_SOFTWARE=1
-xvfb-run -a cargo run -p counter --release
+cargo run -p counter --release -- --hot
 ```
 
-The same invocation works for `conditional`, `keyed-list`, `form`, `baseline-counter`, `retain`, and `probe-widget-lifecycle`.
+Edit `examples/counter/view.rs` while that process is up. The same command works for `conditional`, `keyed-list`, `form`, and `retain`. Saving `src/main.rs` still rebuilds. `baseline-counter` and `probe-widget-lifecycle` are hand-written Makepad programs; they have no `view.rs`.
 
-Without Xvfb, drop `xvfb-run -a` if `DISPLAY` is already a real X server. On macOS, leave both GPU variables unset and follow [docs/TESTING_ON_MACOS.md](docs/TESTING_ON_MACOS.md).
+`xvfb-run -a cargo run -p counter --release` still starts a window when you are not reloading. Drop `xvfb-run -a` if `DISPLAY` is already a real X server. On macOS, leave both GPU variables unset and follow [docs/TESTING_ON_MACOS.md](docs/TESTING_ON_MACOS.md).
 
 `QUINN_EXIT=1` asks `counter`, `baseline-counter`, and `retain` to quit after the first presented frame. `QUINN_READY=/tmp/ready` writes `ready` from Makepad's `post_draw_hook`, after that frame's draw lists are recorded and before swap. The lifecycle probe writes `artifacts/probe-widget-lifecycle.log` and quits with a failure status when `QUINN_PROBE_EXIT=1` if any of the eight checks failed.
 
@@ -57,14 +57,14 @@ Other harness variables, read by `counter` and `baseline-counter`:
 | `QUINN_WIDGET_BENCH=200` | Time creating 200 labels and updating their text |
 | `QUINN_RETAIN=2000` | On `retain` only: two bursts of mount/unmount cycles |
 
-`QUINN_RETAIN=2000 QUINN_EXIT=1 cargo run -p retain --release` prints node, widget, handler, and RSS counts. Nodes and handlers return to the resting tree. RSS during a burst climbs with the script heap; `quinn::reclaim_script_heap` compacts it before the resting sample.
+`QUINN_RETAIN=2000 cargo run -p retain --release` prints the script census and RSS, then quits. Do not set `QUINN_EXIT=1` with it: that flag quits on the first frame. Widgets and buttons return to the resting tree (4 widgets, 1 button, 2 host children at rest for the current view). `session_stats()` stays empty because the Rust graph is not mounted.
 
 ## Layout of the workspace
 
 - `crates/styles` — utility / inline style subset
 - `crates/reactive` — upstream `reactive_graph`
 - `crates/core` — owners, surface, lifecycle tests
-- `crates/lower` — lowers the counter's `view!` into Makepad script
+- `crates/lower` — lowers `view.rs` (`Show`, `For`, inputs, clicks) into Makepad script
 - `crates/macros` — `view!`, `#[component]`, `run!`
 - `crates/makepad` — the only renderer
 - `crates/quinn` — what applications import

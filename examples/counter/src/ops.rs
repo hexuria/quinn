@@ -5,7 +5,7 @@ use quinn::makepad_widgets::*;
 
 pub fn bump(cx: &mut Cx) {
     script_eval!(cx, {
-        quinn_frame()
+        mod.quinn_frame()
         true
     });
 }

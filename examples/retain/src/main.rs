@@ -1,206 +1,252 @@
-use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::Arc;
+use std::cell::RefCell;
 
-use quinn::prelude::*;
+use quinn::makepad_widgets::*;
 
-struct LiveGuard(Arc<AtomicUsize>);
+app_main!(App);
 
-impl LiveGuard {
-    fn new(counter: &Arc<AtomicUsize>) -> Self {
-        counter.fetch_add(1, Ordering::SeqCst);
-        Self(counter.clone())
+#[derive(Script, ScriptHook)]
+pub struct App {
+    #[live]
+    ui: WidgetRef,
+}
+
+impl MatchEvent for App {
+    fn handle_startup(&mut self, cx: &mut Cx) {
+        quinn::boot_script(cx, &self.ui);
+        if std::env::var("QUINN_RETAIN").is_ok() {
+            cx.redraw_all();
+        }
     }
 }
 
-impl Drop for LiveGuard {
-    fn drop(&mut self) {
-        self.0.fetch_sub(1, Ordering::SeqCst);
+impl AppMain for App {
+    fn script_mod(vm: &mut ScriptVm) -> ScriptValue {
+        quinn::makepad_widgets::script_mod(vm);
+        let component = Self::script_component(vm).script_to_value(vm);
+        quinn::load_hot_view(
+            vm,
+            env!("CARGO_MANIFEST_DIR"),
+            module_path!(),
+            "Retain",
+            480,
+            420,
+            component,
+        )
+    }
+
+    fn handle_event(&mut self, cx: &mut Cx, event: &Event) {
+        if let Event::Draw(_) = event {
+            if std::env::var("QUINN_RETAIN").is_ok() {
+                step_retain(cx, &self.ui);
+            }
+        }
+        self.match_event(cx, event);
+        self.ui.handle_event(cx, event, &mut Scope::empty());
     }
 }
 
-#[derive(Clone)]
-struct Item {
-    id: u64,
-    label: String,
+/// One script step per draw. `render()` is applied by Makepad's task pump at
+/// the end of the event, so the census on the next draw is that step's tree.
+enum Phase {
+    Reset,
+    Rest,
+    Burst,
+    After,
+    Done,
 }
 
-#[component]
-fn Detail(handlers: Arc<AtomicUsize>, cleanups: Arc<AtomicUsize>) -> impl IntoView {
-    let guard = LiveGuard::new(&handlers);
-    on_cleanup(move || {
-        cleanups.fetch_add(1, Ordering::SeqCst);
+struct Job {
+    cycles: u32,
+    step: u32,
+    burst: u8,
+    phase: Phase,
+    rss_before: u64,
+    rss_high: u64,
+    rss_rest: u64,
+    rss_high_2: u64,
+    rss_rest_2: u64,
+    widgets_rest: usize,
+    buttons_rest: usize,
+    host_rest: usize,
+    widgets_max: usize,
+    buttons_max: usize,
+    widgets_after: usize,
+    buttons_after: usize,
+    host_after: usize,
+    widgets_max_2: usize,
+    buttons_max_2: usize,
+    widgets_after_2: usize,
+    buttons_after_2: usize,
+    host_after_2: usize,
+}
+
+std::thread_local! {
+    static JOB: RefCell<Option<Job>> = const { RefCell::new(None) };
+}
+
+fn step_retain(cx: &mut Cx, ui: &WidgetRef) {
+    let host = ui.view(cx, ids!(host));
+    let finished = JOB.with(|slot| {
+        let mut borrowed = slot.borrow_mut();
+        let job = borrowed.get_or_insert_with(Job::start);
+        match job.phase {
+            Phase::Reset => {
+                script_eval!(cx, {
+                    mod.quinn_retain_reset()
+                    true
+                });
+                job.phase = Phase::Rest;
+                false
+            }
+            Phase::Rest => {
+                let census = quinn::census_host(&host);
+                job.rss_before = quinn::rss_kib();
+                job.widgets_rest = census.widgets;
+                job.buttons_rest = census.buttons;
+                job.host_rest = census.host_children;
+                job.widgets_max = census.widgets;
+                job.buttons_max = census.buttons;
+                job.phase = Phase::Burst;
+                job.step = 0;
+                script_eval!(cx, {
+                    mod.quinn_retain_step(#(0.0))
+                    true
+                });
+                job.step = 1;
+                false
+            }
+            Phase::Burst => {
+                let census = quinn::census_host(&host);
+                let rss = quinn::rss_kib();
+                if job.burst == 0 {
+                    job.widgets_max = job.widgets_max.max(census.widgets);
+                    job.buttons_max = job.buttons_max.max(census.buttons);
+                    job.rss_high = job.rss_high.max(rss);
+                } else {
+                    job.widgets_max_2 = job.widgets_max_2.max(census.widgets);
+                    job.buttons_max_2 = job.buttons_max_2.max(census.buttons);
+                    job.rss_high_2 = job.rss_high_2.max(rss);
+                }
+                if job.step < job.cycles {
+                    let i = job.step as f64;
+                    script_eval!(cx, {
+                        mod.quinn_retain_step(#(i))
+                        true
+                    });
+                    job.step += 1;
+                    false
+                } else {
+                    script_eval!(cx, {
+                        mod.quinn_retain_reset()
+                        true
+                    });
+                    job.phase = Phase::After;
+                    false
+                }
+            }
+            Phase::After => {
+                let census = quinn::census_host(&host);
+                quinn::with_cx(cx, || quinn::reclaim_script_heap());
+                let rss = quinn::rss_kib();
+                if job.burst == 0 {
+                    job.widgets_after = census.widgets;
+                    job.buttons_after = census.buttons;
+                    job.host_after = census.host_children;
+                    job.rss_rest = rss;
+                    job.widgets_max_2 = census.widgets;
+                    job.buttons_max_2 = census.buttons;
+                    job.burst = 1;
+                    job.step = 0;
+                    job.phase = Phase::Burst;
+                    script_eval!(cx, {
+                        mod.quinn_retain_step(#(0.0))
+                        true
+                    });
+                    job.step = 1;
+                    false
+                } else {
+                    job.widgets_after_2 = census.widgets;
+                    job.buttons_after_2 = census.buttons;
+                    job.host_after_2 = census.host_children;
+                    job.rss_rest_2 = rss;
+                    job.phase = Phase::Done;
+                    let body = job.report();
+                    eprintln!("{body}");
+                    let path = std::env::var("QUINN_RETAIN_OUT")
+                        .unwrap_or_else(|_| "artifacts/retain.txt".into());
+                    if let Some(parent) = std::path::Path::new(&path).parent() {
+                        let _ = std::fs::create_dir_all(parent);
+                    }
+                    let _ = std::fs::write(path, body);
+                    true
+                }
+            }
+            Phase::Done => true,
+        }
     });
-    view! {
-        <div class="p-2">
-            <button on:click=move |_| {
-                let _keep = &guard;
-            }>"Detail"</button>
-        </div>
+    if finished {
+        cx.quit();
+    } else {
+        cx.redraw_all();
     }
 }
 
-#[component]
-fn Row(item: Item, handlers: Arc<AtomicUsize>, cleanups: Arc<AtomicUsize>) -> impl IntoView {
-    let guard = LiveGuard::new(&handlers);
-    let label = item.label;
-    on_cleanup(move || {
-        cleanups.fetch_add(1, Ordering::SeqCst);
-    });
-    view! {
-        <div class="flex flex-row gap-2">
-            <span>{label}</span>
-            <button on:click=move |_| {
-                let _keep = &guard;
-            }>"row"</button>
-        </div>
-    }
-}
-
-#[component]
-fn Retain() -> impl IntoView {
-    let (open, set_open) = signal(true);
-    let (items, set_items) = signal(vec![Item {
-        id: 1,
-        label: "Alpha".into(),
-    }]);
-    let handlers = Arc::new(AtomicUsize::new(0));
-    let cleanups = Arc::new(AtomicUsize::new(0));
-    let show_handlers = handlers.clone();
-    let show_cleanups = cleanups.clone();
-    let row_handlers = handlers.clone();
-    let row_cleanups = cleanups.clone();
-
-    if let Ok(raw) = std::env::var("QUINN_RETAIN") {
-        let cycles: u32 = if raw == "1" {
+impl Job {
+    fn start() -> Self {
+        let raw = std::env::var("QUINN_RETAIN").unwrap_or_else(|_| "2000".into());
+        let cycles = if raw == "1" {
             2_000
         } else {
             raw.parse().unwrap_or(2_000)
         };
-        let set_open_loop = set_open;
-        let set_items_loop = set_items;
-        let handlers_loop = handlers.clone();
-        let cleanups_loop = cleanups.clone();
-        quinn::after_mount(move || {
-            let rss_before = quinn::rss_kib();
-            set_open_loop.set(false);
-            set_items_loop.set(vec![Item {
-                id: 1,
-                label: "Alpha".into(),
-            }]);
-            quinn::flush_now();
-            let resting = quinn::session_stats();
-            let handlers_before = handlers_loop.load(Ordering::SeqCst);
-            let cleanups_before = cleanups_loop.load(Ordering::SeqCst);
-            let mut max_nodes = resting.nodes;
-            let mut max_widgets = resting.widgets;
-            let mut next_id = 2u64;
-            for i in 0..cycles {
-                set_open_loop.set(i % 2 == 0);
-                if i % 2 == 0 {
-                    let id = next_id;
-                    next_id += 1;
-                    set_items_loop.update(move |rows| {
-                        rows.push(Item {
-                            id,
-                            label: format!("Item {id}"),
-                        });
-                    });
-                } else {
-                    set_items_loop.update(|rows| {
-                        if rows.len() > 1 {
-                            rows.pop();
-                        }
-                    });
-                }
-                quinn::flush_now();
-                let stats = quinn::session_stats();
-                max_nodes = max_nodes.max(stats.nodes);
-                max_widgets = max_widgets.max(stats.widgets);
-            }
-            set_open_loop.set(false);
-            set_items_loop.set(vec![Item {
-                id: 1,
-                label: "Alpha".into(),
-            }]);
-            quinn::flush_now();
-            let after = quinn::session_stats();
-            let handlers_after = handlers_loop.load(Ordering::SeqCst);
-            let cleanups_mid = cleanups_loop.load(Ordering::SeqCst);
-            let rss_high = quinn::rss_kib();
-            quinn::reclaim_script_heap();
-            let rss_rest = quinn::rss_kib();
-            // A second burst of the same length. If the script objects from
-            // the first burst were actually released, resting RSS stays put.
-            let mut max_nodes_2 = after.nodes;
-            let mut max_widgets_2 = after.widgets;
-            for i in 0..cycles {
-                set_open_loop.set(i % 2 == 0);
-                if i % 2 == 0 {
-                    let id = next_id;
-                    next_id += 1;
-                    set_items_loop.update(move |rows| {
-                        rows.push(Item {
-                            id,
-                            label: format!("Item {id}"),
-                        });
-                    });
-                } else {
-                    set_items_loop.update(|rows| {
-                        if rows.len() > 1 {
-                            rows.pop();
-                        }
-                    });
-                }
-                quinn::flush_now();
-                let stats = quinn::session_stats();
-                max_nodes_2 = max_nodes_2.max(stats.nodes);
-                max_widgets_2 = max_widgets_2.max(stats.widgets);
-            }
-            set_open_loop.set(false);
-            set_items_loop.set(vec![Item {
-                id: 1,
-                label: "Alpha".into(),
-            }]);
-            quinn::flush_now();
-            let after_2 = quinn::session_stats();
-            let rss_high_2 = quinn::rss_kib();
-            quinn::reclaim_script_heap();
-            let rss_rest_2 = quinn::rss_kib();
-            let handlers_after_2 = handlers_loop.load(Ordering::SeqCst);
-            let cleanups_after = cleanups_loop.load(Ordering::SeqCst);
-            let body = format!(
-                "retain cycles={cycles} bursts=2 rss_before_kib={rss_before} rss_high_kib={rss_high} rss_rest_kib={rss_rest} rss_high_2_kib={rss_high_2} rss_rest_2_kib={rss_rest_2} nodes_before={} nodes_after={} nodes_max={max_nodes} nodes_after_2={} nodes_max_2={max_nodes_2} widgets_before={} widgets_after={} widgets_max={max_widgets} widgets_after_2={} widgets_max_2={max_widgets_2} host_children_before={} host_children_after={} host_children_after_2={} handlers_before={handlers_before} handlers_after={handlers_after} handlers_after_2={handlers_after_2} cleanups_before={cleanups_before} cleanups_mid={cleanups_mid} cleanups_after={cleanups_after}\n",
-                resting.nodes,
-                after.nodes,
-                after_2.nodes,
-                resting.widgets,
-                after.widgets,
-                after_2.widgets,
-                resting.host_children,
-                after.host_children,
-                after_2.host_children,
-            );
-            eprintln!("{body}");
-            let path =
-                std::env::var("QUINN_RETAIN_OUT").unwrap_or_else(|_| "artifacts/retain.txt".into());
-            if let Some(parent) = std::path::Path::new(&path).parent() {
-                let _ = std::fs::create_dir_all(parent);
-            }
-            let _ = std::fs::write(path, body);
-        });
+        Self {
+            cycles,
+            step: 0,
+            burst: 0,
+            phase: Phase::Reset,
+            rss_before: 0,
+            rss_high: 0,
+            rss_rest: 0,
+            rss_high_2: 0,
+            rss_rest_2: 0,
+            widgets_rest: 0,
+            buttons_rest: 0,
+            host_rest: 0,
+            widgets_max: 0,
+            buttons_max: 0,
+            widgets_after: 0,
+            buttons_after: 0,
+            host_after: 0,
+            widgets_max_2: 0,
+            buttons_max_2: 0,
+            widgets_after_2: 0,
+            buttons_after_2: 0,
+            host_after_2: 0,
+        }
     }
 
-    view! {
-        <div class="flex flex-col gap-3 p-4">
-            <h1>"Retention"</h1>
-            <Show when=move || open.get()>
-                <Detail handlers=show_handlers.clone() cleanups=show_cleanups.clone() />
-            </Show>
-            <For each=move || items.get() key=|item| item.id let:item>
-                <Row item=item handlers=row_handlers.clone() cleanups=row_cleanups.clone() />
-            </For>
-        </div>
+    fn report(&self) -> String {
+        format!(
+            "retain cycles={} bursts=2 path=script rss_before_kib={} rss_high_kib={} rss_rest_kib={} rss_high_2_kib={} rss_rest_2_kib={} widgets_rest={} widgets_max={} widgets_after={} widgets_max_2={} widgets_after_2={} buttons_rest={} buttons_max={} buttons_after={} buttons_max_2={} buttons_after_2={} host_children_rest={} host_children_after={} host_children_after_2={}\n",
+            self.cycles,
+            self.rss_before,
+            self.rss_high,
+            self.rss_rest,
+            self.rss_high_2,
+            self.rss_rest_2,
+            self.widgets_rest,
+            self.widgets_max,
+            self.widgets_after,
+            self.widgets_max_2,
+            self.widgets_after_2,
+            self.buttons_rest,
+            self.buttons_max,
+            self.buttons_after,
+            self.buttons_max_2,
+            self.buttons_after_2,
+            self.host_rest,
+            self.host_after,
+            self.host_after_2,
+        )
     }
 }
-
-quinn::run!("Retain", 480, 420, view! { <Retain /> });

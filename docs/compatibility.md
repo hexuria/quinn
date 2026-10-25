@@ -26,7 +26,7 @@ Tags: `div`, `span`, `h1`, `h2`, `p`, `label`, `button`, `input`.
 
 Also: nested elements, string literals and `{expr}` / `{move || value}` text, `on:click`, `on:input` / `on:change`, `value=`, `placeholder="..."`, `class="..."`, `style="..."`, `<Show when=...>`, `<For each=... key=... let:item>`, and a custom component as a function call whose attributes are arguments in source order.
 
-`#[component] fn Name(...) -> impl IntoView` creates an owner and returns `scope_owner`. It does not implement upstream prop helpers or children slots.
+`#[component] fn Name(...) -> impl IntoView`, when Rust compiles it, creates an owner and returns `scope_owner`. It does not implement upstream prop helpers or children slots. The example `view.rs` files are not compiled. The lowerer reads the same syntax and emits script. A `<Show>` nested inside a `<For>` row is parsed as syntax and is not emitted correctly.
 
 ## Style subset
 
@@ -49,7 +49,7 @@ These are absent on purpose, not partially implemented:
 - `RenderEffect`, resources, suspense, server functions, hydration
 - A second layout engine
 
-`TextInput::set_text` resets the caret and undo stack. The surface skips the write when the text is already equal. Typing therefore has to go through `on:input` into a signal whose effect writes the same string back.
+`render()` writes `TextInput.text` from `mod.state` on each change, because `on_change` calls `root.render()` so the heading updates. The string survives a class or label reload. The caret can jump. The headless surface still skips `set_text` when the string is already equal; the running examples do not use that surface.
 
 ## Public API versus Makepad internals
 

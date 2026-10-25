@@ -11,10 +11,15 @@ pub use quinn_styles::{parse_classes, parse_inline, Style};
 
 #[cfg(feature = "native")]
 pub use quinn_makepad::{
-    after_mount, boot_script, flush_now, makepad_widgets, on_actions, reclaim_script_heap, rss_kib,
-    session_stats, set_frame_driver, set_inspector, set_live_shell, startup, with_current_cx,
-    SessionStats,
+    after_mount, boot_script, census_host, eval_hot_file, flush_now, load_hot_view, makepad_widgets,
+    on_actions, reclaim_script_heap, rss_kib, session_stats, set_frame_driver, set_inspector,
+    set_live_shell, startup, with_current_cx, with_cx, SessionStats, WidgetCensus,
 };
+
+/// Marker the lowerer sees in a component body. It emits `quinn_retain_step`
+/// and `quinn_retain_reset` into the hot script. The running example drives
+/// those functions from Rust; this call is not executed.
+pub fn retain_probe() {}
 
 pub mod prelude {
     pub use crate::{

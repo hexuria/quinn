@@ -2,3 +2,5 @@
 **/*.rs.bk
 .DS_Store
 artifacts/*.log
+# Generated Makepad script. Cargo does not compile it. `--hot` watches it.
+hot/

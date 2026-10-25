@@ -133,7 +133,6 @@ name = "counter"
 version = "0.1.0"
 dependencies = [
  "quinn",
- "quinn-lower",
 ]
 
 [[package]]
@@ -1030,6 +1029,7 @@ version = "0.1.0"
 dependencies = [
  "makepad-widgets",
  "quinn-core",
+ "quinn-lower",
  "quinn-styles",
 ]
 

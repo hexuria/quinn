@@ -22,9 +22,9 @@ cargo run -p probe-widget-lifecycle --release
 What to look at:
 
 - `counter`: the label starts at `Counter: 0`. Each click of Increment adds one. The button sits in the client area, not in the title band.
-- `conditional`: toggling the switch removes the detail and brings it back. A remounted detail starts again; it does not keep the old count.
-- `keyed-list`: reversing the rows reorders the existing rows. A row's own counter survives the reorder.
-- `form`: typing in the field updates the echoed line. Clearing the field empties both.
+- `conditional`: toggling the switch removes the detail and brings it back. A remounted detail starts again; it does not keep the old count. The sibling counter is unchanged.
+- `keyed-list`: reversing the rows reorders them. Beta's own counter survives the reorder and a removal of a different row.
+- `form`: typing in the field updates the echoed line. Clearing the field empties both. The caret may jump when the heading re-renders; the text should not.
 - `baseline-counter`: `Count: 0` and Increment are inside the window body. The label and the button are light text on a dark control. A click changes the count.
 - `probe-widget-lifecycle`: the process prints `PROBE_OK` and exits 0. `QUINN_PROBE_EXIT=1` makes a failed check a non-zero exit. The log path is `artifacts/probe-widget-lifecycle.log`.
 
@@ -33,10 +33,12 @@ What to look at:
 ## Retention
 
 ```bash
-QUINN_RETAIN=2000 QUINN_EXIT=1 QUINN_RETAIN_OUT=/tmp/retain.txt cargo run -p retain --release
+QUINN_RETAIN=2000 QUINN_RETAIN_OUT=/tmp/retain.txt cargo run -p retain --release
 ```
 
-The file should show `nodes_after=7`, `widgets_after=7`, `handlers_after=1`, and the same counts with the `_2` suffix after the second burst. `rss_rest_kib` is after `quinn::reclaim_script_heap`. `rss_high_kib` is the script-heap spike before that compact and will be much larger. On Linux, 2,000 cycles rested near 129 MiB from a 117 MiB start, then 133 MiB after the second burst. macOS RSS will differ; the count fields should not.
+Do not set `QUINN_EXIT=1`. The probe treats that as "quit after the first frame", and the retain job would not finish. The example quits itself when the report is written.
+
+The file is one line starting `retain cycles=2000 bursts=2 path=script`. At rest (show closed, one row) Linux reported `widgets_rest=4`, `widgets_after=4`, `widgets_after_2=4`, `buttons_rest=1`, `buttons_after=1`, `host_children_rest=2`. The max during a burst was 9 widgets and 3 buttons, on both bursts. `rss_rest_kib` is after `quinn::reclaim_script_heap`. On Linux the release process started at 234,640 KiB and rested at 237,596 KiB, then 237,604 KiB after the second burst. The high water was 237,952 KiB and 238,564 KiB. macOS RSS will differ; the widget and button fields should not. There is no `nodes_after` or `handlers_after` on this path. Those belonged to the old reactive mount. `session_stats()` stays zero because that graph is not running. The unit test below still checks it.
 
 The unit test does not need a window:
 
@@ -48,24 +50,30 @@ cargo test -p quinn-styles -p quinn-reactive -p quinn-core -p quinn --no-default
 
 ## Live reload and latency
 
-Build the release binaries, then run them directly so Cargo is not watching the tree:
-
 ```bash
-cargo build -p baseline-counter -p counter --release
-./target/release/baseline-counter --hot
-./target/release/counter --hot
+cargo run -p counter --release -- --hot
+cargo run -p conditional --release -- --hot
+cargo run -p keyed-list --release -- --hot
+cargo run -p form --release -- --hot
 ```
 
-`cargo run -- --hot` works for a color edit that does not rewrite a source file Cargo is compiling. The counter's watcher rewrites `examples/counter/src/ui_script.rs`. Under `cargo run` that rewrite starts a new process.
+`./target/release/<bin> --hot` is the same loop without Cargo as the parent. Edit `view.rs` in that example, not `src/main.rs`. `view.rs` and `hot/ui.rs` are outside `src/`, so `cargo run` does not rebuild. On Linux, `cargo run -p counter --release -- --hot` kept pid 64535 and starttime 1913679 across five saves of `examples/counter/view.rs`. The log had one `Running` line. Saving `src/main.rs` still rebuilds and starts a new process.
 
-Click until the count reads 5. Leave the process up.
+`hot/ui.rs` is generated. Do not edit it. `QUINN_SKIP_LOWER=1` skips the startup rewrite so a hand-patched file survives; that is a debug hatch, not this loop.
 
-- Baseline: change `increment_button`'s `draw_bg.color` in `examples/baseline-counter/src/main.rs` and save. The button recolors. The count stays 5. The log contains `hot reload applied`, then `hot_reload_followup pid=...`.
-- Counter: change the `view!` in `examples/counter/src/main.rs` (`gap-4` to `gap-8`, or `"Increment"` to `"Add one"`) and save. The same window updates. The count stays 5. The new button still increments. The log contains `quinn lowered view into .../ui_script.rs`, `hot reload applied` for that file, and `script_reload pid=...`.
+What reloads in the same window: classes, static text, the click and input handlers, `<Show>`, `<For>`, and placeholders, when the lowerer accepts the file. What does not: a change under `src/`, a `view.rs` the lowerer rejects (the log says `quinn lower failed` and the old script stays), a `<Show>` nested inside a `<For>` row, and the baseline counter (edit its `script_mod!` in `main.rs` directly).
 
-The title bar can be set with `xdotool set_window --name` to the PID and the X id. Both should be unchanged after the save. Confirm the process with `starttime` in `/proc/<pid>/stat` as well as the window id. The X server recycles window ids across processes.
+Leave the process up and set the state you care about first.
 
-`script_eval!` must not sit in the file you edit. Makepad counts those bodies and rejects the file when the counts disagree. The counter's seed and its Rust script calls live in `seed.rs` and `ops.rs`. `quinn::run!` does not emit a `script_mod!` the watcher can read.
+- Counter: click until the label reads `Counter: 5`. Change `gap-4` to `gap-8` and `"Increment"` to `"Add one"` in `examples/counter/view.rs`. The count stays 5. The new button still increments. The log contains `quinn lowered view into .../hot/ui.rs`, `hot reload applied`, and `script_reload pid=...`.
+- Keyed list: click Beta a few times. Change the row's classes (`gap-4` to `gap-8`, or `text-lg` to `text-sm`). Beta's count and the order stay.
+- Conditional: tick the sibling, leave the detail open, click the detail. Change the detail's heading or its classes. The sibling count, the open toggle, and the detail's clicks stay. A click after the reload still increments.
+- Form: type a name. Change `"Hello, "` or `"Clear"` or `gap-4`. The field keeps the text. The heading follows it.
+- Baseline: change `increment_button`'s `draw_bg.color` in `examples/baseline-counter/src/main.rs` and save. The button recolors. The count stays. That file is the script block itself. The log contains `hot reload applied`.
+
+Confirm the process with `starttime` in `/proc/<pid>/stat` as well as the window id. The X server recycles window ids across processes. `xprop -id <id> -set WM_NAME` sets a title the frame will not immediately overwrite; `xdotool set_window --name` did not stick on the Linux run.
+
+`script_eval!` must not sit in `hot/ui.rs`. Makepad counts those bodies and rejects the file when the counts disagree. Rust calls go through `mod.quinn_frame` (and the retain equivalents), which the lowerer assigns because `script_eval!` is a different script body and cannot see the view's local functions. `quinn::run!` does not emit a `script_mod!` the watcher can read.
 
 `QUINN_LIVE=1` is not this path. It injects a synthetic script buffer into the running process and does not modify a file.
 
@@ -75,7 +83,7 @@ The title bar can be set with `xdotool set_window --name` to the PID and the X i
 | `QUINN_LIVE=1` | In-process synthetic script reload on the first frame. Not a disk edit. |
 | `QUINN_WIDGET_BENCH=200` | Create 200 labels and `set_text` them, seven times unless `QUINN_WIDGET_RUNS` is set. |
 
-A change to a Rust handler that the lowerer does not understand, or to conditional / keyed-list / form, is a rebuild and a new process. The counter's lowered `view!` is not: with `--hot` it stays one process. Time `cargo build -p counter --release` after touching `examples/counter/src/main.rs` only when you are measuring a cold rebuild.
+A change the lowerer does not understand is a rebuild only if you then edit Rust to express it. Time `cargo build -p counter --release` after touching `examples/counter/src/main.rs` when you are measuring a cold rebuild, not a view reload.
 
 ## Wasm
 

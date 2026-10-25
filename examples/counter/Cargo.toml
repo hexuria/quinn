@@ -11,7 +11,3 @@ path = "src/main.rs"
 
 [dependencies]
 quinn = { path = "../../crates/quinn" }
-quinn-lower = { path = "../../crates/lower" }
-
-[build-dependencies]
-quinn-lower = { path = "../../crates/lower" }

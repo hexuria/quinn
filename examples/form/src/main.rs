@@ -1,23 +1,48 @@
-use quinn::prelude::*;
+use quinn::makepad_widgets::*;
 
-#[component]
-fn Form() -> impl IntoView {
-    let (name, set_name) = signal(String::new());
+app_main!(App);
 
-    view! {
-        <div class="flex flex-col gap-4 p-4">
-            <h1>
-                "Hello, "
-                {move || if name.get().is_empty() { "there".to_string() } else { name.get() }}
-            </h1>
-            <input
-                placeholder="Your name"
-                value=move || name.get()
-                on:input=move |value: String| { set_name.set(value); }
-            />
-            <button on:click=move |_| { set_name.set(String::new()); }>"Clear"</button>
-        </div>
+#[derive(Script, ScriptHook)]
+pub struct App {
+    #[live]
+    ui: WidgetRef,
+}
+
+impl MatchEvent for App {
+    fn handle_startup(&mut self, cx: &mut Cx) {
+        quinn::boot_script(cx, &self.ui);
     }
 }
 
-quinn::run!("Form", 480, 320, view! { <Form /> });
+impl AppMain for App {
+    fn script_mod(vm: &mut ScriptVm) -> ScriptValue {
+        quinn::makepad_widgets::script_mod(vm);
+        let component = Self::script_component(vm).script_to_value(vm);
+        quinn::load_hot_view(
+            vm,
+            env!("CARGO_MANIFEST_DIR"),
+            module_path!(),
+            "Form",
+            480,
+            320,
+            component,
+        )
+    }
+
+    fn handle_event(&mut self, cx: &mut Cx, event: &Event) {
+        if let Event::LiveEdit = event {
+            if matches!(cx.live_edit_apply(), Apply::Reload) {
+                eprintln!(
+                    "script_reload pid={} window_stays=1 render=1",
+                    std::process::id()
+                );
+                script_eval!(cx, {
+                    ui.host.render()
+                    true
+                });
+            }
+        }
+        self.match_event(cx, event);
+        self.ui.handle_event(cx, event, &mut Scope::empty());
+    }
+}

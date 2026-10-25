@@ -54,7 +54,7 @@ These are absent on purpose, not partially implemented:
 - HTML forms as a DOM (`<form>`, submit, labels-for), contenteditable, rich text, SVG, images
 - `leptos_router` (URL, history, params, nested matching). The in-app `<Router>` is `state.route`.
 - A Rust `Into` impl for `#[prop(into)]`. Nested `provide_context` does shadow for the subtree and then restores. The root seed does not reset on reload.
-- `RenderEffect`, an inline future that is not a named `quinn::job`, server functions, hydration. Client jobs call one registered async fn. See P3a in [gap-analysis.md](gap-analysis.md)
+- `RenderEffect`, an inline future that is not a chain of named `quinn::job` fns, server functions, hydration. A job body may be several registered calls (`let a = f(x).await?; g(a).await`), a tuple source, a method call, or a `Serialize` struct argument. `if` / `match` / loops / arithmetic / nested closures in that body are a compile error that names the shape. See P3b in [gap-analysis.md](gap-analysis.md)
 - A second layout engine
 - Gradient, shadow, or scroll bars on a `Grid` div. `Grid` draws a `DrawQuad`. Put those classes on a child view.
 

@@ -36,7 +36,7 @@ Legend: **supported** means a `view.rs` the lowerer accepts and a running exampl
 | `RwSignal`, split read/write, `ReadSignal` | Missing | The re-export is whatever `reactive_graph` prelude has, and only compiled tests can call it. Script would be the same `mod.state` field with two names. Small once expressions exist. |
 | `Memo`, derived closures | Missing | Text `if` is the only derived form, and it is recomputed inside `on_render`, not cached. A memo is a script function of `state` called from `on_render`. No dependency tracking. Medium for a real expression language; small if the set of expressions stays closed. |
 | `Effect` / `RenderEffect` | Partial | Headless code has `ImmediateEffect` (`crates/reactive/src/lib.rs`) because Makepad has no async executor (`docs/decisions.md`). The window has no effect. A script effect is "the setter writes state and calls `render()`". An effect that must run without rebuilding the tree needs a script function invoked from the setter, not a subscriber list. Medium, and it will not match Leptos's "track what you read". |
-| Resources, `async`, `Suspense`, `Transition`, `Action` | Partial | `LocalResource::new`, `Resource::new`, and `Action::new` name a compiled async fn. A tokio worker polls that future. `SignalToUI` delivers the `Result` onto `mod.state` phase fields. `<Suspense>` / `<Transition>` are script gates. Not `Suspend::new(IntoFuture)`, and not a server. The fn body is Rust, so editing it needs a rebuild. |
+| Resources, `async`, `Suspense`, `Transition`, `Action` | Partial | `LocalResource::new`, `Resource::new`, and `Action::new` name compiled async fns. A chain, a tuple source, a method call, and a `Serialize` struct argument lower. `if` / `match` / loops in the body are a compile error. A tokio worker polls the future. A superseded spawn aborts it. `SignalToUI` delivers the `Result` onto `mod.state` phase fields. `<Suspense>` / `<Transition>` are script gates. Not `Suspend::new(IntoFuture)`, and not a server. The fn body is Rust, so editing it needs a rebuild. |
 | `on_cleanup` | Partial | Re-exported and used by the headless owner. Script unmount is "this `on_render` did not return the widget", and `<Show>` zeroes the child's fields (`emit.rs` `emit_show_fn`). There is no user `on_cleanup` hook. A script callback stored on `mod` and called from the show's off branch is small. |
 
 ### Control flow
@@ -215,7 +215,7 @@ Limits that were still true after P1. P2 changes context shadowing, `#[prop(into
 | `#[prop(into)]` | `"Ada".into()` / `.to_string()` becomes the literal. A path that is not a signal is an error. |
 | `hover:` on a `div` | `cursor: MouseCursor.Arrow` plus an `Animator` that writes `draw_bg.color`. The down track's resting color is the base color, so the first frames are not the hover swatch. `focus:` sets `draw_bg.color_focus` on `Button` and `TextInput`. |
 
-Limits that are still true after P2, except where P3a below replaces the job body:
+Limits that are still true after P2, except where P3a and P3b below replace the job body:
 
 - `<ErrorBoundary>` does not catch a script error. A failed `on_render` still discards the frame. A panic inside a job future is an error phase (P3a); a panic in the frame is not.
 - Server functions, websocket server functions, hydration, and `leptos_router` are out. No server.
@@ -226,7 +226,7 @@ Limits that are still true after P2, except where P3a below replaces the job bod
 - `Flow::Overlay` uses the parent's align for every overlay child. Per-child align is the frame's align, computed from which edges were set.
 - Taffy stays out.
 
-Practical parity is P0 plus P1 plus this P2 slice, with P3a running the futures. It is not a Leptos 0.8 port. The runtime stays `mod.state`, `mod.ctx`, and `render()`. `drive_shell` reads script numbers with `as_number`, because an integer literal is not an `f64`.
+Practical parity is P0 plus P1 plus this P2 slice, with P3a and P3b running the futures. It is not a Leptos 0.8 port. The runtime stays `mod.state`, `mod.ctx`, and `render()`. `drive_shell` reads script numbers with `as_number`, because an integer literal is not an `f64`.
 
 ### P3a — real async fns
 
@@ -242,15 +242,31 @@ Practical parity is P0 plus P1 plus this P2 slice, with P3a running the futures.
 | Panics | `poll` runs inside `catch_unwind`. The payload becomes `Err("panic: ...")` and the phase is `"error"`. |
 | HTTP | Feature `net` plus `QUINN_HTTP=1` GETs `https://jsonplaceholder.typicode.com/users` with ureq on `spawn_blocking`. Failure, or a build without the variable, uses Manila / Cebu / Davao. |
 
-Limits that are still true after P3a:
+P3a left the closure at one function and one argument, and it left a superseded future running until it finished. P3b below is what the window does now.
 
-- The async fn is compiled Rust. Changing `jobs.rs` needs a rebuild. Changing markup or classes in `view.rs` hot-reloads, and an in-flight future is not started a second time.
-- The closure may call one function with one argument. There is no `.await` of an inline block that is not a named fn, and no multi-argument call.
-- `JobValue` is the value language (string, number, bool, list, object). It is not an arbitrary Rust type stored in the script heap.
-- `<ErrorBoundary>` still does not catch a script panic or a panic outside the job future.
-- No cancellation token is dropped into the future. A stale gen is ignored when it finishes; the worker still runs it.
+### P3b — cancel, multi-arg plans, typed values
+
+The async body stays compiled Rust. The lowerer extracts a plan of registered function names and lowers the source signal reads to script, so those reads stay reactive and the markup still hot-reloads. The stable key is `chain:` plus the function idents joined by `+`. It is not a source span.
+
+| Item | What landed |
+| --- | --- |
+| Cancel | `spawn_job` aborts the previous tokio task for that binding before it inserts the new `AbortHandle`. `Track` increments a process-wide count when the future is dropped before `Poll::Ready`. A future that already returned `Ready` is not counted, and aborting a finished task does not count twice. `quinn::cancelled_count()` is the read. Leptos has no cancelled-count method; the observation there is dropping the future. The dashboard label is `state.quinn_cancelled`, written by `quinn_set_cancelled` when the number changes. |
+| Unmount | After poll, `quinn_job_live` is called only when the function exists. A return of 0 aborts. Nil is the reload window and does not abort. A hot reload does not clear `STARTED` and does not abort a binding that is still in the tree. |
+| Stale versus cancel | A result that finishes and then fails the generation check is discarded and is not a cancel. The counter moves when the task is aborted or dropped, not when a late inbox row is ignored. |
+| Tuple source | `move \|\| (id.get(), page.get())` packs a JSON array in script. `quinn_job_arg` is a chain of calls (`quinn_arg_{name}` / `quinn_arg_missing`), because a literal arm and a call arm unbalance the script stack. One plain string is still a plain string. |
+| Chain | `async move { let raw = fetch_pair(id, page).await?; decorate(raw).await }` stores `fetch_pair@0,1;decorate@prev` and the key `chain:fetch_pair+decorate`. `run_registered` runs the plan. An empty plan looks up `quinn_job_fn` with the whole arg. `?` is the registered fn's `Result`. |
+| Struct arg | `stamp.dispatch(Place { city: city.get(), note: "desk" })` emits a script object and `to_json()`. `JobArg::deserialize` reads `#[derive(Deserialize)]`. `Result<T, E: Display>` converts at the worker (`T` via `Serialize` or `JobValue`, `E` via `Display`). A closure that builds only one `Result` variant needs the other type named. |
+| Rejected shapes | `if`, `match`, `while`, `loop`, `for`, arithmetic, a nested closure, and a struct literal inside the chain fail to compile with `unsupported job shape: ...`. A method call registers under the method ident. `.get` / `.clone` / `.to_string` / `.to_owned` are not job calls. |
+| HTTP | Unchanged from P3a: feature `net` plus `QUINN_HTTP=1` GETs the public user list. The 26 Oct 2026 take with that variable showed Leanne Graham through Nicholas Runolfsdottir V (eight names) and no `quinn http fallback` line. With the variable unset, the same binary still shows Manila / Cebu / Davao. |
+
+Limits that are still true after P3b:
+
+- The async fns are compiled Rust. Changing `jobs.rs` needs a rebuild. Changing markup or classes in `view.rs` hot-reloads. An in-flight future that is still mounted is not started a second time and is not aborted by that reload.
+- The body is a chain of named fns. An inline `if` / `match` / loop / arithmetic / nested closure does not run. The chain key is the idents, so two methods named `save` share one registration. A struct literal inside the chain is rejected; dispatch it, or pass it as the only argument of one function.
+- `JobValue` is still the script value language. Rust types cross the boundary through `Serialize` / `Deserialize` and `Display`, then JSON.
+- `<ErrorBoundary>` still does not catch a script panic or a panic outside the job future. A panic inside the future is an error phase, and the worker thread still prints the panic hook line.
 - Server functions, websockets, and hydration are out. The HTTP path is one optional GET.
 
 A `<For>` that is the only child of a suspense or boundary function is wrapped in a `RoundedView`. A bare `for` emits into the surrounding widget literal; a function has none, so the rows would otherwise not mount.
 
-The P2 take, before these futures, was measured 25 Oct 2026, about 7:45 PM Asia/Manila: pid 95336, starttime 3602412, window `0x2200002`, markup 325.3 ms, class 231.7 ms. That binary baked the results. The P3a take, 25 Oct 2026 at 9:44 PM Asia/Manila, pid 101729, starttime 4019518, window `0x2000002`, was 328.1 ms from `fsync` of `"Rail"` → `"Sidebar"` to the first changed frame, with the note still loading. The fetched note was the next change, at 2428.0 ms, in that reloaded tree. Details are in [benchmarks.md](benchmarks.md).
+The P2 take, before these futures, was measured 25 Oct 2026, about 7:45 PM Asia/Manila: pid 95336, starttime 3602412, window `0x2200002`, markup 325.3 ms, class 231.7 ms. That binary baked the results. The P3a take, 25 Oct 2026 at 9:44 PM Asia/Manila, pid 101729, starttime 4019518, window `0x2000002`, was 328.1 ms from `fsync` of `"Rail"` → `"Sidebar"` to the first changed frame, with the note still loading. The fetched note was the next change, at 2428.0 ms, in that reloaded tree. The P3b take, 26 Oct 2026 at 4:45:30 AM Asia/Manila, pid 107429, starttime 4380723, window `0x2000002`, was 253.5 ms from `fsync` of `"Sidebar"` → `"Rail"` to the first changed frame, with `Loading the pair` still showing. `Pair: pair ada p2` was the next change, at 1952.8 ms, in that reloaded tree. The X server reused `0x2000002`; starttime is what identifies the process. Details are in [benchmarks.md](benchmarks.md).

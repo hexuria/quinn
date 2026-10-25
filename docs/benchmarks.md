@@ -154,7 +154,22 @@ Closing the modal later in that same take showed `Note: Ada's note`, `Place: Man
 | `"Rail"` → `"Sidebar"` | still `Loading the note`, `Saved Davao`, `Davao won`, Manila / Cebu / Davao | 328.1 |
 | same request, next pixel change | `Note: Ada's note` with the label already `Sidebar` | 2428.0 |
 
-The log for that generation was one `script_reload pid=101729 window_stays=1 render=1` and one `quinn job note gen 3 applied`. `view.rs` was left on `Sidebar`. Markup hot-reloads. The body of `fetch_note` in `src/jobs.rs` is compiled Rust and was not part of this edit.
+The log for that generation was one `script_reload pid=101729 window_stays=1 render=1` and one `quinn job note gen 3 applied`. `view.rs` was left on `Sidebar`. Markup hot-reloads. The body of `fetch_note` in `src/jobs.rs` is compiled Rust and was not part of this edit. That is the P3a take. The P3b measurement is the next section.
+
+### Async dashboard, multi-arg reload
+
+26 Oct 2026, 4:45:30 AM Asia/Manila (`fsync` return, unix 1792961130). `./target/release/async-dashboard --hot`, built with `--features net`. One process: pid 107429, starttime 4380723, window `0x2000002`. The title bar showed that pid, starttime, and window id for the whole take. The X server reused `0x2000002` from the P3a process, which had already exited; starttime did not change during the take. Page 2 was clicked while the pair line was idle. The line became `Loading the pair` with arg `["ada","2"]` on `chain:fetch_pair+decorate`. `examples/async-dashboard/view.rs` was then edited, `"Sidebar"` → `"Rail"`, and `fsync` returned. One continuous 30 fps capture, 80 frames, 2.667 s, 960×860. Not stitched. The clock starts when `write()` and `fsync` return and stops on the first raw rgb24 frame received after that whose pixels differ. `use_wallclock_as_timestamps` was not the clock.
+
+| Edit | What the frame showed | ms |
+| --- | --- | --- |
+| `"Sidebar"` → `"Rail"` | still `Loading the pair`, Cancelled 0, Manila / Cebu / Davao | 253.5 |
+| same request, next pixel change | `Pair: pair ada p2` with the label already `Rail` | 1952.8 |
+
+The log was `script_reload pid=107429 window_stays=1 render=1` and `quinn job pair gen 2 applied`. That generation was not cancelled. `view.rs` was restored to `Sidebar` after the take. The pair body in `src/jobs.rs` is compiled Rust and was not part of this edit.
+
+An earlier process of the same binary, pid 106752, starttime 4346240, window `0x2000002` (recycled again), showed the cancel and the struct action: `race` gen 4 aborted, gen 5 applied as `Davao won`, `stamp` gen 2 applied `{"city":"Manila","note":"desk"}` as `Stamped Manila (desk)`, and the label read `Cancelled: 1`. The superseded-future unit test is `jobrt::tests::superseded_future_stops_incrementing`.
+
+HTTP, same binary, a later process: pid 107698, starttime 4403488, window `0x2200002`, client origin +959+57, 26 Oct 2026 about 4:49 AM Asia/Manila. `QUINN_HTTP=1`. `cities` gen 1 applied with no `quinn http fallback` line. The list was Leanne Graham, Ervin Howell, Clementine Bauch, Patricia Lebsack, Chelsey Dietrich, Mrs. Dennis Schulist, Kurtis Weissnat, Nicholas Runolfsdottir V. The offline fallback is the path when `QUINN_HTTP` is unset; the reload take above is that list.
 
 ## Wasm
 

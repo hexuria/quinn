@@ -1,0 +1,16 @@
+[package]
+name = "lm-macros"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "view!, component, and run! for Makepad-backed UI"
+
+[lib]
+proc-macro = true
+
+[dependencies]
+proc-macro2 = "1"
+quote = "1"
+syn = { version = "3", features = ["full", "extra-traits"] }
+rstml = "=0.13.1"

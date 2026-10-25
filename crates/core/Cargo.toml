@@ -1,0 +1,11 @@
+[package]
+name = "lm-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "Component lifecycle and a renderer-facing surface"
+
+[dependencies]
+lm-styles = { path = "../styles" }
+lm-reactive = { path = "../reactive" }

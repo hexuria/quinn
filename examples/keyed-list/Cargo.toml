@@ -1,0 +1,13 @@
+[package]
+name = "keyed-list"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "keyed-list"
+path = "src/main.rs"
+
+[dependencies]
+lume = { path = "../../crates/lume" }

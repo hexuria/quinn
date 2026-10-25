@@ -1,0 +1,9 @@
+[package]
+name = "lm-styles"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "Small style subset mapped onto Makepad layout fields"
+
+[dependencies]

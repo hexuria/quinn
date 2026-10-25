@@ -1,0 +1,10 @@
+[package]
+name = "lm-reactive"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "Re-export of upstream Leptos reactive_graph for native UI"
+
+[dependencies]
+reactive_graph = { git = "https://github.com/leptos-rs/leptos", rev = "5ca3a9bf90cbcc0561dc4323f8018e18dce5906f", features = ["effects"] }

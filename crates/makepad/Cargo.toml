@@ -1,0 +1,12 @@
+[package]
+name = "lm-makepad"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "Makepad surface: the only renderer"
+
+[dependencies]
+lm-core = { path = "../core" }
+lm-styles = { path = "../styles" }
+makepad-widgets = { git = "https://github.com/makepad/makepad", rev = "44ecb822b48106fa76bde4dfd309e5a8a7ff1932", default-features = false }

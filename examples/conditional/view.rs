@@ -4,9 +4,9 @@ use quinn::prelude::*;
 fn Detail() -> impl IntoView {
     let (clicks, set_clicks) = signal(0);
     view! {
-        <div class="flex flex-col gap-2 p-4 rounded-window bg-system-background shadow-control dark:bg-system-background">
+        <div class="flex flex-col gap-2 p-4 w-[440px] rounded-window bg-system-background shadow-control dark:bg-system-background">
             <h2 class="text-title3 text-label dark:text-label">"Detail is mounted"</h2>
-            <span class="text-callout text-label-secondary dark:text-label-secondary">"Closing this card throws the count away. Opening it starts again."</span>
+            <span class="text-callout text-label-secondary dark:text-label-secondary">"Closing this card clears the count."</span>
             <button class="px-3 h-control-large rounded-control text-body bg-system-blue text-white dark:bg-system-blue" on:click=move |_| { set_clicks.update(|n| *n += 1); }>
                 "Detail clicks: " {move || clicks.get()}
             </button>

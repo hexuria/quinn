@@ -41,7 +41,7 @@ fn Gallery() -> impl IntoView {
             </div>
             <div class="h-[1px] bg-separator dark:bg-separator"></div>
             <div class="flex flex-col md:flex-row gap-4 p-4">
-                <div class="flex flex-col gap-3 flex-1">
+                <div class="flex flex-col gap-3">
                     <div class="flex flex-col md:flex-row gap-2">
                         <span class="text-callout text-label-secondary dark:text-label-secondary">"Stacked until md"</span>
                         <span class="text-callout text-label dark:text-label md:font-bold">"Bold from md"</span>
@@ -83,7 +83,7 @@ fn Gallery() -> impl IntoView {
                         <div class="flex flex-row items-center w-[120px] max-w-[48px] h-[32px] rounded-control bg-label"><span class="text-body text-white">"max"</span></div>
                     </div>
                 </div>
-                <div class="flex flex-col gap-3 flex-1">
+                <div class="flex flex-col gap-3">
                     <span class="text-footnote text-label-secondary dark:text-label-secondary">"PADDING"</span>
                     <div class="flex flex-row items-center gap-3">
                         <div class="w-fit px-8 py-2 bg-system-fill rounded-control"><span class="text-body text-label dark:text-label">"px py"</span></div>

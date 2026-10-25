@@ -788,7 +788,14 @@ impl Build {
         let child = body.pop().unwrap();
         // The condition is written by the button that closes the show. Resetting
         // it on the opening frame clears the flag before the on-branch runs.
-        let reset = show_resets(&child, &signal);
+        // Signals owned by this component stay. A popup writes its choice from
+        // inside the menu and still shows that choice after the menu closes.
+        // A nested component's own signals are already renamed, so they still
+        // reset when the show unmounts.
+        let reset = show_resets(&child, &signal)
+            .into_iter()
+            .filter(|name| !signals.iter().any(|signal| &signal.read == name))
+            .collect();
         Ok(ViewNode::Show {
             live_flag: format!("show_{signal}_live"),
             signal,
@@ -1348,11 +1355,14 @@ impl Build {
     }
 
     fn fresh(&mut self, base: &str) -> String {
-        let mut name = if base.is_empty() {
+        let base = if base.is_empty() {
             "node".to_string()
+        } else if base.starts_with(|ch: char| ch.is_ascii_digit()) {
+            format!("n{base}")
         } else {
             base.to_string()
         };
+        let mut name = base.clone();
         let mut n = 2;
         while !self.used.insert(name.clone()) {
             name = format!("{base}_{n}");

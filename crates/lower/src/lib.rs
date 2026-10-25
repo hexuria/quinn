@@ -364,6 +364,34 @@ mod tests {
         assert!(file.contains("quinn_show_open_1_off"));
     }
 
+    #[test]
+    fn show_keeps_a_parent_string_after_the_menu_closes() {
+        const POPUP: &str = r#"
+            #[component]
+            fn Popup() -> impl IntoView {
+                let (open, set_open) = signal(false);
+                let (choice, set_choice) = signal("On My Mac".to_string());
+                view! {
+                    <div>
+                        <button on:click=move |_| { set_open.set(true); }>{choice}</button>
+                        <Show when=move || open.get()>
+                            <button on:click=move |_| { set_choice.set("iCloud".to_string()); set_open.set(false); }>"iCloud"</button>
+                        </Show>
+                    </div>
+                }
+            }
+        "#;
+        let mut sim = Sim::new(parse_model(POPUP).unwrap());
+        assert_eq!(sim.text("button"), "On My Mac");
+        assert!(sim.click("button"));
+        assert!(sim.visible("icloud"));
+        assert!(sim.click("icloud"));
+        assert!(!sim.visible("icloud"));
+        assert_eq!(sim.text("button"), "iCloud");
+        let file = lower_file(POPUP, shell()).unwrap();
+        assert!(!file.contains("state.choice = if state.open"));
+    }
+
     const LIST: &str = r#"
         struct Item { id: u64, label: String, }
         #[component]

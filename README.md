@@ -2,6 +2,12 @@
 
 Leptos-style components, rendered by Makepad. There is no WebView and no second layout engine.
 
+The showcase follows Apple’s macOS Human Interface Guidelines. Light and dark, at 1440×900:
+
+![Notes, light](docs/images/notes-light.png)
+
+![Notes, dark](docs/images/notes-dark.png)
+
 ```rust
 use quinn::prelude::*;
 

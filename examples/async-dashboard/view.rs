@@ -77,7 +77,7 @@ fn Dashboard() -> impl IntoView {
                 <div class="h-[72px] w-full md:w-[180px] rounded-control bg-sidebar dark:bg-sidebar">
                     <span class="text-headline text-label dark:text-label">"Sidebar"</span>
                 </div>
-                <div class="flex flex-col gap-2 flex-1">
+                <div class="flex flex-col gap-2">
                     <Suspense fallback=|| view! { <span class="text-body text-label dark:text-label">"Loading the note"</span> }>
                         <span class="text-body text-label dark:text-label">"Note: " {note}</span>
                     </Suspense>

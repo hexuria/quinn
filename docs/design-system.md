@@ -6,6 +6,14 @@ The names are Tailwind-shaped utilities in `quinn-styles` (`text-headline`, `bg-
 
 `examples/showcase` is the native window: sidebar, toolbar, content, inspector, in light and dark.
 
+![Notes, light appearance](images/notes-light.png)
+
+![Settings, light appearance](images/settings-light.png)
+
+![Notes, dark appearance](images/notes-dark.png)
+
+![Settings, dark appearance](images/settings-dark.png)
+
 ## Type
 
 SF Pro cannot be redistributed. Every text node uses the variable Inter that Makepad already ships at `makepad_widgets/resources/Inter.ttf`. Example binaries pass `makepad_platform::INTER_FONT_ASSET` to `app_main!`. Weight is the `wght` axis. There is no CSS inheritance: each text node sets its own `text-*` color.

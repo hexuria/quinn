@@ -69,10 +69,9 @@ fn Showcase() -> impl IntoView {
             <div class="flex flex-col md:flex-row flex-1 items-stretch">
                 <div class="flex flex-col w-full md:w-[240px] bg-sidebar dark:bg-sidebar p-3 gap-1">
                     <span class="text-footnote text-label-secondary dark:text-label-secondary">"LIBRARY"</span>
-                    <div class="flex flex-row items-center gap-2">
-                        <div class="w-[18px] h-[18px] rounded-control-sm bg-system-orange"></div>
+                    <div class="w-full h-[28px]">
                         <button
-                            class="flex-1 px-2 h-control-large rounded-control text-body text-label border-0 bg-transparent dark:text-label"
+                            class="w-full h-[28px] pl-[32px] rounded-control text-body text-label border-0 bg-transparent dark:text-label"
                             class:bg-system-blue=move || notes.get()
                             class:text-white=move || notes.get()
                             on:click=move |_| {
@@ -81,11 +80,11 @@ fn Showcase() -> impl IntoView {
                                 set_settings.set(false);
                             }
                         >"Notes"</button>
+                        <div class="absolute left-2 top-[5px] w-[18px] h-[18px] rounded-control-sm bg-system-orange"></div>
                     </div>
-                    <div class="flex flex-row items-center gap-2">
-                        <div class="w-[18px] h-[18px] rounded-control-sm bg-system-blue"></div>
+                    <div class="w-full h-[28px]">
                         <button
-                            class="flex-1 px-2 h-control-large rounded-control text-body text-label border-0 bg-transparent dark:text-label"
+                            class="w-full h-[28px] pl-[32px] rounded-control text-body text-label border-0 bg-transparent dark:text-label"
                             class:bg-system-blue=move || table.get()
                             class:text-white=move || table.get()
                             on:click=move |_| {
@@ -94,11 +93,11 @@ fn Showcase() -> impl IntoView {
                                 set_settings.set(false);
                             }
                         >"Table"</button>
+                        <div class="absolute left-2 top-[5px] w-[18px] h-[18px] rounded-control-sm bg-system-blue"></div>
                     </div>
-                    <div class="flex flex-row items-center gap-2">
-                        <div class="w-[18px] h-[18px] rounded-control-sm bg-system-gray"></div>
+                    <div class="w-full h-[28px]">
                         <button
-                            class="flex-1 px-2 h-control-large rounded-control text-body text-label border-0 bg-transparent dark:text-label"
+                            class="w-full h-[28px] pl-[32px] rounded-control text-body text-label border-0 bg-transparent dark:text-label"
                             class:bg-system-blue=move || settings.get()
                             class:text-white=move || settings.get()
                             on:click=move |_| {
@@ -107,6 +106,7 @@ fn Showcase() -> impl IntoView {
                                 set_settings.set(true);
                             }
                         >"Settings"</button>
+                        <div class="absolute left-2 top-[5px] w-[18px] h-[18px] rounded-control-sm bg-system-gray"></div>
                     </div>
                 </div>
                 <div class="w-full md:w-[1px] h-[1px] md:h-full bg-separator dark:bg-separator"></div>
@@ -152,14 +152,13 @@ fn Showcase() -> impl IntoView {
                                     <NoteRow item=item />
                                 </For>
                             </div>
-                            <span class="text-footnote text-label-tertiary dark:text-label-tertiary">"Rows are separated, not striped. The list has no row index."</span>
                         </div>
                     </Show>
                     <Show when=move || settings.get()>
                         <div class="flex flex-col gap-4">
                             <span class="text-title2 text-label dark:text-label">"Settings"</span>
                             <div class="flex flex-col md:flex-row gap-6">
-                                <div class="flex flex-col gap-4 flex-1">
+                                <div class="flex flex-col gap-4">
                                     <span class="text-footnote text-label-secondary dark:text-label-secondary">"SEGMENTED CONTROL"</span>
                                     <div class="flex flex-row gap-1 p-1 rounded-control bg-system-fill dark:bg-system-fill w-fit">
                                         <button
@@ -184,14 +183,16 @@ fn Showcase() -> impl IntoView {
                                     <span class="text-footnote text-label-secondary dark:text-label-secondary">"SWITCH"</span>
                                     <div class="flex flex-row items-center gap-3">
                                         <Show when=move || switch_off.get()>
-                                            <button class="flex flex-row items-center w-[44px] h-[26px] rounded-full border-0 bg-system-fill px-1 dark:bg-system-fill" on:click=move |_| { set_switched.set(true); set_switch_off.set(false); }>
-                                                <div class="w-[18px] h-[18px] rounded-full bg-white shadow-control"></div>
-                                            </button>
+                                            <div class="flex flex-row items-center w-[44px] h-[26px] rounded-full bg-system-fill px-1 dark:bg-system-fill">
+                                                <div class="w-[18px] h-[18px] rounded-full bg-white"></div>
+                                                <button class="absolute inset-0 border-0 bg-transparent" on:click=move |_| { set_switched.set(true); set_switch_off.set(false); }>" "</button>
+                                            </div>
                                         </Show>
                                         <Show when=move || switched.get()>
-                                            <button class="flex flex-row items-center justify-end w-[44px] h-[26px] rounded-full border-0 bg-system-green px-1 dark:bg-system-green" on:click=move |_| { set_switched.set(false); set_switch_off.set(true); }>
-                                                <div class="w-[18px] h-[18px] rounded-full bg-white shadow-control"></div>
-                                            </button>
+                                            <div class="flex flex-row items-center justify-end w-[44px] h-[26px] rounded-full bg-system-green px-1 dark:bg-system-green">
+                                                <div class="w-[18px] h-[18px] rounded-full bg-white"></div>
+                                                <button class="absolute inset-0 border-0 bg-transparent" on:click=move |_| { set_switched.set(false); set_switch_off.set(true); }>" "</button>
+                                            </div>
                                         </Show>
                                         <span class="text-body text-label dark:text-label">"iCloud"</span>
                                     </div>
@@ -201,7 +202,7 @@ fn Showcase() -> impl IntoView {
                                             <button class="w-[18px] h-[18px] rounded-control-sm bg-control-background border border-separator dark:bg-control-background dark:border-separator" on:click=move |_| { set_checked.set(true); set_check_off.set(false); }>" "</button>
                                         </Show>
                                         <Show when=move || checked.get()>
-                                            <button class="w-[18px] h-[18px] rounded-control-sm bg-system-blue border-0 text-white text-caption dark:bg-system-blue" on:click=move |_| { set_checked.set(false); set_check_off.set(true); }>"✓"</button>
+                                            <button class="w-[18px] h-[18px] rounded-control-sm bg-system-blue border-0 text-white text-caption dark:bg-system-blue" on:click=move |_| { set_checked.set(false); set_check_off.set(true); }>"x"</button>
                                         </Show>
                                         <span class="text-body text-label dark:text-label">"Show in menu bar"</span>
                                     </div>
@@ -223,10 +224,10 @@ fn Showcase() -> impl IntoView {
                                         placeholder="Folder name"
                                     />
                                 </div>
-                                <div class="flex flex-col gap-4 flex-1">
+                                <div class="flex flex-col gap-4">
                                     <span class="text-footnote text-label-secondary dark:text-label-secondary">"PUSH BUTTONS"</span>
                                     <div class="flex flex-row gap-2">
-                                        <button class="px-3 h-control-large rounded-control text-body bg-system-blue text-white dark:bg-system-blue" on:click=move |_| { set_alert.set(true); }>"Delete"</button>
+                                        <button class="px-3 h-control-large rounded-control text-body text-system-red border-0 bg-transparent dark:text-system-red" on:click=move |_| { set_alert.set(true); }>"Delete Note"</button>
                                         <button class="px-3 h-control-large rounded-control text-body bg-control-background text-label border border-separator dark:bg-control-background dark:text-label dark:border-separator" on:click=move |_| { set_toast.set(true); }>"Bordered"</button>
                                         <button class="px-3 h-control-large rounded-control text-body text-system-blue border-0 bg-transparent dark:text-system-blue">"Borderless"</button>
                                     </div>
@@ -259,7 +260,6 @@ fn Showcase() -> impl IntoView {
                                             <div class="h-[8px] w-full rounded-full bg-system-blue"></div>
                                         </Show>
                                     </div>
-                                    <span class="text-caption text-label-tertiary dark:text-label-tertiary">"The bar is stepped. There is no drag slider."</span>
                                 </div>
                             </div>
                         </div>
@@ -292,7 +292,7 @@ fn Showcase() -> impl IntoView {
                         <button class="absolute inset-0 z-40 border-0 bg-[#1c191780] hover:bg-[#1c191780] text-white" on:click=move |_| { set_sheet.set(false); }>" "</button>
                         <div class="absolute left-[510px] top-[160px] z-50 w-[420px] p-5 rounded-sheet bg-system-background shadow-window dark:bg-system-background">
                             <span class="text-title3 text-label dark:text-label">"New Note"</span>
-                            <span class="text-callout text-label-secondary dark:text-label-secondary">"Sheets sit above the window. The dimming layer is a translucent fill, not a blur."</span>
+                            <span class="text-callout text-label-secondary dark:text-label-secondary">"Saved on this Mac. You can find it in the library."</span>
                             <input
                                 class="h-control-large rounded-control bg-control-background text-body text-label border border-separator dark:bg-control-background dark:text-label dark:border-separator"
                                 placeholder="Title"

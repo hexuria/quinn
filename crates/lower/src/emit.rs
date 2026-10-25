@@ -1829,7 +1829,7 @@ fn emit_el(
     let mut lines = Vec::new();
     // `bind:value` omits `text:` so a reload does not assign the field and
     // move the caret. The sibling that reads the signal still updates.
-    if el.bind.is_none() && el.tag != "div" && (el.value.is_some() || !el.parts.is_empty()) {
+    if el.bind.is_none() && el.tag != "div" && (el.value.is_some() || !el.parts.is_empty() || el.tag == "button") {
         lines.push(format!("text: {}", text_expr(el, row)));
     }
     if let Some(placeholder) = &el.placeholder {

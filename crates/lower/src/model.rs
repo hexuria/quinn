@@ -42,6 +42,8 @@ pub enum Part {
     Param(String),
     /// `mod.ctx.<key>`
     Ctx(String),
+    /// `state.<job>_value`. A resource or action result.
+    Job(String),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -99,6 +101,13 @@ pub enum HandlerStmt {
     },
     /// `state.route = path` and render. Not a URL bar.
     Navigate(HxExpr),
+    /// `action.dispatch(arg)`. Starts one client job. Not a server call.
+    Dispatch {
+        action: String,
+        arg: HxExpr,
+    },
+    /// Flip `state.quinn_dark`. The shell signal behind `dark:` classes.
+    ToggleTheme,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -190,6 +199,46 @@ pub enum ViewNode {
     Routes {
         routes: Vec<(String, Vec<ViewNode>)>,
     },
+    /// Fallback while any named job is `"loading"`. `transition` keeps a
+    /// settled value on screen and shows the fallback beside it.
+    Suspense {
+        jobs: Vec<String>,
+        transition: bool,
+        fallback: Vec<ViewNode>,
+        child: Box<ViewNode>,
+    },
+    /// Fallback when any named job's phase is `"error"`.
+    Boundary {
+        jobs: Vec<String>,
+        fallback: Vec<ViewNode>,
+        child: Box<ViewNode>,
+    },
+    /// Lifted to the window overlay. Not a DOM portal.
+    Portal {
+        nodes: Vec<ViewNode>,
+    },
+}
+
+/// A closed async job. The body is not Rust: `view.rs` is not compiled.
+/// The shell's executor waits `delay_ms`, then writes the phase fields.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Job {
+    pub name: String,
+    pub kind: JobKind,
+    pub delay_ms: u64,
+    /// Empty when the outcome is `Err`.
+    pub ok_text: String,
+    /// Empty when the outcome is `Ok`.
+    pub err_text: String,
+    /// Signal read that restarts a `Resource` when it changes.
+    pub source: Option<String>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum JobKind {
+    Local,
+    Resource,
+    Action,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -206,6 +255,8 @@ pub struct Model {
     pub has_ctx: bool,
     /// Root `provide_context` lines, emitted at the start of `on_render`.
     pub ctx_init: Vec<(String, String)>,
+    /// Client jobs. The executor reads `mod.quinn_job_*` and writes phase fields.
+    pub jobs: Vec<Job>,
 }
 
 impl Model {

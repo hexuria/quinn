@@ -1,0 +1,13 @@
+[package]
+name = "async-dashboard"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "async-dashboard"
+path = "src/main.rs"
+
+[dependencies]
+quinn = { path = "../../crates/quinn" }

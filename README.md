@@ -42,7 +42,7 @@ export LIBGL_ALWAYS_SOFTWARE=1
 cargo run -p counter --release -- --hot
 ```
 
-Edit `examples/counter/view.rs` while that process is up. The same command works for `conditional`, `keyed-list`, `form`, `retain`, and `tailwind-gallery`. Saving `src/main.rs` still rebuilds. `baseline-counter` and `probe-widget-lifecycle` are hand-written Makepad programs; they have no `view.rs`.
+Edit `examples/counter/view.rs` while that process is up. The same command works for `conditional`, `keyed-list`, `form`, `retain`, `tailwind-gallery`, `app-shell`, and `async-dashboard`. Saving `src/main.rs` still rebuilds. `baseline-counter` and `probe-widget-lifecycle` are hand-written Makepad programs; they have no `view.rs`. `async-dashboard` calls `quinn::drive_shell` so resources, the dark flag, and the window width update without a rebuild.
 
 `xvfb-run -a cargo run -p counter --release` still starts a window when you are not reloading. Drop `xvfb-run -a` if `DISPLAY` is already a real X server. On macOS, leave both GPU variables unset and follow [docs/TESTING_ON_MACOS.md](docs/TESTING_ON_MACOS.md).
 

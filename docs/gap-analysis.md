@@ -1,6 +1,6 @@
 # Gap analysis
 
-P0 and P1 from section 4 are implemented. P2 is not. Status is against the running UI: `view.rs` lowered to Makepad script (`hot/ui.rs`, `mod.state`, `on_render`). The headless Rust graph (`quinn-core`, `MemorySurface`, `reactive_graph`) is named when it can do something the window cannot.
+P0, P1, and P2 from section 4 are implemented. Status is against the running UI: `view.rs` lowered to Makepad script (`hot/ui.rs`, `mod.state`, `on_render`). The headless Rust graph (`quinn-core`, `MemorySurface`, `reactive_graph`) is named when it can do something the window cannot.
 
 Sources checked in this tree and in the pinned Makepad checkout `44ecb822`:
 
@@ -11,7 +11,7 @@ Sources checked in this tree and in the pinned Makepad checkout `44ecb822`:
 - Text and draw: `draw/src/shader/draw_text.rs` (`TextStyle`, `FontMember.weight`), `widgets/core/src/button.rs` (hover/down animator uniforms)
 - Leptos 0.8.0 release notes (https://github.com/leptos-rs/leptos/releases/tag/v0.8.0). 0.8 keeps the 0.7 authoring model. The additions that matter here are store fields implementing `IntoClass` / `IntoStyle` / `AttributeValue`, `Suspend::new` accepting `IntoFuture`, and websocket server functions. Quinn's `reactive_graph` pin is `5ca3a9bf` (`docs/compatibility.md`), the 0.7-era graph, and the examples do not execute it.
 
-`docs/research.md` describes an earlier turtle (row, column, spacing, padding, `Align`, `Fill`/`Fit`/`Fixed`). The pin is past that. Wrap, overlay, `abs_pos`, fill weight/shrink/basis, `Distribute`, min/max, relative sizes, and a `Grid` widget are in `44ecb822`. Quinn now emits the P0 slice of that (wrap on a row, `Distribute`, `RowAlign`, fill weight/shrink/basis, min/max, `Size::Rel`) and the P1 slice (`widgets.Grid`, `abs_pos`, clip, scroll). Overlay as its own flow, a four-side inset, and `z-index` are still not emitted.
+`docs/research.md` describes an earlier turtle (row, column, spacing, padding, `Align`, `Fill`/`Fit`/`Fixed`). The pin is past that. Wrap, overlay, `abs_pos`, fill weight/shrink/basis, `Distribute`, min/max, relative sizes, and a `Grid` widget are in `44ecb822`. Quinn now emits the P0 slice of that (wrap on a row, `Distribute`, `RowAlign`, fill weight/shrink/basis, min/max, `Size::Rel`), the P1 slice (`widgets.Grid`, clip, scroll), and the P2 slice (parent-relative `Flow::Overlay` frames, stacking order). `abs_pos` is not emitted. `align-content` is still not a turtle field.
 
 ## 1. Leptos syntax parity
 
@@ -36,7 +36,7 @@ Legend: **supported** means a `view.rs` the lowerer accepts and a running exampl
 | `RwSignal`, split read/write, `ReadSignal` | Missing | The re-export is whatever `reactive_graph` prelude has, and only compiled tests can call it. Script would be the same `mod.state` field with two names. Small once expressions exist. |
 | `Memo`, derived closures | Missing | Text `if` is the only derived form, and it is recomputed inside `on_render`, not cached. A memo is a script function of `state` called from `on_render`. No dependency tracking. Medium for a real expression language; small if the set of expressions stays closed. |
 | `Effect` / `RenderEffect` | Partial | Headless code has `ImmediateEffect` (`crates/reactive/src/lib.rs`) because Makepad has no async executor (`docs/decisions.md`). The window has no effect. A script effect is "the setter writes state and calls `render()`". An effect that must run without rebuilding the tree needs a script function invoked from the setter, not a subscriber list. Medium, and it will not match Leptos's "track what you read". |
-| Resources, `async`, `Suspense`, `Transition`, `Action` | Missing | Script is synchronous. 0.8's `Suspend::new(IntoFuture)` and `Action` still need a future. A Rust task that writes `mod.state` and calls `ui.host.render()` when it finishes is a bridge beside the VM, the thing option (c) avoided for UI state. Large. Websocket server functions from 0.8 are the same bridge plus a socket. |
+| Resources, `async`, `Suspense`, `Transition`, `Action` | Partial | `LocalResource::new`, `Resource::new`, and `Action::new` lower a closed body (`delay_ms`, `Ok("...")` / `Err("...")`) onto `mod.state` phase fields. `drive_shell` arms `Cx::start_timeout` and `mod.quinn_finish` writes the literal. `<Suspense>` / `<Transition>` are script gates. Not a Rust future, not `Suspend::new(IntoFuture)`, and not a server. |
 | `on_cleanup` | Partial | Re-exported and used by the headless owner. Script unmount is "this `on_render` did not return the widget", and `<Show>` zeroes the child's fields (`emit.rs` `emit_show_fn`). There is no user `on_cleanup` hook. A script callback stored on `mod` and called from the show's off branch is small. |
 
 ### Control flow
@@ -45,9 +45,9 @@ Legend: **supported** means a `view.rs` the lowerer accepts and a running exampl
 | --- | --- | --- |
 | `<Show when>` | Partial | Works at the host and inside a `<For>` row. Two functions: `_on` returns the child, `_off` returns `0`. A statement `if` in `on_render` unbalances the script stack, which is why it is functions. Fallback is the off branch, not a `<Show fallback>`. A row show is `row_quinn_show_<signal>_<n>(id, …)` and its flag lives on `state.r_<flag>["k"+id]`. Removing a row does not clear that id; pushing the id again calls `quinn_row_reset`. |
 | `<For each key let>` | Partial | Keyed counts live on `state.counts["k"+id]` because anonymous children match by index (`docs/architecture.md`). The row template is one element. Add, pop, and reverse are hard-coded actions. A general `each()` closure is not. Indexed `For` without a key would be the same loop and would lose per-row state on reorder, which is the turtle's behavior, not a bug to paper over. |
-| `<Suspense>` / `<Transition>` | Missing | Needs the resource bridge above. The widget can be a `<Show>` on a loaded flag. The async part is the large piece. |
-| `<ErrorBoundary>` | Missing | A script error aborts the render (`View::render` discards a failed `on_render`). Catching that and drawing a fallback is a host change around `script_eval` / `render`, not a component the lowerer can fake. Medium, and it will not catch a Rust panic in the shell. |
-| `<Portal>` | Missing | 0.7/0.8 `Portal` moves DOM into another node. The turtle has `Flow::Overlay` and `Walk.abs_pos` (`turtle.rs`). A portal is an overlay child or a second `Window`, not a DOM mount point. Medium for overlay; a second OS window is a shell change. |
+| `<Suspense>` / `<Transition>` | Partial | A gate function. Loading with an empty value shows the fallback. `<Transition>` keeps the previous value on screen beside the fallback. The job body is the closed literal above, not an arbitrary future. |
+| `<ErrorBoundary>` | Partial | Shows the fallback when a child job's phase is `"error"`. It does not catch a script panic or a failed `on_render`. |
+| `<Portal>` | Partial | Lifted to a later sibling of the app view under `flow: Overlay`, so it paints above the page. Not a DOM mount and not a second OS window. |
 | `<DynamicChild>` / `<{expr}>` | Missing | The macro has no dynamic tag. Script would store a tag name on `state` and branch in `on_render` with the same function-per-branch pattern as `<Show>`. Medium, and only for tags the lowerer knows. |
 
 ### Attributes
@@ -101,8 +101,8 @@ Quinn's parser is a closed utility list (`crates/styles/src/lib.rs`). "Supported
 | Shadows | Feasible in a shader | `draw_vector.rs` `shadow_rounded_rect` (gaussian SDF). Not wired to `RoundedView`. | A shadow utility is a shader on the view, or an extra draw behind it. It is not layout. Medium because the view prototype Quinn emits has no shadow input. |
 | Transforms | New capability for CSS transforms | No `transform` field on `Walk`. Overlay and `abs_pos` move a walk. Scale and rotate are draw-matrix work (`draw_text.rs` has a mat helper near line 3530 used by glyphs, not a widget transform). | `translate` can be `abs_pos` or a margin. `scale` / `rotate` need a draw transform inherited by children. That is new. |
 | Transitions, animation | Feasible for widget animators | `Button` ramps `hover` and `down` with `anim_time` (`widgets/core/src/button.rs` around 362). `View` has an `Animator` (`view.rs`). | A duration utility can drive an animator Quinn does not currently set. CSS `@keyframes` and transition-all are not that animator. |
-| States: hover, focus, active, disabled | Partial | Button `color_hover`, `color_down`, `color_disabled` (`button.rs`). Quinn emits them when `hover:` / `active:` / `disabled:` is present and does not copy the face color. A bare `disabled` sets the disabled mix. | `focus:` is still unset. A `div` hover still needs the view animator. |
-| Responsive breakpoints | New capability as CSS, feasible as a signal | No media-query type in the turtle. `Size::Rel` viewport units are not breakpoints. | `state.wide` set from the window size in the shell, then the same `if` the lowerer uses for text. The shell does not report size today. Medium, and it is not `md:`. |
+| States: hover, focus, active, disabled | Partial | Button `color_hover`, `color_down`, `color_focus`, `color_disabled`. A `div` with `hover:` gets an `Animator` that swaps `draw_bg.color`, because `RoundedView`'s shader reads `self.color` and `View` plays `hover.on` / `down.on`. `focus:` is `color_focus` on `Button` and `TextInput` only. `View` does not play `focus.on`. |
+| Responsive breakpoints | Partial | `sm:` 640, `md:` 768, `lg:` 1024, `xl:` 1280 read `state.quinn_width`. `dark:` reads `state.quinn_dark`. `drive_shell` sets the width from `WindowGeomChange`. `toggle_theme()` flips the theme. Not a media query. |
 | Dark mode | Feasible as a signal | No color scheme in the turtle. | `state.dark` picked by the shell, two colors in the class string. Small once `class:` exists. It will not follow the OS unless the shell reads it. |
 | Arbitrary values `w-[13px]`, `bg-[#abc]` | Missing | The inline parser already accepts `width: 13px` and `#rrggbb` (`parse_inline`). | Accept `w-[13px]` in `apply_token`. Small. `bg-[url(...)]` is not a color and stays missing. |
 
@@ -185,29 +185,48 @@ Shipped in `quinn-styles`, `quinn-lower`, `examples/app-shell`, and the bottom o
 | Stores | `signal(Profile { name, city })` seeds `state.profile: {name, city}`. `set_profile.update(\|p\| { p.city = "Cebu".into(); })` assigns `state.profile.city`. `{profile.city}` reads it. |
 | `bind:value` | The input omits `text:`. `on_change` writes the signal and calls `root.render()`. The sibling label updates. The caret stays where it was clicked. |
 
-Limits that are still true after P1:
+Limits that were still true after P1. P2 changes context shadowing, `#[prop(into)]`, parent-relative `absolute`, `hover:` on a `div`, `focus:` on buttons and inputs, and `z-index`. See the P2 section for the current rule.
 
-- `mod.ctx` is one object for the process. A nested `provide_context` does not shadow a key that is already set. Editing the provider literal does not reset a value that is already there.
+- `mod.ctx` is one object for the process. After P1 a nested `provide_context` did not shadow. P2 assigns and restores around the widget. The root seed is still nil-guarded, so editing the root provider literal does not reset a value that is already there.
 - The router is not `leptos_router`. There is no URL bar, no history API, and no route params.
 - A script function returns one widget. The widget a slot or route returns is anonymous, because `name := Widget` does not yield the widget. Named children inside that widget keep their names. Children inside a `<For>` row are inlined, not a separate slot function.
-- `#[prop(into)]` does not insert a Rust `Into` call. A non-signal path is read as a signal.
+- `#[prop(into)]` unwraps a string literal's `.into()` / `.to_string()`. A path that is not a signal is an error. It is not a Rust `Into` impl.
 - `widgets.Grid` draws with `DrawQuad`. A gradient, a shadow, or `scroll_bars` on the grid div itself is not emitted. Put those on a child `RoundedView` / `RoundedShadowView`. Implicit rows are a fixed pixel size (the tallest explicit child height, otherwise 40). This Grid rejects `auto` tracks, so there is no content-sized row. Every implicit row shares that one size, and the default `align_items` stretches the cell to it.
-- `abs_pos` is one point in draw space, not a position inside the parent, and not a four-side inset. `left` / `top` (and `right` / `bottom` when the other side is unset) set that point. Ancestors that do not say `overflow-hidden` emit `clip_x: false` and `clip_y: false`, because a clipping parent hides a point that sits outside its box. `left-2 top-1` is `(8, 4)` from the draw origin.
+- P1 emitted `abs_pos`, which is one point in draw space. P2 stopped emitting it. `left` / `top` / `right` / `bottom` / `inset-0` are padding and align on a parent-sized overlay frame. `overflow-hidden` still sets `clip_x` / `clip_y`.
 - The stock `RoundedView` shader has gradient uniforms and no shadow uniforms. A shadow selects `RoundedShadowView`, which has the same gradient uniforms. `shadow_color` is `#0006`.
 - Weights use RobotoFlex. The theme face named `font_bold` is IBM Plex SemiBold, a static file, so Quinn does not switch to it for `font-bold`. The example must list `ROBOTO_FLEX_FONT_ASSET` or the glyphs come out as boxes.
 - `bind:value` is the path that skips `text:`. `value=` with `on:input` still writes `text:` and can still move the caret.
-- Column wrap, `hover:` on a `div`, `focus:`, `align-content`, `z-index`, and Taffy stay out.
+- Column wrap, `align-content`, and Taffy stay out. `hover:` on a `div`, `focus:` on a button or input, and `z-index` landed in P2.
 
-### P2 — do not pretend these are layout work
+### P2 — in, with the limits below
 
-| Item | Size | Notes |
-| --- | --- | --- |
-| Resources, `Suspense`, `Transition`, `Action` | Large | A Rust task writing `mod.state` and calling `render`. Script stays synchronous. |
-| Server functions and 0.8 websocket server functions | Out of scope | No server and no hydration. Call HTTP from the shell if a screen needs data. |
-| `ErrorBoundary` | Medium | Host wrapper around a failed `render`, not a Leptos error hook. |
-| `Portal` | Medium | `Flow::Overlay` or a second window. Not a DOM portal. |
-| Breakpoints and dark mode | Medium | Signals set by the shell. Not media queries. |
-| `align-content`, inset stretch, `z-index` | Large | Upstream turtle. Revisit only after P0 emits what the turtle can already do. |
-| Taffy | Not recommended | See section 3. Reconsider only if `Grid` plus the turtle holes still cannot express a screen we have to ship. |
+`examples/async-dashboard` is the screen. `drive_shell` (end of `handle_event`) is the executor. Script stays synchronous.
 
-Practical parity is P0 plus P1. It is not a Leptos 0.8 port and it is not `leptos_router`. The authoring syntax can grow. The runtime stays `mod.state`, `mod.ctx`, and `render()`.
+| Item | What landed |
+| --- | --- |
+| `LocalResource` / `Resource` / `Action` | The body is `delay_ms(N); Ok("literal")` or `Err("literal")`. Fields: `{name}_phase`, `{name}_value`, `{name}_error`, `{name}_gen`. An action also has `{name}_pending` and `{name}_arg`. `Resource` stores `{name}_source` and `quinn_sync_jobs()` restarts it when that signal changes, without clearing the previous value. |
+| `<Suspense fallback>` / `<Transition fallback>` | `quinn_gate_N`. Loading and an empty value show the fallback. A transition with a value already set shows the fallback and the child. |
+| `<ErrorBoundary fallback>` | `quinn_err_N` when a child job's phase is `"error"`. |
+| `<Portal>` | When the tree has one, `host` is `flow: Overlay` and the page is `app`. Portal children are later siblings, so they paint on top. A closed `<Show>` returns `0` and does not eat hits. A `<Show>` does not reset the signal it is watching, so a portal can stay open. Signals written inside the branch still reset when that branch opens. |
+| `sm:` / `md:` / `lg:` / `xl:` / `dark:` | `state.quinn_width` (seeded, then `WindowGeomChange`) and `state.quinn_dark` (`toggle_theme()`). Both sit inside the `mod.state` nil-guard, so a hot reload keeps a resized width and a toggled theme. |
+| Parent-relative position | An `absolute` child is wrapped in a `Fill` / `Fill` `flow: Overlay` frame. Padding is `left` / `top` / `right` / `bottom`. `align` is `1` only when that edge is set and the opposite edge is not. `inset-0` is zero padding plus `w-full` / `h-full` on the child. `abs_pos` is not emitted. |
+| `z-index` | `z-0` through `z-50`, `z-N`, `z-[n]`. Siblings are painted in order. Negative `z` is before the in-flow box; the rest are after. There is no turtle z field. |
+| Nested `provide_context` | The provider assigns `mod.ctx.key` and restores the previous value around the widget. The root seed stays nil-guarded. |
+| `#[prop(into)]` | `"Ada".into()` / `.to_string()` becomes the literal. A path that is not a signal is an error. |
+| `hover:` on a `div` | `cursor: MouseCursor.Arrow` plus an `Animator` that writes `draw_bg.color`. The down track's resting color is the base color, so the first frames are not the hover swatch. `focus:` sets `draw_bg.color_focus` on `Button` and `TextInput`. |
+
+Limits that are still true after P2:
+
+- The job body is not Rust and not a future. `view.rs` is not compiled. `delay_ms` plus `Ok` / `Err` of a string literal is the whole language. `Action`'s result ignores the `dispatch` argument. A `Resource` refetch shows the same literal again.
+- `<ErrorBoundary>` does not catch a script error or a Rust panic. A failed `on_render` still discards the frame.
+- Server functions, websocket server functions, hydration, and `leptos_router` are out. No server.
+- `align-content` is not implemented. Turtle `align` is per item, and `wrap_spacing` is a constant gap. Quinn does not vendor or patch Makepad for this.
+- An `absolute` child of a `Grid` is positioned inside the cell. The grid is not rewritten into an overlay, because that would drop the columns.
+- `focus:` on a `div` does nothing. `View` plays hover and down, not focus.
+- The overlay frame that positions an `absolute` child does not set `cursor`, so it does not steal hits. The child does when it has an animator (`hover:`) or is a button.
+- `Flow::Overlay` uses the parent's align for every overlay child. Per-child align is the frame's align, computed from which edges were set.
+- Taffy stays out.
+
+Practical parity is P0 plus P1 plus this P2 slice. It is not a Leptos 0.8 port. The runtime stays `mod.state`, `mod.ctx`, and `render()`, with `drive_shell` as the only timer bridge. `drive_shell` reads script numbers with `as_number`, because an integer literal is not an `f64`.
+
+Measured on the same machine as the other rows in [benchmarks.md](benchmarks.md), 25 Oct 2026, about 7:45 PM Asia/Manila. pid 95336, starttime 3602412, window `0x2200002`, one uncut take: markup 325.3 ms, class 231.7 ms, with the loaded note, dark mode, and the open modal still there.

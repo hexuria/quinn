@@ -17,7 +17,11 @@ impl Rgba {
     }
 
     pub fn hex_script(self) -> String {
-        format!("#x{:02x}{:02x}{:02x}", self.r, self.g, self.b)
+        if self.a == 255 {
+            format!("#x{:02x}{:02x}{:02x}", self.r, self.g, self.b)
+        } else {
+            format!("#{:02x}{:02x}{:02x}{:02x}", self.r, self.g, self.b, self.a)
+        }
     }
 
     pub fn channels(self) -> (f32, f32, f32, f32) {
@@ -213,9 +217,11 @@ pub struct Style {
     pub hover_bg: Option<Rgba>,
     pub active_bg: Option<Rgba>,
     pub disabled_bg: Option<Rgba>,
+    pub focus_bg: Option<Rgba>,
     pub hover_fg: Option<Rgba>,
     pub active_fg: Option<Rgba>,
     pub disabled_fg: Option<Rgba>,
+    pub focus_fg: Option<Rgba>,
     /// Bare `disabled` class: the button starts in the disabled animator state.
     pub disabled: bool,
     pub border_width: Option<f64>,
@@ -225,9 +231,14 @@ pub struct Style {
     pub grid_cols: Option<u32>,
     pub col_span: Option<u32>,
     pub absolute: bool,
-    /// `left` / `right` in px. One point, not a stretched inset.
+    /// Parent-relative insets. `left` / `top` are `abs_x` / `abs_y`.
+    /// `right` / `bottom` stretch or pin the other edge. Not draw-space.
     pub abs_x: Option<f64>,
     pub abs_y: Option<f64>,
+    pub abs_right: Option<f64>,
+    pub abs_bottom: Option<f64>,
+    /// Paint order among overlay siblings. Higher paints later.
+    pub z_index: Option<i64>,
     pub clip: bool,
     pub scroll_x: bool,
     pub scroll_y: bool,
@@ -345,6 +356,9 @@ impl Style {
         if over.disabled_bg.is_some() {
             self.disabled_bg = over.disabled_bg;
         }
+        if over.focus_bg.is_some() {
+            self.focus_bg = over.focus_bg;
+        }
         if over.hover_fg.is_some() {
             self.hover_fg = over.hover_fg;
         }
@@ -353,6 +367,9 @@ impl Style {
         }
         if over.disabled_fg.is_some() {
             self.disabled_fg = over.disabled_fg;
+        }
+        if over.focus_fg.is_some() {
+            self.focus_fg = over.focus_fg;
         }
         if over.disabled {
             self.disabled = true;
@@ -380,6 +397,15 @@ impl Style {
         }
         if over.abs_y.is_some() {
             self.abs_y = over.abs_y;
+        }
+        if over.abs_right.is_some() {
+            self.abs_right = over.abs_right;
+        }
+        if over.abs_bottom.is_some() {
+            self.abs_bottom = over.abs_bottom;
+        }
+        if over.z_index.is_some() {
+            self.z_index = over.z_index;
         }
         if over.clip {
             self.clip = true;
@@ -454,6 +480,10 @@ pub fn parse_inline(input: &str) -> Style {
 }
 
 fn apply_token(style: &mut Style, token: &str) {
+    // `sm:` / `dark:` are shell conditions. They are not part of the base style.
+    if shell_token(token).is_some() {
+        return;
+    }
     if let Some(rest) = token.strip_prefix("hover:") {
         apply_variant(style, Variant::Hover, rest);
         return;
@@ -464,6 +494,10 @@ fn apply_token(style: &mut Style, token: &str) {
     }
     if let Some(rest) = token.strip_prefix("disabled:") {
         apply_variant(style, Variant::Disabled, rest);
+        return;
+    }
+    if let Some(rest) = token.strip_prefix("focus:") {
+        apply_variant(style, Variant::Focus, rest);
         return;
     }
     if let Some((prefix, value)) = arbitrary(token) {
@@ -550,6 +584,21 @@ fn apply_token(style: &mut Style, token: &str) {
         "text-2xl" => style.font_size = Some(24.0),
         "text-3xl" => style.font_size = Some(30.0),
         "absolute" => style.absolute = true,
+        "inset-0" => {
+            style.absolute = true;
+            style.abs_x = Some(0.0);
+            style.abs_y = Some(0.0);
+            style.abs_right = Some(0.0);
+            style.abs_bottom = Some(0.0);
+            set_width(style, SizeSpec::Fill);
+            set_height(style, SizeSpec::Fill);
+        }
+        "z-0" => style.z_index = Some(0),
+        "z-10" => style.z_index = Some(10),
+        "z-20" => style.z_index = Some(20),
+        "z-30" => style.z_index = Some(30),
+        "z-40" => style.z_index = Some(40),
+        "z-50" => style.z_index = Some(50),
         "overflow-hidden" => style.clip = true,
         "overflow-x-auto" => style.scroll_x = true,
         "overflow-y-auto" => style.scroll_y = true,
@@ -692,20 +741,20 @@ fn apply_prefixed(style: &mut Style, token: &str) {
             style.abs_x = Some(px);
         }
     } else if let Some(rest) = token.strip_prefix("right-") {
-        if style.abs_x.is_none() {
-            if let Some(px) = spacing(rest) {
-                style.abs_x = Some(px);
-            }
+        if let Some(px) = spacing(rest) {
+            style.abs_right = Some(px);
         }
     } else if let Some(rest) = token.strip_prefix("top-") {
         if let Some(px) = spacing(rest) {
             style.abs_y = Some(px);
         }
     } else if let Some(rest) = token.strip_prefix("bottom-") {
-        if style.abs_y.is_none() {
-            if let Some(px) = spacing(rest) {
-                style.abs_y = Some(px);
-            }
+        if let Some(px) = spacing(rest) {
+            style.abs_bottom = Some(px);
+        }
+    } else if let Some(rest) = token.strip_prefix("z-") {
+        if let Ok(n) = rest.parse::<i64>() {
+            style.z_index = Some(n);
         }
     } else if let Some(rest) = token.strip_prefix("from-") {
         if let Some(color) = palette(rest) {
@@ -805,6 +854,58 @@ enum Variant {
     Hover,
     Active,
     Disabled,
+    Focus,
+}
+
+/// Tailwind defaults: sm 640, md 768, lg 1024, xl 1280.
+/// `dark:` reads `state.quinn_dark`. Not a media query.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ShellWhen {
+    pub dark: bool,
+    pub min_width: Option<f64>,
+    /// Utility after the variant prefixes, including `hover:` / `focus:`.
+    pub token: String,
+}
+
+pub fn shell_variants(class: &str) -> Vec<ShellWhen> {
+    class.split_whitespace().filter_map(shell_token).collect()
+}
+
+fn shell_token(token: &str) -> Option<ShellWhen> {
+    let mut dark = false;
+    let mut min_width = None;
+    let mut rest = token;
+    loop {
+        if let Some(next) = rest.strip_prefix("dark:") {
+            dark = true;
+            rest = next;
+            continue;
+        }
+        let bp = [("sm:", 640.0), ("md:", 768.0), ("lg:", 1024.0), ("xl:", 1280.0)];
+        let mut hit = false;
+        for (prefix, width) in bp {
+            if let Some(next) = rest.strip_prefix(prefix) {
+                min_width = Some(min_width.map_or(width, |have: f64| have.max(width)));
+                rest = next;
+                hit = true;
+                break;
+            }
+        }
+        if !hit {
+            break;
+        }
+    }
+    if !dark && min_width.is_none() {
+        return None;
+    }
+    if rest.is_empty() {
+        return None;
+    }
+    Some(ShellWhen {
+        dark,
+        min_width,
+        token: rest.to_string(),
+    })
 }
 
 fn apply_variant(style: &mut Style, variant: Variant, token: &str) {
@@ -833,6 +934,14 @@ fn apply_variant(style: &mut Style, variant: Variant, token: &str) {
             }
             if painted.color.is_some() {
                 style.disabled_fg = painted.color;
+            }
+        }
+        Variant::Focus => {
+            if painted.background.is_some() {
+                style.focus_bg = painted.background;
+            }
+            if painted.color.is_some() {
+                style.focus_fg = painted.color;
             }
         }
     }
@@ -882,9 +991,24 @@ fn apply_arbitrary(style: &mut Style, prefix: &str, value: &str) {
                 style.abs_x = Some(px);
             }
         }
+        "right" => {
+            if let Some(px) = parse_px(value) {
+                style.abs_right = Some(px);
+            }
+        }
         "top" => {
             if let Some(px) = parse_px(value) {
                 style.abs_y = Some(px);
+            }
+        }
+        "bottom" => {
+            if let Some(px) = parse_px(value) {
+                style.abs_bottom = Some(px);
+            }
+        }
+        "z" => {
+            if let Ok(n) = value.parse::<i64>() {
+                style.z_index = Some(n);
             }
         }
         "leading" => {
@@ -1010,7 +1134,9 @@ fn parse_color(value: &str) -> Option<Rgba> {
         return parse_hex6(hex);
     }
     if hex.len() == 8 {
-        return parse_hex6(&hex[..6]);
+        let mut color = parse_hex6(&hex[..6])?;
+        color.a = u8::from_str_radix(&hex[6..8], 16).ok()?;
+        return Some(color);
     }
     None
 }
@@ -1195,5 +1321,44 @@ mod tests {
         assert!(medium.scroll_x);
         assert_eq!(medium.shadow.unwrap().radius, 8.0);
         assert_eq!(medium.gradient.unwrap().axis, GradientAxis::Vertical);
+    }
+
+    #[test]
+    fn p2_breakpoints_dark_inset_z_and_focus_do_not_paint_the_base() {
+        let style = parse_classes(
+            "bg-stone-100 dark:bg-stone-900 md:flex-row sm:p-4 inset-0 z-40 focus:bg-amber-100",
+        );
+        assert_eq!(style.background, Some(Rgba::new(245, 245, 244)));
+        assert_eq!(style.flow, None);
+        assert!(style.absolute);
+        assert_eq!(style.abs_x, Some(0.0));
+        assert_eq!(style.abs_y, Some(0.0));
+        assert_eq!(style.abs_right, Some(0.0));
+        assert_eq!(style.abs_bottom, Some(0.0));
+        assert_eq!(style.width, Some(SizeSpec::Fill));
+        assert_eq!(style.height, Some(SizeSpec::Fill));
+        assert_eq!(style.z_index, Some(40));
+        assert_eq!(style.focus_bg, Some(Rgba::new(254, 243, 199)));
+        let edge = parse_classes("absolute right-2 bottom-3 z-10");
+        assert_eq!(edge.abs_right, Some(8.0));
+        assert_eq!(edge.abs_bottom, Some(12.0));
+        assert!(edge.abs_x.is_none());
+        assert!(edge.abs_y.is_none());
+        assert_eq!(edge.z_index, Some(10));
+        let variants = shell_variants(
+            "dark:bg-stone-900 md:flex-row dark:md:bg-white xl:z-50 hover:bg-amber-600",
+        );
+        assert_eq!(variants.len(), 4);
+        assert!(variants[0].dark && variants[0].min_width.is_none());
+        assert_eq!(variants[0].token, "bg-stone-900");
+        assert!(!variants[1].dark);
+        assert_eq!(variants[1].min_width, Some(768.0));
+        assert!(variants[2].dark);
+        assert_eq!(variants[2].min_width, Some(768.0));
+        assert_eq!(variants[2].token, "bg-white");
+        assert_eq!(variants[3].min_width, Some(1280.0));
+        let ink = parse_classes("bg-[#1c191780]");
+        assert_eq!(ink.background.unwrap().a, 0x80);
+        assert_eq!(ink.background.unwrap().hex_script(), "#1c191780");
     }
 }

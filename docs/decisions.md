@@ -65,7 +65,15 @@ The headless surface still builds widgets with `ScriptVm::eval` + `WidgetRef::sc
 
 ## Sync effects, not `RenderEffect`
 
-`RenderEffect` needs `any_spawner`. Wiring an executor into Makepad's event loop would be a second scheduler. `ImmediateEffect` already runs on the setter's thread and stops when dropped. The `effects` feature is required; without it `new` returns a no-op (`effect/immediate.rs`).
+`RenderEffect` needs `any_spawner`. Wiring that executor into Makepad's event loop would be a second scheduler. `ImmediateEffect` already runs on the setter's thread and stops when dropped. The `effects` feature is required; without it `new` returns a no-op (`effect/immediate.rs`).
+
+P2 does add one timer bridge, and only for client jobs. `view.rs` is not compiled, so `LocalResource`, `Resource`, and `Action` are a closed body: `delay_ms(N)` then `Ok("...")` or `Err("...")`. `drive_shell` reads `mod.quinn_job_gen` and calls `Cx::start_timeout`. On the timer, `mod.quinn_finish` writes the phase fields and `ui.host.render()`. That is not a Leptos task, not `reactive_graph`, and not a server. The dispatch argument is stored and then ignored; the result is the literal baked into the script. A generation already started is remembered on the UI thread, so a hot reload does not fire the same job twice. Script integer literals are not `f64` values, so the bridge reads them with `ScriptValue::as_number`.
+
+## Position is parent-relative, without a turtle patch
+
+`Walk.abs_pos` is one point in draw space (`turtle.rs`, the absolute walk test). Quinn does not emit it. An `absolute` child is wrapped in a `Fill`/`Fill` `flow: Overlay` frame whose padding is the insets and whose align is `1` on an edge that is set alone. `inset-0` adds `w-full` `h-full` on the inner widget. `z-*` sorts paint order. Negative z is drawn before the in-flow box.
+
+`align-content` was not added. The turtle has no line-packing field; `wrap_spacing` is a constant gap. Makepad was not vendored or patched for P2. An absolute child of a `Grid` is positioned in the cell, because rewriting the grid would drop `columns`.
 
 ## Style subset
 

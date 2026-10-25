@@ -23,7 +23,7 @@ The Rust builders (`el`, `show`, `for_each`, `Owner`, `MemorySurface`) are still
 
 A missing `mod.state` is an error, not nil. The seed is `if ok{mod.state} == nil { mod.state = { ... } }`. `mod` is the VM's modules object, shared by every script body, so a reload that replaces the view's scope keeps the object. `let state = mod.state` then reads it.
 
-`script_eval!` from Rust is a different body. It sees `mod` and `ui`, not the functions defined in `hot/ui.rs`. The lowerer publishes the ones Rust calls: `mod.quinn_frame`, `mod.quinn_retain_step`, `mod.quinn_retain_reset`.
+`script_eval!` from Rust is a different body. It sees `mod` and `ui`, not the functions defined in `hot/ui.rs`. The lowerer publishes the ones Rust calls: `mod.quinn_frame`, `mod.quinn_retain_step`, `mod.quinn_retain_reset`, `mod.quinn_set_width`, and, when the view has jobs, `mod.quinn_job_count`, `mod.quinn_job_delay`, `mod.quinn_job_gen`, and `mod.quinn_finish`.
 
 ## Show, For, and inputs
 
@@ -48,7 +48,9 @@ cargo run -p counter --release -- --hot
 # edit examples/counter/view.rs
 ```
 
-The same command works for `conditional`, `keyed-list`, `form`, `retain`, `tailwind-gallery`, and `app-shell`. `./target/release/<bin> --hot` is the same watcher without Cargo as a parent. Saving `src/main.rs` or `src/ops.rs` still rebuilds and, under `cargo run`, starts a new process.
+The same command works for `conditional`, `keyed-list`, `form`, `retain`, `tailwind-gallery`, `app-shell`, and `async-dashboard`. `./target/release/<bin> --hot` is the same watcher without Cargo as a parent. Saving `src/main.rs` or `src/ops.rs` still rebuilds and, under `cargo run`, starts a new process.
+
+Client jobs are not script async. `drive_shell` in `quinn-makepad` polls on startup, live edit, geometry, timers, and clicks. It arms `Cx::start_timeout` from `mod.quinn_job_delay` (seconds) and, when the timer fires, calls `mod.quinn_finish`, which writes the phase and calls `render()`. `state.quinn_width` and `state.quinn_dark` live in the nil-guarded state object, so a reload keeps them. A `<Portal>` is emitted after the page view. Suspense, transition, and error gates are functions whose both branches are calls, same as `<Show>`.
 
 ## What still needs a rebuild
 

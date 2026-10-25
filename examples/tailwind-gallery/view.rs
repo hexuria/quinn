@@ -32,11 +32,16 @@ fn Gallery() -> impl IntoView {
     let (next_id, set_next) = signal(3u64);
 
     view! {
-        <div class="flex flex-col gap-px p-2 bg-stone-100 h-full overflow-y-auto">
-            <h1 class="text-lg">"Tailwind gallery"</h1>
+        <div class="flex flex-col gap-px p-2 bg-stone-100 dark:bg-stone-900 h-full overflow-y-auto">
+            <h1 class="text-lg dark:text-stone-100">"Tailwind gallery"</h1>
             <div class="flex flex-row items-center gap-3">
-                <span class="text-lg">"Count: " {move || count.get()}</span>
+                <span class="text-lg dark:text-stone-100">"Count: " {move || count.get()}</span>
                 <button class="px-3 py-1" on:click=move |_| { set_count.update(|n| *n += 2); }>"Add two"</button>
+                <button class="px-3 py-1 focus:bg-amber-100" on:click=move |_| { toggle_theme(); }>"Theme"</button>
+            </div>
+            <div class="flex flex-col md:flex-row gap-2">
+                <span class="text-sm">"Stacked until md"</span>
+                <span class="text-sm md:font-bold">"Bold from md"</span>
             </div>
 
             <span class="text-sm">"justify-between"</span>

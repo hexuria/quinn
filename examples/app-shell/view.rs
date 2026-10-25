@@ -76,7 +76,7 @@ fn Shell() -> impl IntoView {
                                 </div>
                             </div>
                             <div class="h-[28px]">
-                                <div class="absolute left-4 top-[176px]">
+                                <div class="absolute left-2 top-1">
                                     <span class="text-xs font-medium">"Pinned"</span>
                                 </div>
                             </div>

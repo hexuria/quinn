@@ -95,10 +95,21 @@ fn lower_expr_stmt(expr: &Expr, signals: &[Signal]) -> Result<Vec<HandlerStmt>, 
             };
             return Ok(vec![HandlerStmt::Navigate(lower_expr(arg, signals)?)]);
         }
+        if path_ends(&call.func, &["toggle_theme"]) {
+            return Ok(vec![HandlerStmt::ToggleTheme]);
+        }
     }
     let Expr::MethodCall(call) = expr else {
         return Err(reject_expr(expr));
     };
+    if call.method == "dispatch" {
+        let action = path_ident(&call.receiver)?;
+        let arg = match call.args.first() {
+            Some(arg) => lower_expr(arg, signals)?,
+            None => HxExpr::Str(String::new()),
+        };
+        return Ok(vec![HandlerStmt::Dispatch { action, arg }]);
+    }
     if call.method == "set" {
         let signal = setter(&call.receiver, signals)?;
         let Some(arg) = call.args.first() else {

@@ -24,21 +24,23 @@ Tags: `div`, `span`, `h1`, `h2`, `p`, `label`, `button`, `input`.
 
 `div` → `RoundedView` (a `View` prototype), or `RoundedShadowView` when the class has `shadow`, or `widgets.Grid` when the class has `grid-cols-*`. Text tags → `Label`, except `h1`/`h2` which use those prototypes. `button` → `Button`. `input` → `TextInput`. `<A href>` → `Button` that sets `state.route`.
 
-Also: nested elements, fragments (`<>...</>`), string literals and `{expr}` / `{move || value}` text, `on:click`, `on:input` / `on:change`, `value=`, `bind:value`, `placeholder="..."`, `class="..."`, `style="..."`, `<Show when=...>`, `<For each=... key=... let:item>`, `<Router>` / `<Routes>` / `<Route path>`, and a custom component as a function call. `#[prop(optional)]`, `default`, and `into` are accepted. `children: Children` and `children: ChildrenFn` are script functions.
+Also: nested elements, fragments (`<>...</>`), string literals and `{expr}` / `{move || value}` text, `on:click`, `on:input` / `on:change`, `value=`, `bind:value`, `placeholder="..."`, `class="..."`, `style="..."`, `<Show when=...>`, `<For each=... key=... let:item>`, `<Router>` / `<Routes>` / `<Route path>`, `<Suspense fallback>`, `<Transition fallback>`, `<ErrorBoundary fallback>`, `<Portal>`, and a custom component as a function call. `#[prop(optional)]`, `default`, and `into` are accepted. `into` unwraps `"..." .into()` / `.to_string()` to the literal; a path that is not a signal is an error. `children: Children` and `children: ChildrenFn` are script functions. `toggle_theme()` flips `state.quinn_dark`. `save.dispatch("Cebu")` and `save.pending()` are the action. `{note}` reads `state.note_value`.
 
 `#[component] fn Name(...) -> impl IntoView`, when Rust compiles it, creates an owner and returns `scope_owner`. The example `view.rs` files are not compiled. The lowerer reads the same syntax and emits script. A `<Show>` nested inside a `<For>` row is its own function pair and does not use the host show cursor. The in-app router is `state.route`. It is not `leptos_router`.
 
 ## Style subset
 
-Utilities (later tokens win): `flex`, `flex-row`, `flex-col`, `flex-wrap`, `flex-nowrap`, `flex-1`, `flex-none`, `grow`, `shrink`, `shrink-0`, `grow-N`, `shrink-N`, `basis-N`, `gap-N`, `gap-x-N`, `gap-y-N` (N×4 px, `gap-px` = 1), `p-` / `px-` / `py-` / `pt-` / `pr-` / `pb-` / `pl-` and the `m*` forms on the same scale, `items-start|center|end|stretch`, `self-start|center|end|stretch`, `justify-start|center|end|between|around|evenly`, `w-full`, `w-fit`, `w-screen`, `h-full`, `h-fit`, `h-screen`, `w-1/2` and the other `n/d` fractions, `min-w-*`, `max-w-*`, `min-h-*`, `max-h-*` (`full` is `"100%"`), `text-xs` through `text-3xl`, `font-medium`, `font-semibold`, `font-bold`, `leading-none|tight|snug|normal|relaxed|loose`, `rounded`, `rounded-sm|md|lg|full`, `border`, `border-2`, `shadow`, `shadow-md`, `shadow-lg`, `grid`, `grid-cols-N`, `col-span-N`, `absolute`, `left-*`, `top-*`, `right-*`, `bottom-*`, `overflow-hidden`, `overflow-x-auto`, `overflow-y-auto`, `overflow-auto`, `bg-gradient-to-r|l|t|b`, `from-*`, `to-*`, `disabled`, and a short palette (`white`, `black`, `slate-900|600|100`, `stone-900|100`, `amber-700|600|100`) on `bg-`, `text-`, `border-`, `from-`, and `to-`.
+Utilities (later tokens win): `flex`, `flex-row`, `flex-col`, `flex-wrap`, `flex-nowrap`, `flex-1`, `flex-none`, `grow`, `shrink`, `shrink-0`, `grow-N`, `shrink-N`, `basis-N`, `gap-N`, `gap-x-N`, `gap-y-N` (N×4 px, `gap-px` = 1), `p-` / `px-` / `py-` / `pt-` / `pr-` / `pb-` / `pl-` and the `m*` forms on the same scale, `items-start|center|end|stretch`, `self-start|center|end|stretch`, `justify-start|center|end|between|around|evenly`, `w-full`, `w-fit`, `w-screen`, `h-full`, `h-fit`, `h-screen`, `w-1/2` and the other `n/d` fractions, `min-w-*`, `max-w-*`, `min-h-*`, `max-h-*` (`full` is `"100%"`), `text-xs` through `text-3xl`, `font-medium`, `font-semibold`, `font-bold`, `leading-none|tight|snug|normal|relaxed|loose`, `rounded`, `rounded-sm|md|lg|full`, `border`, `border-2`, `shadow`, `shadow-md`, `shadow-lg`, `grid`, `grid-cols-N`, `col-span-N`, `absolute`, `inset-0`, `left-*`, `top-*`, `right-*`, `bottom-*`, `z-0`, `z-10`, `z-20`, `z-30`, `z-40`, `z-50`, `z-N`, `overflow-hidden`, `overflow-x-auto`, `overflow-y-auto`, `overflow-auto`, `bg-gradient-to-r|l|t|b`, `from-*`, `to-*`, `disabled`, and a short palette (`white`, `black`, `slate-900|600|100`, `stone-900|100`, `amber-700|600|100`) on `bg-`, `text-`, `border-`, `from-`, and `to-`.
 
-Arbitrary values: `w-[13px]`, `h-[13px]`, `min-w-[8px]`, `max-w-[40px]`, `min-h-[0px]`, `max-h-[16px]`, `p-[10px]` and the per-side `p*` / `m*` forms, `gap-[8px]`, `basis-[16px]`, `bg-[#1e293b]`, `text-[#fff]`, `text-[13px]`. A 3-digit hex expands. An 8-digit hex uses the first six.
+Shell prefixes, not media queries: `sm:` (640), `md:` (768), `lg:` (1024), `xl:` (1280) compare `state.quinn_width`. `dark:` compares `state.quinn_dark == 1`. They can nest (`dark:md:`). The root `<div class>` is the host, so `dark:bg-*` on it wraps `draw_bg.color`.
+
+Arbitrary values: `w-[13px]`, `h-[13px]`, `min-w-[8px]`, `max-w-[40px]`, `min-h-[0px]`, `max-h-[16px]`, `p-[10px]` and the per-side `p*` / `m*` forms, `gap-[8px]`, `basis-[16px]`, `left-[8px]`, `right-[8px]`, `top-[8px]`, `bottom-[8px]`, `z-[12]`, `bg-[#1e293b]`, `text-[#fff]`, `text-[13px]`. A 3-digit hex expands. An 8-digit hex keeps the alpha (`#RRGGBBAA`). Opaque colors stay `#xRRGGBB`.
 
 `class:token=move || flag.get()` toggles that one utility. `style:prop=move || if flag.get() { "120px" } else { "40px" }` switches a literal. A runtime string in `style:` is a compile error.
 
 On a row, `items-*` is `RowAlign` and `justify-start|center|end` is `Align` on the main axis. `justify-between|around|evenly` is `Distribute` and does not also set `Align`. `items-stretch` gives children `Fill` on the cross axis when their class did not set that size. `self-start|center|end` wraps the child; `self-stretch` is cross-axis `Fill`. `flex-wrap` is `Flow.Right { wrap: true }` plus `wrap_spacing` from `gap-y`. A column cannot wrap: `Flow::Down` has no wrap field.
 
-`hover:bg-*`, `hover:text-*`, `active:bg-*`, `active:text-*`, `disabled:bg-*`, and `disabled:text-*` set the button animator colors. They are not copied from the face color. A bare `disabled` sets `enabled: false` and the disabled mix to 1. `hover:` on a `div` does not animate. `focus:` is not mapped.
+`hover:bg-*`, `hover:text-*`, `active:bg-*`, `active:text-*`, `disabled:bg-*`, and `disabled:text-*` set the button animator colors. They are not copied from the face color. A bare `disabled` sets `enabled: false` and the disabled mix to 1. `hover:` on a `div` emits an `Animator` that swaps `draw_bg.color` (`View` plays `hover.on` / `down.on`; the rounded shader has no hover mix). `focus:bg-*` / `focus:text-*` set `color_focus` on `Button` and `TextInput`. A `div` does not play a focus track.
 
 Inline: `color`, `background`, `font-size`, `padding`, `margin`, `gap`, `radius`, `border`, `width`, `height` with `fill`, `fit`, or a pixel number.
 
@@ -46,13 +48,13 @@ Inline: `color`, `background`, `font-size`, `padding`, `margin`, `gap`, `radius`
 
 These are absent on purpose, not partially implemented:
 
-- CSS inheritance, specificity, the cascade beyond source order, media queries, `em`/`rem`
-- `focus:` utilities, `align-content`, `z-index`, `fixed`, and a four-side inset stretch
-- Hover on a plain `div` (the button animator is the only hover Quinn drives)
+- CSS inheritance, specificity, the cascade beyond source order, real media queries, `em`/`rem`
+- `align-content`, `fixed`, and a turtle z field. `z-*` is paint order only. `inset-0` fills the parent; it is not a CSS inset of a positioned box with both left and right stretching a shrink-wrapped child
+- `focus:` on a plain `div`
 - HTML forms as a DOM (`<form>`, submit, labels-for), contenteditable, rich text, SVG, images
 - `leptos_router` (URL, history, params, nested matching). The in-app `<Router>` is `state.route`.
-- Subtree context. `provide_context` writes one process-global `mod.ctx` and does not shadow.
-- `RenderEffect`, resources, suspense, server functions, hydration
+- A Rust `Into` impl for `#[prop(into)]`. Nested `provide_context` does shadow for the subtree and then restores. The root seed does not reset on reload.
+- `RenderEffect`, arbitrary futures, server functions, hydration. Client jobs are the closed `delay_ms` / `Ok` / `Err` body in [gap-analysis.md](gap-analysis.md)
 - A second layout engine
 - Gradient, shadow, or scroll bars on a `Grid` div. `Grid` draws a `DrawQuad`. Put those classes on a child view.
 

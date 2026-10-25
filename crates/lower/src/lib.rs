@@ -18,8 +18,8 @@ use std::time::Duration;
 
 pub use extract::extract_hot_script;
 pub use model::{
-    Act, BinOp, ClassWhen, El, HandlerStmt, HxExpr, Init, ItemSeed, Model, Part, Signal, StyleWhen,
-    ViewNode,
+    Act, BinOp, ClassWhen, El, HandlerStmt, HxExpr, Init, ItemSeed, Job, JobKind, Model, Part,
+    Signal, StyleWhen, ViewNode,
 };
 pub use sim::Sim;
 
@@ -436,6 +436,12 @@ mod tests {
             ("examples/app-shell/view.rs", "fn quinn_route_1("),
             ("examples/app-shell/view.rs", "mod.ctx.accent"),
             ("examples/app-shell/view.rs", "RoundedShadowView"),
+            ("examples/app-shell/view.rs", "padding: Inset{left: 8. top: 4. right: 0. bottom: 0.}"),
+            ("examples/async-dashboard/view.rs", "fn quinn_gate_"),
+            ("examples/async-dashboard/view.rs", "fn quinn_err_"),
+            ("examples/async-dashboard/view.rs", "mod.quinn_finish = quinn_finish"),
+            ("examples/async-dashboard/view.rs", "state.quinn_dark == 1"),
+            ("examples/tailwind-gallery/view.rs", "state.quinn_width >= 768."),
         ];
         for (rel, needle) in cases {
             let source = std::fs::read_to_string(root.join(rel))
@@ -744,7 +750,8 @@ mod tests {
             "column_gap: 8.",
             "row_gap: 8.",
             "CellPlacement{col_span: 2}",
-            "abs_pos: vec2(8., 4.)",
+            "padding: Inset{left: 8. top: 4. right: 0. bottom: 0.}",
+            "flow: Overlay",
             "width: Fit",
             "clip_x: true",
             "clip_y: true",
@@ -795,5 +802,124 @@ mod tests {
         assert_eq!(sim.text("field"), "", "the input text is not rewritten");
         assert!(sim.click("move"));
         assert_eq!(sim.strings["profile.city"], "Cebu");
+    }
+
+    fn has_label(sim: &Sim, needle: &str) -> bool {
+        sim.labels().iter().any(|(_, text)| text.contains(needle))
+    }
+
+    #[test]
+    fn p2_async_portal_shell_and_nested_context() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let source = std::fs::read_to_string(root.join("examples/async-dashboard/view.rs")).unwrap();
+        let file = lower_file(&source, shell()).unwrap_or_else(|err| panic!("{err}"));
+        let needles = [
+            "note_phase: \"loading\"",
+            "feed_phase: \"loading\"",
+            "place_phase: \"loading\"",
+            "save_phase: \"idle\"",
+            "save_pending: false",
+            "quinn_width: 480.",
+            "quinn_dark: 0",
+            "fn quinn_job_count()",
+            "fn quinn_finish(i)",
+            "fn quinn_sync_jobs()",
+            "fn quinn_theme_on()",
+            "if state.quinn_dark == 1 { quinn_theme_off() } else { quinn_theme_on() }",
+            "if state.quinn_dark == 1 { #x1c1917 } else",
+            "state.quinn_width >= 768.",
+            "state.note_phase == \"loading\"",
+            "state.place_value == \"\"",
+            "state.feed_phase == \"error\"",
+            "state.save_pending = true",
+            "state.save_arg = \"Cebu\"",
+            "text: \"Ada\"",
+            "mod.ctx.tone = \"stone\"",
+            "mod.ctx.tone = \"shade\"",
+            "padding: Inset{left: 8. top: 4. right: 0. bottom: 0.}",
+            "flow: Overlay",
+            "Animator{hover:",
+            "draw_bg.color_focus:",
+            "draw_bg.color: #1c191780",
+            "app := RoundedView",
+            "text: \"Modal\"",
+            "text: \"Loading the note\"",
+            "text: \"Refreshing\"",
+            "text: \"Could not load the feed\"",
+        ];
+        let missing: Vec<_> = needles
+            .into_iter()
+            .filter(|needle| !file.contains(needle))
+            .collect();
+        assert!(missing.is_empty(), "missing {missing:?}");
+        assert!(!file.contains("abs_pos:"), "{file}");
+        let scrim = file.find("text: \"Scrim\"").expect("scrim");
+        let modal = file.find("text: \"Modal\"").expect("modal");
+        assert!(scrim < modal, "higher z paints later");
+        let pinned = file.find("Pinned in the card").expect("pin");
+        assert!(
+            file[..pinned].contains("padding: Inset{left: 8. top: 4. right: 0. bottom: 0.}"),
+            "the pin is padded inside its parent overlay"
+        );
+
+        let mut sim = Sim::new(parse_model(&source).unwrap());
+        assert!(has_label(&sim, "Loading the note"));
+        assert!(!has_label(&sim, "Ada's note"));
+        assert!(has_label(&sim, "Refreshing"));
+        assert!(!has_label(&sim, "Manila desk"));
+        assert!(!has_label(&sim, "Could not load the feed"));
+        assert!(has_label(&sim, "Tone stone"));
+        assert!(has_label(&sim, "shade"), "{:?}", sim.labels());
+        assert!(!has_label(&sim, "Modal"));
+        sim.settle();
+        assert!(has_label(&sim, "Ada's note"), "{:?}", sim.labels());
+        assert!(!has_label(&sim, "Loading the note"));
+        assert!(has_label(&sim, "Manila desk"));
+        assert!(!has_label(&sim, "Refreshing"));
+        assert!(has_label(&sim, "Could not load the feed"));
+        assert!(sim.click("save"));
+        assert_eq!(sim.state["save_pending"], 1);
+        assert_eq!(sim.strings["save_arg"], "Cebu");
+        assert!(has_label(&sim, "Saving"));
+        sim.settle();
+        assert_eq!(sim.state["save_pending"], 0);
+        assert!(has_label(&sim, "Saved Cebu"));
+        assert!(!has_label(&sim, "Saving"));
+        assert!(sim.click("theme"));
+        assert_eq!(sim.state["quinn_dark"], 1);
+        assert!(sim.click("theme"));
+        assert_eq!(sim.state["quinn_dark"], 0);
+        assert!(sim.click("open_modal"));
+        assert!(has_label(&sim, "Modal"));
+        sim.render();
+        assert!(
+            has_label(&sim, "Modal"),
+            "opening the show must not clear its own condition"
+        );
+        assert_eq!(sim.state["open"], 1);
+        assert!(sim.click("close"));
+        assert!(!has_label(&sim, "Modal"));
+        assert!(sim.click("refetch"));
+        assert_eq!(sim.strings["place_phase"], "loading");
+        assert_eq!(sim.strings["place_value"], "Manila desk");
+        assert!(has_label(&sim, "Refreshing"));
+        assert!(has_label(&sim, "Manila desk"));
+        sim.settle();
+        assert_eq!(sim.strings["place_phase"], "ready");
+        assert!(has_label(&sim, "Manila desk"));
+        assert!(!has_label(&sim, "Refreshing"));
+
+        let bad = r#"
+            #[component]
+            fn Card(#[prop(into)] title: String) -> impl IntoView {
+                view! { <div><span>{title}</span></div> }
+            }
+            #[component]
+            fn App() -> impl IntoView {
+                view! { <div><Card title=missing /></div> }
+            }
+        "#;
+        let err = parse_model(bad).unwrap_err();
+        assert!(err.contains("not a signal"), "{err}");
     }
 }

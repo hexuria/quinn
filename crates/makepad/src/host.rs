@@ -1,5 +1,5 @@
-use std::cell::Cell;
-use std::collections::HashMap;
+use std::cell::{Cell, RefCell};
+use std::collections::{HashMap, HashSet};
 
 use makepad_widgets::makepad_script::ScriptMod;
 use makepad_widgets::*;
@@ -767,6 +767,124 @@ pub fn load_hot_view(
         }
     }
     eval_hot_file(vm, &hot, manifest_dir, module_path, component)
+}
+
+struct Flight {
+    index: usize,
+    timer: Timer,
+}
+
+std::thread_local! {
+    static FLIGHTS: RefCell<Vec<Flight>> = const { RefCell::new(Vec::new()) };
+    /// `(job index, generation)` already handed to a timer. Hot reload keeps
+    /// this set, so a finished job is not started again when `mod.state` survives.
+    static STARTED: RefCell<HashSet<(usize, u64)>> = RefCell::new(HashSet::new());
+}
+
+/// Drive shell signals and client jobs.
+///
+/// Call this at the end of `handle_event`, after `boot_script` and
+/// `ui.handle_event`, so a click's `dispatch` is visible on the same event.
+/// `WindowGeomChange` writes `state.quinn_width`. A job whose script gen is
+/// non-zero (`"loading"`, or an action with `pending`) is armed with
+/// `Cx::start_timeout`. When that timer fires, `mod.quinn_finish` writes the
+/// closed `Ok` / `Err` literal and calls `render()`. Script itself stays
+/// synchronous. Mouse moves are ignored.
+pub fn drive_shell(cx: &mut Cx, event: &Event) {
+    if std::env::var("QUINN_JOB_LOG").is_ok() {
+        eprintln!("drive_shell");
+    }
+    if let Event::WindowGeomChange(ev) = event {
+        let w = ev.new_geom.inner_size.x;
+        script_eval!(cx, {
+            if ok{mod.quinn_set_width} != nil { mod.quinn_set_width(#(w)) } else { 0 }
+            true
+        });
+    }
+    if let Event::Timer(_) = event {
+        let mut done = Vec::new();
+        FLIGHTS.with(|flights| {
+            flights.borrow_mut().retain(|flight| {
+                if flight.timer.is_event(event).is_some() {
+                    done.push(flight.index);
+                    false
+                } else {
+                    true
+                }
+            });
+        });
+        for index in done {
+            let i = index as f64;
+            if std::env::var("QUINN_JOB_LOG").is_ok() {
+                eprintln!("quinn job {index} finished");
+            }
+            script_eval!(cx, {
+                if ok{mod.quinn_finish} != nil { mod.quinn_finish(#(i)) } else { 0 }
+                true
+            });
+        }
+    }
+    let poll = matches!(
+        event,
+        Event::Startup
+            | Event::Signal
+            | Event::WindowGeomChange(_)
+            | Event::Timer(_)
+            | Event::LiveEdit
+            | Event::MouseUp(_)
+            | Event::KeyDown(_)
+            | Event::TextInput(_)
+    );
+    if poll {
+        poll_jobs(cx);
+    }
+}
+
+fn script_number(value: ScriptValue) -> f64 {
+    // Integer literals lower to i32/u32, not f64. `as_f64` misses those and
+    // the job loop would see a count of 0 even when the script returned 4.
+    value.as_number().unwrap_or(0.0)
+}
+
+fn poll_jobs(cx: &mut Cx) {
+    let count_value = script_eval!(cx, {
+        if ok{mod.quinn_job_count} == nil { 0 } else { mod.quinn_job_count() }
+    });
+    let count = script_number(count_value).round() as usize;
+    if std::env::var("QUINN_JOB_LOG").is_ok() {
+        let mut text = String::new();
+        cx.with_vm(|vm| {
+            vm.bx.heap.cast_to_string(count_value, &mut text);
+        });
+        eprintln!(
+            "job count raw={text} number={:?} n={count}",
+            count_value.as_number()
+        );
+    }
+    for index in 0..count {
+        let i = index as f64;
+        let gen_value = script_eval!(cx, { mod.quinn_job_gen(#(i)) });
+        let gen = script_number(gen_value).round() as u64;
+        if gen == 0 {
+            continue;
+        }
+        let already = STARTED.with(|started| started.borrow().contains(&(index, gen)));
+        if already {
+            continue;
+        }
+        let delay_value = script_eval!(cx, { mod.quinn_job_delay(#(i)) });
+        let delay = script_number(delay_value).max(0.0);
+        let timer = cx.start_timeout(delay);
+        if std::env::var("QUINN_JOB_LOG").is_ok() {
+            eprintln!("quinn job {index} gen {gen} delay {delay}");
+        }
+        STARTED.with(|started| {
+            started.borrow_mut().insert((index, gen));
+        });
+        FLIGHTS.with(|flights| {
+            flights.borrow_mut().push(Flight { index, timer });
+        });
+    }
 }
 
 /// Install the frame probe on a shell whose widgets already came from script.

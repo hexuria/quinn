@@ -53,6 +53,7 @@ struct Comp {
     aliases: Vec<(String, String, String)>,
     contexts: Vec<(String, String)>,
     provides: Vec<Provide>,
+    jobs: Vec<Job>,
     view: TokenStream,
     frame: Option<String>,
     retain: bool,
@@ -70,6 +71,8 @@ struct Build {
     provides_here: Vec<(String, String)>,
     /// Call-site children of a `ChildrenFn` may read `{arg}`.
     in_children_fn: bool,
+    /// Resource and action names in scope for `{note}` and `note.get()`.
+    job_names: Vec<String>,
 }
 
 pub fn parse_model(source: &str) -> Result<Model, String> {
@@ -104,6 +107,7 @@ pub fn parse_model(source: &str) -> Result<Model, String> {
         ctx_env: HashMap::new(),
         provides_here: Vec::new(),
         in_children_fn: false,
+        job_names: Vec::new(),
     };
     let (signals, frame, retain, has_ctx, root_provides, root_ctx, view) = {
         let root = build
@@ -128,6 +132,14 @@ pub fn parse_model(source: &str) -> Result<Model, String> {
         )
     };
     let ctx_init = root_provides;
+    let jobs = {
+        let root = build
+            .comps
+            .get(root_name)
+            .ok_or_else(|| format!("missing {root_name}"))?;
+        root.jobs.clone()
+    };
+    build.job_names = jobs.iter().map(|job| job.name.clone()).collect();
     build.ctx_env = root_ctx.into_iter().collect();
     let nodes = rstml::parse2(view).map_err(|err| err.to_string())?;
     let element = single_root(&nodes)?;
@@ -166,6 +178,7 @@ pub fn parse_model(source: &str) -> Result<Model, String> {
         retain,
         has_ctx,
         ctx_init,
+        jobs,
     })
 }
 
@@ -180,6 +193,13 @@ fn node_has_routes(node: &ViewNode) -> bool {
         ViewNode::Show { child, .. } => node_has_routes(child),
         ViewNode::Slot { nodes, .. } => nodes.iter().any(node_has_routes),
         ViewNode::For { .. } => false,
+        ViewNode::Suspense { fallback, child, .. } => {
+            fallback.iter().any(node_has_routes) || node_has_routes(child)
+        }
+        ViewNode::Boundary { fallback, child, .. } => {
+            fallback.iter().any(node_has_routes) || node_has_routes(child)
+        }
+        ViewNode::Portal { nodes } => nodes.iter().any(node_has_routes),
     }
 }
 
@@ -199,6 +219,15 @@ fn first_route_node(node: &ViewNode) -> Option<String> {
         ViewNode::Show { child, .. } => first_route_node(child),
         ViewNode::Slot { nodes, .. } => nodes.iter().find_map(first_route_node),
         ViewNode::For { .. } => None,
+        ViewNode::Suspense { fallback, child, .. } => fallback
+            .iter()
+            .find_map(first_route_node)
+            .or_else(|| first_route_node(child)),
+        ViewNode::Boundary { fallback, child, .. } => fallback
+            .iter()
+            .find_map(first_route_node)
+            .or_else(|| first_route_node(child)),
+        ViewNode::Portal { nodes } => nodes.iter().find_map(first_route_node),
     }
 }
 
@@ -211,6 +240,13 @@ fn contains_for(node: &ViewNode) -> bool {
         ViewNode::Routes { routes } => routes
             .iter()
             .any(|(_, nodes)| nodes.iter().any(contains_for)),
+        ViewNode::Suspense { fallback, child, .. } => {
+            fallback.iter().any(contains_for) || contains_for(child)
+        }
+        ViewNode::Boundary { fallback, child, .. } => {
+            fallback.iter().any(contains_for) || contains_for(child)
+        }
+        ViewNode::Portal { nodes } => nodes.iter().any(contains_for),
     }
 }
 
@@ -238,6 +274,11 @@ fn collect_resets(nodes: &[ViewNode], signals: &mut Vec<Signal>) {
                     collect_resets(nodes, signals);
                 }
             }
+            ViewNode::Suspense { fallback, child, .. } | ViewNode::Boundary { fallback, child, .. } => {
+                collect_resets(fallback, signals);
+                collect_resets(std::slice::from_ref(child), signals);
+            }
+            ViewNode::Portal { nodes } => collect_resets(nodes, signals),
         }
     }
 }
@@ -254,6 +295,7 @@ fn parse_comp(func: &ItemFn) -> Result<Comp, String> {
     let mut aliases = Vec::new();
     let mut contexts = Vec::new();
     let mut provides = Vec::new();
+    let mut jobs = Vec::new();
     let mut frame = None;
     let mut retain = false;
     let mut view = None;
@@ -262,6 +304,8 @@ fn parse_comp(func: &ItemFn) -> Result<Comp, String> {
             Stmt::Local(local) => {
                 if let Some(signal) = try_signal(local)? {
                     signals.push(signal);
+                } else if let Some(job) = try_job(local)? {
+                    jobs.push(job);
                 } else if let Some(ctx) = try_use_context(local)? {
                     contexts.push(ctx);
                 } else if let Some(alias) = try_alias(local)? {
@@ -314,6 +358,7 @@ fn parse_comp(func: &ItemFn) -> Result<Comp, String> {
         aliases,
         contexts,
         provides,
+        jobs,
         view,
         frame,
         retain,
@@ -585,6 +630,18 @@ impl Build {
                 if tag == "A" || tag == "a" {
                     return self.lower_anchor(element, signals, in_row);
                 }
+                if tag == "Suspense" || tag == "suspense" {
+                    return self.lower_suspense(element, signals, in_row, false);
+                }
+                if tag == "Transition" || tag == "transition" {
+                    return self.lower_suspense(element, signals, in_row, true);
+                }
+                if tag == "ErrorBoundary" || tag == "error_boundary" {
+                    return self.lower_boundary(element, signals, in_row);
+                }
+                if tag == "Portal" || tag == "portal" {
+                    return self.lower_portal(element, signals, in_row);
+                }
                 if self.comps.contains_key(&tag) {
                     return self.lower_component(&tag, element, signals, in_row);
                 }
@@ -709,7 +766,7 @@ impl Build {
                 let Some(value) = attr.value() else {
                     return Err("Show when needs a value".into());
                 };
-                when = Some(signal_get(value, signals)?);
+                when = Some(bool_signal(value, signals)?);
             }
         }
         let Some(signal) = when else {
@@ -726,12 +783,142 @@ impl Build {
             return Err("<Show> needs one child".into());
         }
         let child = body.pop().unwrap();
-        let reset = show_resets(&child);
+        // The condition is written by the button that closes the show. Resetting
+        // it on the opening frame clears the flag before the on-branch runs.
+        let reset = show_resets(&child, &signal);
         Ok(ViewNode::Show {
             live_flag: format!("show_{signal}_live"),
             signal,
             reset,
             child: Box::new(child),
+        })
+    }
+
+    fn lower_suspense(
+        &mut self,
+        element: &NodeElement<rstml::Infallible>,
+        signals: &[Signal],
+        in_row: bool,
+        transition: bool,
+    ) -> Result<ViewNode, String> {
+        let fallback = self.fallback_of(element, signals, in_row)?;
+        let child = self.one_body(element, signals, in_row, "Suspense")?;
+        let jobs = jobs_in(&child, &self.job_names);
+        Ok(ViewNode::Suspense {
+            jobs,
+            transition,
+            fallback,
+            child: Box::new(child),
+        })
+    }
+
+    fn lower_boundary(
+        &mut self,
+        element: &NodeElement<rstml::Infallible>,
+        signals: &[Signal],
+        in_row: bool,
+    ) -> Result<ViewNode, String> {
+        let fallback = self.fallback_of(element, signals, in_row)?;
+        let child = self.one_body(element, signals, in_row, "ErrorBoundary")?;
+        let jobs = jobs_in(&child, &self.job_names);
+        Ok(ViewNode::Boundary {
+            jobs,
+            fallback,
+            child: Box::new(child),
+        })
+    }
+
+    fn lower_portal(
+        &mut self,
+        element: &NodeElement<rstml::Infallible>,
+        signals: &[Signal],
+        in_row: bool,
+    ) -> Result<ViewNode, String> {
+        let mut nodes = Vec::new();
+        for child in element.children() {
+            if is_blank(child) {
+                continue;
+            }
+            nodes.push(self.lower_node(child, signals, in_row)?);
+        }
+        if nodes.is_empty() {
+            return Err("<Portal> needs a child".into());
+        }
+        Ok(ViewNode::Portal { nodes })
+    }
+
+    fn fallback_of(
+        &mut self,
+        element: &NodeElement<rstml::Infallible>,
+        signals: &[Signal],
+        in_row: bool,
+    ) -> Result<Vec<ViewNode>, String> {
+        for attr in element.attributes() {
+            let NodeAttribute::Attribute(attr) = attr else {
+                continue;
+            };
+            if attr_key(attr) != "fallback" {
+                continue;
+            }
+            let Some(value) = attr.value() else {
+                return Err("fallback needs || view! { ... }".into());
+            };
+            return self.lower_fallback(value, signals, in_row);
+        }
+        Err("needs fallback=|| view! { ... }".into())
+    }
+
+    fn lower_fallback(
+        &mut self,
+        expr: &Expr,
+        signals: &[Signal],
+        in_row: bool,
+    ) -> Result<Vec<ViewNode>, String> {
+        let body = match expr {
+            Expr::Closure(closure) => &*closure.body,
+            other => other,
+        };
+        let Some(tokens) = view_tokens(body) else {
+            return Err("fallback must be || view! { ... }".into());
+        };
+        let nodes = rstml::parse2(tokens).map_err(|err| err.to_string())?;
+        let mut out = Vec::new();
+        for node in &nodes {
+            if is_blank(node) {
+                continue;
+            }
+            out.push(self.lower_node(node, signals, in_row)?);
+        }
+        if out.is_empty() {
+            return Err("fallback is empty".into());
+        }
+        Ok(out)
+    }
+
+    fn one_body(
+        &mut self,
+        element: &NodeElement<rstml::Infallible>,
+        signals: &[Signal],
+        in_row: bool,
+        tag: &str,
+    ) -> Result<ViewNode, String> {
+        let mut body = Vec::new();
+        for child in element.children() {
+            if is_blank(child) {
+                continue;
+            }
+            body.push(self.lower_node(child, signals, in_row)?);
+        }
+        if body.is_empty() {
+            return Err(format!("<{tag}> needs a child"));
+        }
+        if body.len() == 1 {
+            return Ok(body.pop().unwrap());
+        }
+        Ok(ViewNode::Slot {
+            fn_name: String::new(),
+            nodes: body,
+            arg: None,
         })
     }
 
@@ -908,8 +1095,10 @@ impl Build {
                 });
             }
         }
-        let root = single_root(nodes)?;
-        self.lower_el(root, signals, in_row)
+        if found.len() != 1 {
+            return Err("the view must have one root element".into());
+        }
+        self.lower_node(found[0], signals, in_row)
     }
 
     fn seal_children(&mut self, node: &mut ViewNode, children: Vec<ViewNode>) {
@@ -946,6 +1135,17 @@ impl Build {
                     for child in nodes {
                         self.seal_children(child, children.clone());
                     }
+                }
+            }
+            ViewNode::Suspense { fallback, child, .. } | ViewNode::Boundary { fallback, child, .. } => {
+                for node in fallback {
+                    self.seal_children(node, children.clone());
+                }
+                self.seal_children(child, children);
+            }
+            ViewNode::Portal { nodes } => {
+                for child in nodes {
+                    self.seal_children(child, children.clone());
                 }
             }
         }
@@ -1055,6 +1255,7 @@ impl Build {
                         &self.prop_env,
                         &self.ctx_env,
                         self.in_children_fn,
+                        &self.job_names,
                     )?);
                 }
                 Node::Comment(_) | Node::Doctype(_) => {}
@@ -1162,6 +1363,7 @@ impl Comp {
             aliases: self.aliases.clone(),
             contexts: self.contexts.clone(),
             provides: self.provides.clone(),
+            jobs: self.jobs.clone(),
             view: self.view.clone(),
             frame: self.frame.clone(),
             retain: self.retain,
@@ -1219,6 +1421,13 @@ fn prop_val(spec: &PropSpec, expr: &Expr, signals: &[Signal]) -> Result<PropVal,
     if let Some(text) = lit_string(expr) {
         return Ok(PropVal::Lit(text));
     }
+    // `#[prop(into)]` unwraps `"Ada".into()` / `.to_string()` to the literal.
+    // Script has no Rust `Into` impl. A path that is not a signal is not one.
+    if spec.into {
+        if let Ok(text) = stringish(expr) {
+            return Ok(PropVal::Lit(text));
+        }
+    }
     match expr {
         Expr::Lit(lit) => match &lit.lit {
             syn::Lit::Int(value) => Ok(PropVal::Int(
@@ -1239,7 +1448,12 @@ fn prop_val(spec: &PropSpec, expr: &Expr, signals: &[Signal]) -> Result<PropVal,
                 .ok_or_else(|| format!("unsupported prop {}", spec.name))?;
             if signals.iter().any(|signal| signal.read == name) {
                 Ok(PropVal::Sig(name))
-            } else if spec.into || matches!(spec.kind, PropKind::Text | PropKind::Item) {
+            } else if spec.into {
+                Err(format!(
+                    "prop {} is not a signal. Pass a string, \"...\".into(), or a signal",
+                    spec.name
+                ))
+            } else if matches!(spec.kind, PropKind::Text | PropKind::Item) {
                 Ok(PropVal::Sig(name))
             } else {
                 Err(format!("unsupported prop {}", spec.name))
@@ -1295,6 +1509,17 @@ fn inline_children(node: &mut ViewNode, children: Vec<ViewNode>) {
             }
         }
         ViewNode::For { .. } => {}
+        ViewNode::Suspense { fallback, child, .. } | ViewNode::Boundary { fallback, child, .. } => {
+            for node in fallback {
+                inline_children(node, children.clone());
+            }
+            inline_children(child, children);
+        }
+        ViewNode::Portal { nodes } => {
+            for node in nodes {
+                inline_children(node, children.clone());
+            }
+        }
     }
 }
 
@@ -1443,6 +1668,17 @@ fn rename_signals(node: &mut ViewNode, orig: &[Signal], prefix: &str) {
                 }
             }
         }
+        ViewNode::Suspense { fallback, child, .. } | ViewNode::Boundary { fallback, child, .. } => {
+            for node in fallback {
+                rename_signals(node, orig, prefix);
+            }
+            rename_signals(child, orig, prefix);
+        }
+        ViewNode::Portal { nodes } => {
+            for child in nodes {
+                rename_signals(child, orig, prefix);
+            }
+        }
     }
 }
 
@@ -1471,7 +1707,7 @@ fn rename_part(part: &mut Part, orig: &[Signal], prefix: &str) {
         | Part::IfBool { signal: name, .. } => {
             *name = prefixed(name, orig, prefix);
         }
-        Part::Lit(_) | Part::Param(_) | Part::Ctx(_) => {}
+        Part::Lit(_) | Part::Param(_) | Part::Ctx(_) | Part::Job(_) => {}
     }
 }
 
@@ -1515,6 +1751,8 @@ fn rename_act(act: &mut Act, orig: &[Signal], prefix: &str) {
                         rename_expr(b, orig, prefix);
                     }
                     HandlerStmt::Navigate(expr) => rename_expr(expr, orig, prefix),
+                    HandlerStmt::Dispatch { arg, .. } => rename_expr(arg, orig, prefix),
+                    HandlerStmt::ToggleTheme => {}
                 }
             }
         }
@@ -1546,44 +1784,55 @@ fn prefixed(name: &str, orig: &[Signal], prefix: &str) -> String {
     }
 }
 
-fn show_resets(node: &ViewNode) -> Vec<String> {
+fn show_resets(node: &ViewNode, condition: &str) -> Vec<String> {
     let mut out = Vec::new();
-    fn walk(node: &ViewNode, out: &mut Vec<String>) {
+    fn walk(node: &ViewNode, condition: &str, out: &mut Vec<String>) {
         match node {
             ViewNode::El(el) => {
                 for name in act_reset_names(el.click.as_ref()) {
-                    if !out.contains(&name) {
+                    if name != condition && !out.contains(&name) {
                         out.push(name);
                     }
                 }
                 for part in &el.parts {
                     if let Part::Sig(name) = part {
-                        if !out.contains(&name) {
+                        if name != condition && !out.contains(name) {
                             out.push(name.clone());
                         }
                     }
                 }
                 for child in &el.children {
-                    walk(child, out);
+                    walk(child, condition, out);
                 }
             }
-            ViewNode::Show { child, .. } => walk(child, out),
+            ViewNode::Show { child, .. } => walk(child, condition, out),
             ViewNode::For { .. } => {}
             ViewNode::Slot { nodes, .. } => {
                 for child in nodes {
-                    walk(child, out);
+                    walk(child, condition, out);
                 }
             }
             ViewNode::Routes { routes } => {
                 for (_, nodes) in routes {
                     for child in nodes {
-                        walk(child, out);
+                        walk(child, condition, out);
                     }
+                }
+            }
+            ViewNode::Suspense { fallback, child, .. } | ViewNode::Boundary { fallback, child, .. } => {
+                for node in fallback {
+                    walk(node, condition, out);
+                }
+                walk(child, condition, out);
+            }
+            ViewNode::Portal { nodes } => {
+                for child in nodes {
+                    walk(child, condition, out);
                 }
             }
         }
     }
-    walk(node, &mut out);
+    walk(node, condition, &mut out);
     out
 }
 
@@ -1618,10 +1867,201 @@ fn row_params(el: &El) -> Vec<String> {
                     }
                 }
             }
+            ViewNode::Suspense { fallback, child, .. } | ViewNode::Boundary { fallback, child, .. } => {
+                for node in fallback {
+                    walk_node(node, out);
+                }
+                walk_node(child, out);
+            }
+            ViewNode::Portal { nodes } => {
+                for child in nodes {
+                    walk_node(child, out);
+                }
+            }
         }
     }
     walk_el(el, &mut out);
     out
+}
+
+fn try_job(local: &syn::Local) -> Result<Option<Job>, String> {
+    let syn::Pat::Ident(ident) = &local.pat else {
+        return Ok(None);
+    };
+    let Some(init) = &local.init else {
+        return Ok(None);
+    };
+    let Expr::Call(call) = &*init.expr else {
+        return Ok(None);
+    };
+    let name = ident.ident.to_string();
+    if path_ends(&call.func, &["LocalResource", "new"]) {
+        let Some(body) = call.args.first() else {
+            return Err(format!("{name} needs an async body"));
+        };
+        let (delay_ms, ok_text, err_text) = job_outcome(body)?;
+        return Ok(Some(Job {
+            name,
+            kind: JobKind::Local,
+            delay_ms,
+            ok_text,
+            err_text,
+            source: None,
+        }));
+    }
+    if path_ends(&call.func, &["Resource", "new"]) {
+        if call.args.len() < 2 {
+            return Err(format!("{name} needs a source and an async body"));
+        }
+        let source = job_source(&call.args[0])?;
+        let (delay_ms, ok_text, err_text) = job_outcome(&call.args[1])?;
+        return Ok(Some(Job {
+            name,
+            kind: JobKind::Resource,
+            delay_ms,
+            ok_text,
+            err_text,
+            source: Some(source),
+        }));
+    }
+    if path_ends(&call.func, &["Action", "new"]) {
+        let Some(body) = call.args.first() else {
+            return Err(format!("{name} needs an async body"));
+        };
+        let (delay_ms, ok_text, err_text) = job_outcome(body)?;
+        return Ok(Some(Job {
+            name,
+            kind: JobKind::Action,
+            delay_ms,
+            ok_text,
+            err_text,
+            source: None,
+        }));
+    }
+    Ok(None)
+}
+
+fn job_source(expr: &Expr) -> Result<String, String> {
+    let expr = match expr {
+        Expr::Closure(closure) => &*closure.body,
+        other => other,
+    };
+    let Expr::MethodCall(call) = expr else {
+        return Err("resource source must be || signal.get()".into());
+    };
+    if call.method != "get" {
+        return Err("resource source must be || signal.get()".into());
+    }
+    path_ident(&call.receiver)
+}
+
+fn job_outcome(expr: &Expr) -> Result<(u64, String, String), String> {
+    let block = job_block(expr)?;
+    let mut delay_ms = 0;
+    let mut ok_text = None;
+    let mut err_text = None;
+    for stmt in &block.stmts {
+        let Stmt::Expr(expr, _) = stmt else {
+            return Err("a job body is delay_ms(...) and Ok(...) or Err(...)".into());
+        };
+        if let Expr::Call(call) = expr {
+            if path_ends(&call.func, &["delay_ms"]) {
+                let Some(arg) = call.args.first() else {
+                    return Err("delay_ms needs milliseconds".into());
+                };
+                let Expr::Lit(lit) = arg else {
+                    return Err("delay_ms needs an integer".into());
+                };
+                let syn::Lit::Int(value) = &lit.lit else {
+                    return Err("delay_ms needs an integer".into());
+                };
+                delay_ms = value.base10_parse::<u64>().map_err(|err| err.to_string())?;
+                continue;
+            }
+            if path_ends(&call.func, &["Ok"]) {
+                let Some(arg) = call.args.first() else {
+                    return Err("Ok needs a string".into());
+                };
+                ok_text = Some(stringish(arg)?);
+                continue;
+            }
+            if path_ends(&call.func, &["Err"]) {
+                let Some(arg) = call.args.first() else {
+                    return Err("Err needs a string".into());
+                };
+                err_text = Some(stringish(arg)?);
+                continue;
+            }
+        }
+        return Err("a job body is delay_ms(...) and Ok(...) or Err(...)".into());
+    }
+    match (ok_text, err_text) {
+        (Some(ok_text), None) => Ok((delay_ms, ok_text, String::new())),
+        (None, Some(err_text)) => Ok((delay_ms, String::new(), err_text)),
+        _ => Err("a job needs Ok(\"...\") or Err(\"...\")".into()),
+    }
+}
+
+fn job_block(expr: &Expr) -> Result<&syn::Block, String> {
+    let expr = match expr {
+        Expr::Closure(closure) => &*closure.body,
+        other => other,
+    };
+    match expr {
+        Expr::Async(block) => Ok(&block.block),
+        Expr::Block(block) => Ok(&block.block),
+        _ => Err("job body must be || async move { ... }".into()),
+    }
+}
+
+fn jobs_in(node: &ViewNode, known: &[String]) -> Vec<String> {
+    let mut found = Vec::new();
+    fn walk(node: &ViewNode, known: &[String], found: &mut Vec<String>) {
+        let consider = |part: &Part, found: &mut Vec<String>, known: &[String]| {
+            if let Part::Job(name) = part {
+                if known.iter().any(|job| job == name) && !found.iter().any(|have| have == name) {
+                    found.push(name.clone());
+                }
+            }
+        };
+        match node {
+            ViewNode::El(el) => {
+                for part in &el.parts {
+                    consider(part, found, known);
+                }
+                for child in &el.children {
+                    walk(child, known, found);
+                }
+            }
+            ViewNode::Show { child, .. } => walk(child, known, found),
+            ViewNode::For { .. } => {}
+            ViewNode::Slot { nodes, .. } => {
+                for child in nodes {
+                    walk(child, known, found);
+                }
+            }
+            ViewNode::Routes { routes } => {
+                for (_, nodes) in routes {
+                    for child in nodes {
+                        walk(child, known, found);
+                    }
+                }
+            }
+            ViewNode::Suspense { fallback, child, .. } | ViewNode::Boundary { fallback, child, .. } => {
+                for node in fallback {
+                    walk(node, known, found);
+                }
+                walk(child, known, found);
+            }
+            ViewNode::Portal { nodes } => {
+                for child in nodes {
+                    walk(child, known, found);
+                }
+            }
+        }
+    }
+    walk(node, known, &mut found);
+    found
 }
 
 fn try_signal(local: &syn::Local) -> Result<Option<Signal>, String> {
@@ -1764,6 +2204,7 @@ fn parse_interp(
     props: &HashMap<String, PropVal>,
     ctx: &HashMap<String, String>,
     in_children_fn: bool,
+    jobs: &[String],
 ) -> Result<Part, String> {
     let NodeBlock::ValidBlock(block) = block else {
         return Err("invalid interpolation block".into());
@@ -1792,6 +2233,9 @@ fn parse_interp(
         if signals.iter().any(|signal| signal.read == name) {
             return Ok(Part::Sig(name));
         }
+        if jobs.iter().any(|job| job == &name) {
+            return Ok(Part::Job(name));
+        }
         if in_row && signals.iter().all(|signal| signal.read != name) {
             return Ok(Part::Param(name));
         }
@@ -1813,6 +2257,9 @@ fn parse_interp(
     match &*closure.body {
         Expr::MethodCall(call) if call.method == "get" => {
             let name = path_ident(&call.receiver)?;
+            if jobs.iter().any(|job| job == &name) {
+                return Ok(Part::Job(name));
+            }
             if signals.iter().any(|signal| signal.read == name) {
                 return Ok(Part::Sig(name));
             }
@@ -1965,6 +2412,12 @@ fn bool_signal(expr: &Expr, signals: &[Signal]) -> Result<String, String> {
         Expr::Closure(closure) => &*closure.body,
         other => other,
     };
+    if let Expr::MethodCall(call) = expr {
+        if call.method == "pending" {
+            let name = path_ident(&call.receiver)?;
+            return Ok(format!("{name}_pending"));
+        }
+    }
     if let Ok(name) = signal_get(expr, signals) {
         return Ok(name);
     }

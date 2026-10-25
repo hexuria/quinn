@@ -69,7 +69,33 @@ impl Sim {
         for (key, expr) in &model.ctx_init {
             ctx.insert(key.clone(), ctx_literal(expr));
         }
-        seed_provides(&model.nodes, &mut ctx);
+        state.insert("quinn_dark".into(), 0);
+        for job in &model.jobs {
+            let phase = match job.kind {
+                JobKind::Action => "idle",
+                JobKind::Local | JobKind::Resource => "loading",
+            };
+            strings.insert(format!("{}_phase", job.name), phase.into());
+            strings.insert(format!("{}_value", job.name), String::new());
+            strings.insert(format!("{}_error", job.name), String::new());
+            state.insert(format!("{}_gen", job.name), 1);
+            if let Some(source) = &job.source {
+                let init = model
+                    .signal(source)
+                    .map(|signal| match &signal.init {
+                        Init::Str(text) => text.clone(),
+                        Init::Int(value) => value.to_string(),
+                        Init::Bool(value) => value.to_string(),
+                        _ => String::new(),
+                    })
+                    .unwrap_or_default();
+                strings.insert(format!("{}_source", job.name), init);
+            }
+            if matches!(job.kind, JobKind::Action) {
+                state.insert(format!("{}_pending", job.name), 0);
+                strings.insert(format!("{}_arg", job.name), String::new());
+            }
+        }
         let mut sim = Self {
             state,
             strings,
@@ -116,6 +142,12 @@ impl Sim {
                             walk(nodes, names, count);
                         }
                     }
+                    ViewNode::Suspense { fallback, child, .. }
+                    | ViewNode::Boundary { fallback, child, .. } => {
+                        walk(fallback, names, count);
+                        walk(std::slice::from_ref(child), names, count);
+                    }
+                    ViewNode::Portal { nodes } => walk(nodes, names, count),
                 }
             }
         }
@@ -125,6 +157,7 @@ impl Sim {
     }
 
     pub fn render(&mut self) {
+        self.sync_jobs();
         let mut live = Vec::new();
         for node in &self.model.nodes.clone() {
             self.render_node(node, &mut live);
@@ -191,7 +224,155 @@ impl Sim {
                     }
                 }
             }
+            ViewNode::Suspense {
+                jobs,
+                transition,
+                fallback,
+                child,
+            } => self.render_gate(jobs, *transition, fallback, child, live),
+            ViewNode::Boundary {
+                jobs,
+                fallback,
+                child,
+            } => {
+                if self.job_phase_any(jobs, "error") {
+                    for node in fallback {
+                        self.render_node(node, live);
+                    }
+                } else {
+                    self.render_node(child, live);
+                }
+            }
+            ViewNode::Portal { nodes } => {
+                for node in nodes {
+                    self.render_node(node, live);
+                }
+            }
         }
+    }
+
+    fn render_gate(
+        &mut self,
+        jobs: &[String],
+        transition: bool,
+        fallback: &[ViewNode],
+        child: &ViewNode,
+        live: &mut Vec<String>,
+    ) {
+        let loading = self.job_phase_any(jobs, "loading");
+        let settled = jobs.iter().any(|name| {
+            self.strings
+                .get(&format!("{name}_value"))
+                .is_some_and(|text| !text.is_empty())
+        });
+        if loading && transition && settled {
+            for node in fallback {
+                self.render_node(node, live);
+            }
+            self.render_node(child, live);
+        } else if loading {
+            for node in fallback {
+                self.render_node(node, live);
+            }
+        } else {
+            self.render_node(child, live);
+        }
+    }
+
+    fn job_phase_any(&self, jobs: &[String], phase: &str) -> bool {
+        jobs.iter().any(|name| {
+            self.strings
+                .get(&format!("{name}_phase"))
+                .is_some_and(|have| have == phase)
+        })
+    }
+
+    /// A resource whose source signal changed goes back to `"loading"` and
+    /// keeps the previous value, so a `<Transition>` can show both.
+    fn sync_jobs(&mut self) {
+        for job in self.model.jobs.clone() {
+            let Some(source) = job.source else {
+                continue;
+            };
+            let current = self.signal_text(&source);
+            let prev = self
+                .strings
+                .get(&format!("{}_source", job.name))
+                .cloned()
+                .unwrap_or_default();
+            if current == prev {
+                continue;
+            }
+            self.strings
+                .insert(format!("{}_source", job.name), current);
+            self.strings
+                .insert(format!("{}_phase", job.name), "loading".into());
+            let gen = self
+                .state
+                .get(&format!("{}_gen", job.name))
+                .copied()
+                .unwrap_or(1);
+            self.state.insert(format!("{}_gen", job.name), gen + 1);
+        }
+    }
+
+    fn signal_text(&self, name: &str) -> String {
+        if let Some(text) = self.strings.get(name) {
+            return text.clone();
+        }
+        if let Some(value) = self.state.get(name) {
+            return value.to_string();
+        }
+        String::new()
+    }
+
+    pub fn set_job_phase(&mut self, name: &str, phase: &str) {
+        self.strings
+            .insert(format!("{name}_phase"), phase.to_string());
+        self.render();
+    }
+
+    /// Finish every job the executor would complete: loading resources, and
+    /// actions whose pending flag is set.
+    pub fn settle(&mut self) {
+        for job in self.model.jobs.clone() {
+            let phase = self
+                .strings
+                .get(&format!("{}_phase", job.name))
+                .cloned()
+                .unwrap_or_default();
+            let pending = self
+                .state
+                .get(&format!("{}_pending", job.name))
+                .copied()
+                .unwrap_or(0);
+            let start = match job.kind {
+                JobKind::Action => pending == 1,
+                JobKind::Local | JobKind::Resource => phase == "loading",
+            };
+            if !start {
+                continue;
+            }
+            if job.err_text.is_empty() {
+                self.strings
+                    .insert(format!("{}_phase", job.name), "ready".into());
+                self.strings
+                    .insert(format!("{}_value", job.name), job.ok_text.clone());
+                self.strings
+                    .insert(format!("{}_error", job.name), String::new());
+            } else {
+                self.strings
+                    .insert(format!("{}_phase", job.name), "error".into());
+                self.strings
+                    .insert(format!("{}_value", job.name), String::new());
+                self.strings
+                    .insert(format!("{}_error", job.name), job.err_text.clone());
+            }
+            if matches!(job.kind, JobKind::Action) {
+                self.state.insert(format!("{}_pending", job.name), 0);
+            }
+        }
+        self.render();
     }
 
     fn render_row(
@@ -203,11 +384,17 @@ impl Sim {
         live: &mut Vec<String>,
     ) {
         let name = format!("{}#{index}", el.name);
-        let root_text = self.row_text(el, item, signals);
-        self.place(&name, &root_text, el.click.clone(), el.input.clone(), live);
-        for child in &el.children.clone() {
-            self.render_row_child(child, &name, item, signals, live);
-        }
+        let provides = el.provides.clone();
+        let children = el.children.clone();
+        let click = el.click.clone();
+        let input = el.input.clone();
+        self.with_provides(&provides, |sim| {
+            let root_text = sim.row_text(el, item, signals);
+            sim.place(&name, &root_text, click, input, live);
+            for child in &children {
+                sim.render_row_child(child, &name, item, signals, live);
+            }
+        });
     }
 
     fn render_row_child(
@@ -220,19 +407,20 @@ impl Sim {
     ) {
         match node {
             ViewNode::El(el) => {
-                let text = self.row_text(el, item, signals);
+                let provides = el.provides.clone();
+                let children = el.children.clone();
+                let click = el.click.clone();
+                let input = el.input.clone();
                 let path = format!("{prefix}/{}", el.name);
-                self.place(&path, &text, el.click.clone(), el.input.clone(), live);
-                self.place(
-                    &format!("row:{}:{}", item.id, el.name),
-                    &text,
-                    el.click.clone(),
-                    el.input.clone(),
-                    live,
-                );
-                for child in &el.children.clone() {
-                    self.render_row_child(child, &path, item, signals, live);
-                }
+                let row_key = format!("row:{}:{}", item.id, el.name);
+                self.with_provides(&provides, |sim| {
+                    let text = sim.row_text(el, item, signals);
+                    sim.place(&path, &text, click.clone(), input.clone(), live);
+                    sim.place(&row_key, &text, click, input, live);
+                    for child in &children {
+                        sim.render_row_child(child, &path, item, signals, live);
+                    }
+                });
             }
             ViewNode::Show {
                 signal,
@@ -264,6 +452,49 @@ impl Sim {
                 }
             }
             ViewNode::Routes { .. } => {}
+            ViewNode::Suspense {
+                jobs,
+                transition,
+                fallback,
+                child,
+            } => {
+                let loading = self.job_phase_any(jobs, "loading");
+                let settled = jobs.iter().any(|name| {
+                    self.strings
+                        .get(&format!("{name}_value"))
+                        .is_some_and(|text| !text.is_empty())
+                });
+                if loading && *transition && settled {
+                    for node in fallback {
+                        self.render_row_child(node, prefix, item, signals, live);
+                    }
+                    self.render_row_child(child, prefix, item, signals, live);
+                } else if loading {
+                    for node in fallback {
+                        self.render_row_child(node, prefix, item, signals, live);
+                    }
+                } else {
+                    self.render_row_child(child, prefix, item, signals, live);
+                }
+            }
+            ViewNode::Boundary {
+                jobs,
+                fallback,
+                child,
+            } => {
+                if self.job_phase_any(jobs, "error") {
+                    for node in fallback {
+                        self.render_row_child(node, prefix, item, signals, live);
+                    }
+                } else {
+                    self.render_row_child(child, prefix, item, signals, live);
+                }
+            }
+            ViewNode::Portal { nodes } => {
+                for node in nodes {
+                    self.render_row_child(node, prefix, item, signals, live);
+                }
+            }
         }
     }
 
@@ -329,17 +560,50 @@ impl Sim {
                         out.push_str(text);
                     }
                 }
+                Part::Job(name) => {
+                    if let Some(text) = self.strings.get(&format!("{name}_value")) {
+                        out.push_str(text);
+                    }
+                }
             }
         }
         out
     }
 
-    fn render_el(&mut self, el: &El, live: &mut Vec<String>) {
-        let text = self.plain_text(&el.parts, el.value.as_deref());
-        self.place(&el.name, &text, el.click.clone(), el.input.clone(), live);
-        for child in &el.children {
-            self.render_node(child, live);
+    fn with_provides<T>(&mut self, provides: &[(String, String)], body: impl FnOnce(&mut Self) -> T) -> T {
+        if provides.is_empty() {
+            return body(self);
         }
+        let saved: Vec<(String, Option<String>)> = provides
+            .iter()
+            .map(|(key, _)| (key.clone(), self.ctx.get(key).cloned()))
+            .collect();
+        for (key, expr) in provides {
+            self.ctx.insert(key.clone(), ctx_literal(expr));
+        }
+        let value = body(self);
+        for (key, prev) in saved.into_iter().rev() {
+            match prev {
+                Some(text) => {
+                    self.ctx.insert(key, text);
+                }
+                None => {
+                    self.ctx.remove(&key);
+                }
+            }
+        }
+        value
+    }
+
+    fn render_el(&mut self, el: &El, live: &mut Vec<String>) {
+        let provides = el.provides.clone();
+        self.with_provides(&provides, |sim| {
+            let text = sim.plain_text(&el.parts, el.value.as_deref());
+            sim.place(&el.name, &text, el.click.clone(), el.input.clone(), live);
+            for child in &el.children {
+                sim.render_node(child, live);
+            }
+        });
     }
 
     fn place(
@@ -407,6 +671,11 @@ impl Sim {
                         out.push_str(text);
                     }
                 }
+                Part::Job(name) => {
+                    if let Some(text) = self.strings.get(&format!("{name}_value")) {
+                        out.push_str(text);
+                    }
+                }
             }
         }
         out
@@ -414,6 +683,16 @@ impl Sim {
 
     pub fn id(&self, name: &str) -> Option<u64> {
         self.ids.get(name).map(|slot| slot.id)
+    }
+
+    pub fn labels(&self) -> Vec<(String, String)> {
+        let mut rows: Vec<_> = self
+            .ids
+            .iter()
+            .map(|(name, slot)| (name.clone(), slot.text.clone()))
+            .collect();
+        rows.sort();
+        rows
     }
 
     pub fn text(&self, name: &str) -> String {
@@ -611,6 +890,21 @@ impl Sim {
                     let path = self.eval(expr, row, &locals).as_string();
                     self.strings.insert("route".into(), path);
                 }
+                HandlerStmt::Dispatch { action, arg } => {
+                    let arg = self.eval(arg, row, &locals).as_string();
+                    self.strings.insert(format!("{action}_arg"), arg);
+                    self.state.insert(format!("{action}_pending"), 1);
+                    let gen = self
+                        .state
+                        .get(&format!("{action}_gen"))
+                        .copied()
+                        .unwrap_or(1);
+                    self.state.insert(format!("{action}_gen"), gen + 1);
+                }
+                HandlerStmt::ToggleTheme => {
+                    let dark = self.state.get("quinn_dark").copied().unwrap_or(0);
+                    self.state.insert("quinn_dark".into(), if dark == 0 { 1 } else { 0 });
+                }
             }
         }
     }
@@ -780,6 +1074,25 @@ fn remove_named(nodes: &mut Vec<ViewNode>, name: &str) -> bool {
                     }
                 }
             }
+            ViewNode::Suspense { fallback, child, .. }
+            | ViewNode::Boundary { fallback, child, .. } => {
+                if remove_named(fallback, name) {
+                    return true;
+                }
+                if let ViewNode::El(el) = child.as_mut() {
+                    if el.name == name {
+                        return false;
+                    }
+                    if remove_named(&mut el.children, name) {
+                        return true;
+                    }
+                }
+            }
+            ViewNode::Portal { nodes } => {
+                if remove_named(nodes, name) {
+                    return true;
+                }
+            }
         }
     }
     false
@@ -817,23 +1130,3 @@ fn ctx_literal(expr: &str) -> String {
     expr.to_string()
 }
 
-fn seed_provides(nodes: &[ViewNode], ctx: &mut HashMap<String, String>) {
-    for node in nodes {
-        match node {
-            ViewNode::El(el) => {
-                for (key, expr) in &el.provides {
-                    ctx.entry(key.clone()).or_insert_with(|| ctx_literal(expr));
-                }
-                seed_provides(&el.children, ctx);
-            }
-            ViewNode::Show { child, .. } => seed_provides(std::slice::from_ref(child), ctx),
-            ViewNode::Slot { nodes, .. } => seed_provides(nodes, ctx),
-            ViewNode::Routes { routes } => {
-                for (_, nodes) in routes {
-                    seed_provides(nodes, ctx);
-                }
-            }
-            ViewNode::For { .. } => {}
-        }
-    }
-}

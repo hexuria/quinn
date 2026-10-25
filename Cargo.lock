@@ -46,6 +46,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "async-dashboard"
+version = "0.1.0"
+dependencies = [
+ "quinn",
+]
+
+[[package]]
 name = "async-lock"
 version = "3.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"

@@ -134,6 +134,17 @@ The baseline samples scanned the whole window for red pixels, so that median inc
 
 The lowerer's poll is inside these numbers. They are not the old ~200 ms log-line sample, and they are not the red-pixel medians above.
 
+### Async dashboard
+
+25 Oct 2026, about 7:45 PM Asia/Manila. `./target/release/async-dashboard --hot`. One process: pid 95336, starttime 3602412, window `0x2200002`. The title bar showed that pid, starttime, and window id for the whole take. Before the edits the note was already `Ada's note`, dark mode was on, and the portal was open. One uncut 30 fps raw x11grab, 88 frames, 2.933 s. Not stitched. The clock starts when `write()` and `fsync` of `examples/async-dashboard/view.rs` return, and stops on the first received frame whose pixels differ.
+
+| Edit | What stayed | ms |
+| --- | --- | --- |
+| `"Modal"` → `"Still open"` | dark theme, open portal, loaded note, `Saved Cebu` | 325.3 |
+| `w-[280px]` → `w-[420px]` | the same, with the title already `Still open` | 231.7 |
+
+Closing the modal later in that same take showed `Note: Ada's note`, `Place: Manila desk`, `Could not load the feed`, and `Action: Saved Cebu` on the dark page. Both edits logged `script_reload pid=95336 window_stays=1`. `view.rs` was restored after the take. starttime did not change.
+
 ## Wasm
 
 `cargo-makepad wasm build --bindgen -p counter` (dev profile) wrote `target/makepad-wasm-app/debug/counter` in 1m 07s of compile time plus packaging. The package was served with `Cross-Origin-Opener-Policy: same-origin` and `Cross-Origin-Embedder-Policy: require-corp`. Headless Chromium with SwiftShader loaded it, and a click moved the counter from 0 to 1.

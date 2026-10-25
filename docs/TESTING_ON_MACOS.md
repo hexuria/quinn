@@ -17,6 +17,7 @@ cargo run -p keyed-list --release
 cargo run -p form --release
 cargo run -p tailwind-gallery --release
 cargo run -p app-shell --release
+cargo run -p async-dashboard --release
 cargo run -p baseline-counter --release
 cargo run -p probe-widget-lifecycle --release
 ```
@@ -28,7 +29,8 @@ What to look at:
 - `keyed-list`: reversing the rows reorders them. Beta's own counter survives the reorder and a removal of a different row.
 - `form`: typing in the field updates the echoed line. Clearing the field empties both. This example uses `value=` and `on:input`, which rewrites `TextInput.text` on each render, so the caret may jump. The text should not disappear.
 - `tailwind-gallery`: rows, wrap, a grid, a gradient, a shadow, an absolute label, and a short scrolling note. The window scrolls.
-- `app-shell`: Home, Board, and Form switch the page and leave the typed name and the accent in place. The board has a grid, a gradient, a shadow, and a note you can scroll. The card is a component with a title prop and children. Form shows a stored city. Move to Cebu changes that field only. The name field is `bind:value`: the echo updates and the caret stays where you clicked.
+- `app-shell`: Home, Board, and Form switch the page and leave the typed name and the accent in place. The board has a grid, a gradient, a shadow, and a note you can scroll. The pinned label sits inside its short parent (`left-2 top-1`), not at a draw-space point. The card is a component with a title prop and children. Form shows a stored city. Move to Cebu changes that field only. The name field is `bind:value`: the echo updates and the caret stays where you clicked.
+- `async-dashboard`: the note shows "Loading the note", then "Ada's note". The feed line becomes "Could not load the feed". Theme flips the page to stone-900 and back. Open modal paints a card over the page; Close removes it. Save shows "Saving", then "Action: Saved Cebu". Refetch shows "Refreshing" beside the old place line. A window narrower than 768px stacks the sidebar; a wider window puts it beside the note. `hover:` on the amber chip turns it amber-600 while the pointer is over it. `focus:` on Theme is `draw_bg.color_focus` in the lowered script. `--hot` keeps the loaded note, the dark flag, and an open modal across a `view.rs` edit. On Linux, 25 Oct 2026 about 7:45 PM Asia/Manila, pid 95336 starttime 3602412 window `0x2200002` stayed across `"Modal"` → `"Still open"` (325.3 ms) and `w-[280px]` → `w-[420px]` (231.7 ms). The shell calls `quinn::drive_shell` after the widget handles the event.
 - `baseline-counter`: `Count: 0` and Increment are inside the window body. The label and the button are light text on a dark control. A click changes the count.
 - `probe-widget-lifecycle`: the process prints `PROBE_OK` and exits 0. `QUINN_PROBE_EXIT=1` makes a failed check a non-zero exit. The log path is `artifacts/probe-widget-lifecycle.log`.
 
@@ -61,6 +63,7 @@ cargo run -p keyed-list --release -- --hot
 cargo run -p form --release -- --hot
 cargo run -p tailwind-gallery --release -- --hot
 cargo run -p app-shell --release -- --hot
+cargo run -p async-dashboard --release -- --hot
 ```
 
 `./target/release/<bin> --hot` is the same loop without Cargo as the parent. Edit `view.rs` in that example, not `src/main.rs`. `view.rs` and `hot/ui.rs` are outside `src/`, so `cargo run` does not rebuild. On Linux, `cargo run -p counter --release -- --hot` kept pid 64535 and starttime 1913679 across five saves of `examples/counter/view.rs`. The log had one `Running` line. Saving `src/main.rs` still rebuilds and starts a new process.
@@ -76,6 +79,7 @@ Leave the process up and set the state you care about first.
 - Conditional: tick the sibling, leave the detail open, click the detail. Change the detail's heading or its classes. The sibling count, the open toggle, and the detail's clicks stay. A click after the reload still increments.
 - Form: type a name. Change `"Hello, "` or `"Clear"` or `gap-4`. The field keeps the text. The heading follows it. This field uses `on:input`, so the caret may jump.
 - App shell: open Board, type a name, and leave the accent as it is. Change the `Card` template text, `grid-cols-3` to `grid-cols-2`, and `to-stone-900` to another palette color. The route stays Board, the accent stays, and the typed name stays. `bind:value` does not rewrite the input, so the caret stays where you left it.
+- Async dashboard: wait until the note reads `Ada's note`, turn the theme dark, and open the modal. Change the modal title and a class on the card. The note, the dark page, and the open modal stay. On the Linux take that was pid 95336, starttime 3602412, window `0x2200002`.
 - Baseline: change `increment_button`'s `draw_bg.color` in `examples/baseline-counter/src/main.rs` and save. The button recolors. The count stays. That file is the script block itself. The log contains `hot reload applied`.
 
 Confirm the process with `starttime` in `/proc/<pid>/stat` as well as the window id. The X server recycles window ids across processes. `xprop -id <id> -set WM_NAME` sets a title the frame will not immediately overwrite; `xdotool set_window --name` did not stick on the Linux run.

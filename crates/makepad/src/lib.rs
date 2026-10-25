@@ -10,8 +10,8 @@ mod host;
 mod probe;
 
 pub use host::{
-    boot_script, census_host, eval_hot_file, load_hot_view, on_actions, reclaim_script_heap,
-    startup, with_current_cx, with_cx, WidgetCensus,
+    boot_script, census_host, drive_shell, eval_hot_file, load_hot_view, on_actions,
+    reclaim_script_heap, startup, with_current_cx, with_cx, WidgetCensus,
 };
 pub use makepad_widgets;
 pub use probe::{

@@ -1,24 +1,46 @@
 //! Makepad `script_mod!` text. The header stays a fixed height so the
 //! block the watcher keys on does not move when the view grows.
 
+use std::cell::RefCell;
+
 use quinn_core::{Style, Tag};
-use quinn_styles::{parse_classes, AlignSpec, FlowSpec, SizeSpec};
+use quinn_styles::{parse_classes, shell_variants, AlignSpec, FlowSpec, SizeSpec};
 
 use crate::model::*;
 use crate::Shell;
 
+thread_local! {
+    static DEFER_PORTALS: RefCell<Vec<Vec<ViewNode>>> = const { RefCell::new(Vec::new()) };
+}
+
+fn clear_portals() {
+    DEFER_PORTALS.with(|slot| slot.borrow_mut().clear());
+}
+
+fn defer_portal(nodes: Vec<ViewNode>) {
+    DEFER_PORTALS.with(|slot| slot.borrow_mut().push(nodes));
+}
+
+fn drain_portals() -> Vec<ViewNode> {
+    DEFER_PORTALS.with(|slot| slot.borrow_mut().drain(..).flatten().collect())
+}
+
 pub fn emit_rust(model: &Model, shell: &Shell) -> String {
+    clear_portals();
+    reset_gates();
     let mut body = String::new();
     body.push_str("        use mod.prelude.widgets.*\n");
     // A missing `mod.state` is an error, not nil. `ok{...}` turns that into nil.
     body.push_str("        if ok{mod.state} == nil {\n");
     body.push_str("            mod.state = {\n");
-    for line in seed_lines(model) {
+    for line in seed_lines(model, shell) {
         body.push_str(&format!("                {line}\n"));
     }
     body.push_str("            }\n");
     body.push_str("        }\n");
     body.push_str("        let state = mod.state\n");
+    body.push_str(&emit_shell_fns(shell));
+    body.push_str(&emit_job_fns(model));
     body.push_str(&emit_ctx(model));
     if let Some(signal) = &model.frame {
         body.push_str("        fn quinn_frame() {\n");
@@ -130,7 +152,12 @@ pub fn emit_rust(model: &Model, shell: &Shell) -> String {
     if model.retain {
         body.push_str(&emit_retain(model));
     }
-    let host = host_fields(&model.root_class, tree_has_absolute(&model.nodes));
+    let host = if tree_has_portal(&model.nodes) {
+        "                            flow: Overlay\n                            width: Fill\n                            height: Fill\n                            show_bg: false\n"
+            .to_string()
+    } else {
+        host_fields(&model.root_class, false)
+    };
     let mut children = String::new();
     let mut cursor = ShowCursor {
         sites: &shows,
@@ -142,13 +169,19 @@ pub fn emit_rust(model: &Model, shell: &Shell) -> String {
     if has_input(&model.nodes) {
         children.push_str("                                let root = ui\n");
     }
+    if model.jobs.iter().any(|job| job.source.is_some()) {
+        children.push_str("                                quinn_sync_jobs()\n");
+    }
     let root_style = parse_classes(&model.root_class);
     let root_flow = root_style.flow.unwrap_or(FlowSpec::Column);
     let root_stretch = root_style.cross_align == Some(quinn_styles::CrossAlign::Stretch);
+    let has_portal = tree_has_portal(&model.nodes);
+    let child_indent = if has_portal { 9 } else { 8 };
+    let mut app_body = String::new();
     for node in &model.nodes {
-        children.push_str(&emit_node(
+        app_body.push_str(&emit_node(
             node,
-            8,
+            child_indent,
             None,
             root_flow,
             root_stretch,
@@ -157,6 +190,35 @@ pub fn emit_rust(model: &Model, shell: &Shell) -> String {
             &mut routes,
             pass_root,
         ));
+    }
+    let mut portal_body = String::new();
+    loop {
+        let lifted = drain_portals();
+        if lifted.is_empty() {
+            break;
+        }
+        for node in &lifted {
+            portal_body.push_str(&emit_node(
+                node,
+                8,
+                None,
+                FlowSpec::Column,
+                false,
+                &mut cursor,
+                &mut slots,
+                &mut routes,
+                pass_root,
+            ));
+        }
+    }
+    if has_portal {
+        let app_fields = host_fields(&model.root_class, false);
+        children.push_str(&format!(
+            "                                app := RoundedView {{\n{app_fields}{app_body}                                }}\n"
+        ));
+        children.push_str(&portal_body);
+    } else {
+        children.push_str(&app_body);
     }
     body.push_str(&slots);
     body.push_str(&show_fns);
@@ -207,6 +269,11 @@ fn has_input(nodes: &[ViewNode]) -> bool {
             ViewNode::For { child, .. } => el(child),
             ViewNode::Slot { nodes, .. } => nodes.iter().any(walk),
             ViewNode::Routes { routes } => routes.iter().any(|(_, nodes)| nodes.iter().any(walk)),
+            ViewNode::Suspense { fallback, child, .. }
+            | ViewNode::Boundary { fallback, child, .. } => {
+                fallback.iter().any(walk) || walk(child)
+            }
+            ViewNode::Portal { nodes } => nodes.iter().any(walk),
         }
     }
     nodes.iter().any(walk)
@@ -249,6 +316,11 @@ fn has_list_op(nodes: &[ViewNode], op: ListOp) -> bool {
             ViewNode::Routes { routes } => routes
                 .iter()
                 .any(|(_, nodes)| nodes.iter().any(|node| walk(node, op))),
+            ViewNode::Suspense { fallback, child, .. }
+            | ViewNode::Boundary { fallback, child, .. } => {
+                fallback.iter().any(|node| walk(node, op)) || walk(child, op)
+            }
+            ViewNode::Portal { nodes } => nodes.iter().any(|node| walk(node, op)),
         }
     }
     nodes.iter().any(|node| walk(node, op))
@@ -297,6 +369,12 @@ fn each_for(nodes: &[ViewNode], visit: &mut dyn FnMut(&str, &[String], &[Signal]
                     each_for(nodes, visit);
                 }
             }
+            ViewNode::Suspense { fallback, child, .. }
+            | ViewNode::Boundary { fallback, child, .. } => {
+                each_for(fallback, visit);
+                each_for(std::slice::from_ref(child), visit);
+            }
+            ViewNode::Portal { nodes } => each_for(nodes, visit),
         }
     }
 }
@@ -362,6 +440,18 @@ fn row_live_flags(el: &El) -> Vec<String> {
                     for child in nodes {
                         walk(child, out);
                     }
+                }
+            }
+            ViewNode::Suspense { fallback, child, .. }
+            | ViewNode::Boundary { fallback, child, .. } => {
+                for node in fallback {
+                    walk(node, out);
+                }
+                walk(child, out);
+            }
+            ViewNode::Portal { nodes } => {
+                for node in nodes {
+                    walk(node, out);
                 }
             }
         }
@@ -444,7 +534,128 @@ fn emit_retain(model: &Model) -> String {
     )
 }
 
-fn seed_lines(model: &Model) -> Vec<String> {
+fn emit_shell_fns(shell: &Shell) -> String {
+    let _ = shell;
+    r#"        fn quinn_apply_width(w) {
+            state.quinn_width = w
+            ui.host.render()
+        }
+        fn quinn_skip_width() { 0 }
+        fn quinn_set_width(w) {
+            if state.quinn_width != w { quinn_apply_width(w) } else { quinn_skip_width() }
+        }
+        fn quinn_theme_on() { state.quinn_dark = 1 }
+        fn quinn_theme_off() { state.quinn_dark = 0 }
+        mod.quinn_set_width = quinn_set_width
+"#
+    .to_string()
+}
+
+fn emit_job_fns(model: &Model) -> String {
+    if model.jobs.is_empty() {
+        return String::new();
+    }
+    let mut out = String::new();
+    let n = model.jobs.len();
+    out.push_str(&format!("        fn quinn_job_count() {{ {n} }}\n"));
+    out.push_str("        fn quinn_job_delay(i) {\n");
+    out.push_str(&chain_num(
+        model
+            .jobs
+            .iter()
+            .map(|job| script_num(job.delay_ms as f64 / 1000.0))
+            .collect(),
+    ));
+    out.push_str("        }\n");
+    out.push_str("        fn quinn_job_gen(i) {\n");
+    out.push_str(&chain_expr(
+        &model
+            .jobs
+            .iter()
+            .map(|job| match job.kind {
+                JobKind::Action => format!(
+                    "if state.{}_pending == true {{ state.{}_gen }} else {{ 0 }}",
+                    job.name, job.name
+                ),
+                JobKind::Local | JobKind::Resource => format!(
+                    "if state.{}_phase == \"loading\" {{ state.{}_gen }} else {{ 0 }}",
+                    job.name, job.name
+                ),
+            })
+            .collect::<Vec<_>>(),
+    ));
+    out.push_str("        }\n");
+    for (index, job) in model.jobs.iter().enumerate() {
+        let phase = if job.err_text.is_empty() {
+            "ready"
+        } else {
+            "error"
+        };
+        let value = escape_script(&job.ok_text);
+        let err = escape_script(&job.err_text);
+        out.push_str(&format!(
+            "        fn quinn_finish_{index}() {{\n            state.{name}_phase = \"{phase}\"\n            state.{name}_value = \"{value}\"\n            state.{name}_error = \"{err}\"\n",
+            name = job.name
+        ));
+        if matches!(job.kind, JobKind::Action) {
+            out.push_str(&format!("            state.{}_pending = false\n", job.name));
+        }
+        out.push_str("            ui.host.render()\n        }\n");
+    }
+    out.push_str("        fn quinn_finish(i) {\n");
+    out.push_str(&chain_expr(
+        &(0..n)
+            .map(|index| format!("quinn_finish_{index}()"))
+            .collect::<Vec<_>>(),
+    ));
+    out.push_str("        }\n");
+    if model.jobs.iter().any(|job| job.source.is_some()) {
+        out.push_str("        fn quinn_sync_jobs() {\n");
+        for job in model.jobs.iter().filter(|job| job.source.is_some()) {
+            let source = job.source.as_deref().unwrap_or("");
+            out.push_str(&format!(
+                "            if state.{name}_source != state.{source} {{ quinn_resync_{name}() }} else {{ 0 }}\n",
+                name = job.name
+            ));
+        }
+        out.push_str("        }\n");
+        for job in model.jobs.iter().filter(|job| job.source.is_some()) {
+            let source = job.source.as_deref().unwrap_or("");
+            out.push_str(&format!(
+                "        fn quinn_resync_{name}() {{\n            state.{name}_source = state.{source}\n            state.{name}_phase = \"loading\"\n            state.{name}_gen = state.{name}_gen + 1\n        }}\n",
+                name = job.name
+            ));
+        }
+    }
+    out.push_str("        mod.quinn_job_count = quinn_job_count\n");
+    out.push_str("        mod.quinn_job_delay = quinn_job_delay\n");
+    out.push_str("        mod.quinn_job_gen = quinn_job_gen\n");
+    out.push_str("        mod.quinn_finish = quinn_finish\n");
+    out
+}
+
+fn chain_num(values: Vec<String>) -> String {
+    chain_expr(&values)
+}
+
+fn chain_expr(values: &[String]) -> String {
+    if values.is_empty() {
+        return "            0\n".into();
+    }
+    fn nest(values: &[String], index: usize) -> String {
+        if index + 1 >= values.len() {
+            return format!("if i == {index} {{ {} }} else {{ 0 }}", values[index]);
+        }
+        format!(
+            "if i == {index} {{ {} }} else {{ {} }}",
+            values[index],
+            nest(values, index + 1)
+        )
+    }
+    format!("            {}\n", nest(values, 0))
+}
+
+fn seed_lines(model: &Model, shell: &Shell) -> Vec<String> {
     let mut lines = Vec::new();
     for signal in &model.signals {
         lines.push(match &signal.init {
@@ -477,6 +688,34 @@ fn seed_lines(model: &Model) -> Vec<String> {
     for flag in live_flags(&model.nodes) {
         lines.push(format!("{flag}: 0"));
     }
+    lines.push(format!("quinn_width: {}.", shell.width));
+    lines.push("quinn_dark: 0".into());
+    for job in &model.jobs {
+        let phase = match job.kind {
+            JobKind::Action => "idle",
+            JobKind::Local | JobKind::Resource => "loading",
+        };
+        lines.push(format!("{}_phase: \"{phase}\"", job.name));
+        lines.push(format!("{}_value: \"\"", job.name));
+        lines.push(format!("{}_error: \"\"", job.name));
+        lines.push(format!("{}_gen: 1", job.name));
+        if let Some(source) = &job.source {
+            let init = model
+                .signal(source)
+                .map(|signal| match &signal.init {
+                    Init::Str(text) => format!("\"{}\"", escape_script(text)),
+                    Init::Int(value) => value.to_string(),
+                    Init::Bool(value) => value.to_string(),
+                    _ => "\"\"".into(),
+                })
+                .unwrap_or_else(|| "\"\"".into());
+            lines.push(format!("{}_source: {init}", job.name));
+        }
+        if matches!(job.kind, JobKind::Action) {
+            lines.push(format!("{}_pending: false", job.name));
+            lines.push(format!("{}_arg: \"\"", job.name));
+        }
+    }
     lines
 }
 
@@ -506,6 +745,18 @@ fn live_flags(nodes: &[ViewNode]) -> Vec<String> {
                     for child in nodes {
                         walk(child, out);
                     }
+                }
+            }
+            ViewNode::Suspense { fallback, child, .. }
+            | ViewNode::Boundary { fallback, child, .. } => {
+                for node in fallback {
+                    walk(node, out);
+                }
+                walk(child, out);
+            }
+            ViewNode::Portal { nodes } => {
+                for node in nodes {
+                    walk(node, out);
                 }
             }
         }
@@ -604,10 +855,20 @@ struct ShowCursor<'a> {
 }
 
 fn collect_shows(nodes: &[ViewNode]) -> Vec<ShowSite> {
+    clear_portals();
     let mut sites = Vec::new();
     let mut nth = std::collections::HashMap::<String, usize>::new();
     for node in nodes {
         collect_show(node, &mut sites, &mut nth);
+    }
+    loop {
+        let lifted = drain_portals();
+        if lifted.is_empty() {
+            break;
+        }
+        for node in &lifted {
+            collect_show(node, &mut sites, &mut nth);
+        }
     }
     sites
 }
@@ -645,6 +906,13 @@ fn collect_show(
                 }
             }
         }
+        ViewNode::Suspense { fallback, child, .. } | ViewNode::Boundary { fallback, child, .. } => {
+            for node in fallback {
+                collect_show(node, sites, nth);
+            }
+            collect_show(child, sites, nth);
+        }
+        ViewNode::Portal { nodes } => defer_portal(nodes.clone()),
     }
 }
 
@@ -660,9 +928,19 @@ fn emit_show_fns(
     pass_root: bool,
 ) -> String {
     let mut out = String::new();
+    clear_portals();
     let mut cursor = ShowCursor { sites, index: 0 };
     for node in nodes {
         emit_show_fn(node, &mut cursor, &mut out, slots, routes, pass_root);
+    }
+    loop {
+        let lifted = drain_portals();
+        if lifted.is_empty() {
+            break;
+        }
+        for node in &lifted {
+            emit_show_fn(node, &mut cursor, &mut out, slots, routes, pass_root);
+        }
     }
     out
 }
@@ -753,6 +1031,13 @@ fn emit_show_fn(
                 }
             }
         }
+        ViewNode::Suspense { fallback, child, .. } | ViewNode::Boundary { fallback, child, .. } => {
+            for node in fallback {
+                emit_show_fn(node, cursor, out, slots, routes, pass_root);
+            }
+            emit_show_fn(child, cursor, out, slots, routes, pass_root);
+        }
+        ViewNode::Portal { nodes } => defer_portal(nodes.clone()),
     }
 }
 
@@ -907,6 +1192,23 @@ fn emit_row_show_fns(
                 }
             }
         }
+        ViewNode::Suspense { fallback, child, .. } | ViewNode::Boundary { fallback, child, .. } => {
+            for node in fallback {
+                emit_row_show_fns(
+                    node, args, row_signals, cursor, out, slots, routes, pass_root,
+                );
+            }
+            emit_row_show_fns(
+                child, args, row_signals, cursor, out, slots, routes, pass_root,
+            );
+        }
+        ViewNode::Portal { nodes } => {
+            for node in nodes {
+                emit_row_show_fns(
+                    node, args, row_signals, cursor, out, slots, routes, pass_root,
+                );
+            }
+        }
     }
 }
 
@@ -1010,6 +1312,23 @@ fn emit_node(
             }
             calls
         }
+        ViewNode::Suspense {
+            jobs,
+            transition,
+            fallback,
+            child,
+        } => emit_suspense(
+            jobs, *transition, fallback, child, indent, shows, slots, routes, pass_root,
+        ),
+        ViewNode::Boundary {
+            jobs,
+            fallback,
+            child,
+        } => emit_boundary(jobs, fallback, child, indent, shows, slots, routes, pass_root),
+        ViewNode::Portal { nodes } => {
+            defer_portal(nodes.clone());
+            String::new()
+        }
     }
 }
 
@@ -1022,6 +1341,116 @@ fn script_fn(name: &str, pass_root: bool, arg: bool) -> String {
         params.push("arg");
     }
     format!("fn {name}({})", params.join(", "))
+}
+
+fn emit_suspense(
+    jobs: &[String],
+    transition: bool,
+    fallback: &[ViewNode],
+    child: &ViewNode,
+    indent: usize,
+    shows: &mut ShowCursor<'_>,
+    slots: &mut String,
+    routes: &mut String,
+    pass_root: bool,
+) -> String {
+    let n = next_gate();
+    let name = format!("quinn_gate_{n}");
+    let ready = function_body(std::slice::from_ref(child), shows, slots, routes, pass_root);
+    let fb = function_body(fallback, shows, slots, routes, pass_root);
+    let on = script_fn(&format!("{name}_on"), pass_root, false);
+    let off = script_fn(&format!("{name}_fb"), pass_root, false);
+    let gate = script_fn(&name, pass_root, false);
+    let call_on = script_call(&format!("{name}_on"), pass_root, None);
+    let call_fb = script_call(&format!("{name}_fb"), pass_root, None);
+    let loading = phase_any(jobs, "loading");
+    let value = jobs
+        .first()
+        .map(|job| format!("state.{job}_value == \"\""))
+        .unwrap_or_else(|| "true".into());
+    let both = if transition {
+        let both_fn = script_fn(&format!("{name}_both"), pass_root, false);
+        let call_both = script_call(&format!("{name}_both"), pass_root, None);
+        let wait_fn = script_fn(&format!("{name}_wait"), pass_root, false);
+        let call_wait = script_call(&format!("{name}_wait"), pass_root, None);
+        slots.push_str(&format!(
+            "        {both_fn} {{\n            RoundedView {{\n                width: Fit\n                height: Fit\n                flow: Down\n                {call_fb}\n                {call_on}\n            }}\n        }}\n        {wait_fn} {{\n            if {value} {{\n                {call_fb}\n            }} else {{\n                {call_both}\n            }}\n        }}\n"
+        ));
+        format!("            {call_wait}\n")
+    } else {
+        format!("            {call_fb}\n")
+    };
+    slots.push_str(&format!(
+        "        {on} {{\n{ready}        }}\n        {off} {{\n{fb}        }}\n        {gate} {{\n            if {loading} {{\n{both}            }} else {{\n                {call_on}\n            }}\n        }}\n"
+    ));
+    let pad = " ".repeat(indent * 4);
+    format!(
+        "{pad}{}\n",
+        script_call(&name, pass_root, None)
+    )
+}
+
+fn emit_boundary(
+    jobs: &[String],
+    fallback: &[ViewNode],
+    child: &ViewNode,
+    indent: usize,
+    shows: &mut ShowCursor<'_>,
+    slots: &mut String,
+    routes: &mut String,
+    pass_root: bool,
+) -> String {
+    let n = next_gate();
+    let name = format!("quinn_err_{n}");
+    let ready = function_body(std::slice::from_ref(child), shows, slots, routes, pass_root);
+    let fb = function_body(fallback, shows, slots, routes, pass_root);
+    let err = phase_any(jobs, "error");
+    slots.push_str(&format!(
+        "        {} {{\n{ready}        }}\n        {} {{\n{fb}        }}\n        {} {{\n            if {err} {{\n                {}\n            }} else {{\n                {}\n            }}\n        }}\n",
+        script_fn(&format!("{name}_on"), pass_root, false),
+        script_fn(&format!("{name}_fb"), pass_root, false),
+        script_fn(&name, pass_root, false),
+        script_call(&format!("{name}_fb"), pass_root, None),
+        script_call(&format!("{name}_on"), pass_root, None),
+    ));
+    let pad = " ".repeat(indent * 4);
+    format!("{pad}{}\n", script_call(&name, pass_root, None))
+}
+
+fn function_body(
+    nodes: &[ViewNode],
+    shows: &mut ShowCursor<'_>,
+    slots: &mut String,
+    routes: &mut String,
+    pass_root: bool,
+) -> String {
+    slot_body(nodes, shows, slots, routes, pass_root)
+}
+
+fn phase_any(jobs: &[String], phase: &str) -> String {
+    if jobs.is_empty() {
+        return "false".into();
+    }
+    jobs.iter()
+        .map(|job| format!("state.{job}_phase == \"{phase}\""))
+        .collect::<Vec<_>>()
+        .join(" || ")
+}
+
+thread_local! {
+    static GATE: std::cell::Cell<u32> = const { std::cell::Cell::new(1) };
+}
+
+fn reset_gates() {
+    GATE.with(|slot| slot.set(1));
+}
+
+fn next_gate() -> u32 {
+    GATE.with(|slot| {
+        let n = slot.get();
+        slot.set(n + 1);
+        n
+    })
 }
 
 fn script_call(name: &str, pass_root: bool, arg: Option<&str>) -> String {
@@ -1197,9 +1626,10 @@ fn emit_el(
             script_num(implicit_row_px(el))
         ));
     }
-    if !style.clip && el.children.iter().any(node_has_absolute) {
-        lines.push("clip_x: false".into());
-        lines.push("clip_y: false".into());
+    if matches!(tag, Tag::Div) {
+        if let Some(anim) = div_hover_animator(&style) {
+            lines.push(anim);
+        }
     }
     if let Some(signal) = &el.input {
         lines.push(format!(
@@ -1217,10 +1647,6 @@ fn emit_el(
             lines.push(format!("{key}: || {{\n{body}{pad}}}"));
         }
     }
-    let inner = lines
-        .into_iter()
-        .map(|line| format!("{pad}    {line}\n"))
-        .collect::<String>();
     let child_style = {
         let mut style = tag.defaults();
         if !el.class.is_empty() {
@@ -1235,26 +1661,335 @@ fn emit_el(
     };
     let child_stretch =
         el.tag == "div" && child_style.cross_align == Some(quinn_styles::CrossAlign::Stretch);
-    let mut children = String::new();
-    for child in &el.children {
-        children.push_str(&emit_node(
-            child,
-            indent + 1,
+    let split = el.tag == "div"
+        && style.grid_cols.is_none()
+        && !style.absolute
+        && el.children.iter().any(child_is_absolute);
+    let widget_text = if style.absolute {
+        emit_abs_frame(
+            el,
             row,
-            child_flow,
-            child_stretch,
+            indent,
+            named,
+            parent,
             shows,
             slots,
             routes,
             pass_root,
-        ));
-    }
-    let head = if named {
-        format!("{pad}{} := {widget} {{\n", el.name)
+        )
+    } else if split {
+        let mut flow_lines = Vec::new();
+        let mut kept = Vec::new();
+        for line in lines {
+            if line.starts_with("flow:")
+                || line.starts_with("spacing:")
+                || line.starts_with("wrap_spacing:")
+                || line.starts_with("align:")
+                || line.starts_with("distribute:")
+            {
+                flow_lines.push(line);
+            } else {
+                kept.push(line);
+            }
+        }
+        if !kept.iter().any(|line| line.starts_with("flow:")) {
+            kept.push("flow: Overlay".into());
+        }
+        let inner_props = kept
+            .into_iter()
+            .map(|line| format!("{pad}    {line}\n"))
+            .collect::<String>();
+        let mut flow_nodes = Vec::new();
+        let mut abs_nodes = Vec::new();
+        for child in &el.children {
+            if child_is_absolute(child) {
+                abs_nodes.push(child);
+            } else {
+                flow_nodes.push(child);
+            }
+        }
+        abs_nodes.sort_by_key(|node| node_z(node));
+        let mut body = String::new();
+        for child in abs_nodes.iter().copied().filter(|node| node_z(node) < 0) {
+            body.push_str(&emit_abs_frame_node(
+                child,
+                indent + 1,
+                row,
+                shows,
+                slots,
+                routes,
+                pass_root,
+            ));
+        }
+        if !flow_nodes.is_empty() {
+            let flow_pad = " ".repeat((indent + 1) * 4);
+            let mut flow_body = String::new();
+            for child in &flow_nodes {
+                flow_body.push_str(&emit_node(
+                    child,
+                    indent + 2,
+                    row,
+                    child_flow,
+                    child_stretch,
+                    shows,
+                    slots,
+                    routes,
+                    pass_root,
+                ));
+            }
+            let flow_props = if flow_lines.is_empty() {
+                format!("{flow_pad}    flow: Down\n")
+            } else {
+                flow_lines
+                    .into_iter()
+                    .map(|line| format!("{flow_pad}    {line}\n"))
+                    .collect()
+            };
+            body.push_str(&format!(
+                "{flow_pad}quinn_flow := RoundedView {{\n{flow_pad}    width: Fill\n{flow_pad}    height: Fill\n{flow_props}{flow_body}{flow_pad}}}\n"
+            ));
+        }
+        for child in abs_nodes.iter().copied().filter(|node| node_z(node) >= 0) {
+            body.push_str(&emit_abs_frame_node(
+                child,
+                indent + 1,
+                row,
+                shows,
+                slots,
+                routes,
+                pass_root,
+            ));
+        }
+        let head = if named {
+            format!("{pad}{} := {widget} {{\n", el.name)
+        } else {
+            format!("{pad}{widget} {{\n")
+        };
+        format!("{head}{inner_props}{body}{pad}}}\n")
     } else {
-        format!("{pad}{widget} {{\n")
+        let inner = lines
+            .into_iter()
+            .map(|line| format!("{pad}    {line}\n"))
+            .collect::<String>();
+        let mut children = String::new();
+        for child in &el.children {
+            children.push_str(&emit_node(
+                child,
+                indent + 1,
+                row,
+                child_flow,
+                child_stretch,
+                shows,
+                slots,
+                routes,
+                pass_root,
+            ));
+        }
+        let head = if named {
+            format!("{pad}{} := {widget} {{\n", el.name)
+        } else {
+            format!("{pad}{widget} {{\n")
+        };
+        format!("{head}{inner}{children}{pad}}}\n")
     };
-    format!("{head}{inner}{children}{pad}}}\n")
+    wrap_provides(&el.provides, &pad, named, widget_text)
+}
+
+fn div_hover_animator(style: &Style) -> Option<String> {
+    let hover = style.hover_bg?;
+    let base = style.background.unwrap_or(hover).hex_script();
+    let hover_color = hover.hex_script();
+    let down = style.active_bg.unwrap_or(hover).hex_script();
+    let off = anim_state("0.1", &base);
+    let on = anim_state("0.1", &hover_color);
+    // The down track's resting state has to match the base color. Using the
+    // hover color here paints the hover swatch on the first frames, because
+    // `default: @off` applies before any pointer event.
+    let down_off = anim_state("0.1", &base);
+    let down_on = anim_state("0.05", &down);
+    // `View` plays `hover.on` / `hover.off` / `down.on` / `down.off` when an
+    // animator is defined, and it hit-tests only then. The shader still reads
+    // `self.color`, so the track swaps `draw_bg.color` instead of `color_hover`.
+    Some(format!(
+        "cursor: MouseCursor.Arrow animator: Animator{{hover: {{default: @off off: {off} on: {on}}} down: {{default: @off off: {down_off} on: {down_on}}}}}"
+    ))
+}
+
+fn anim_state(duration: &str, color: &str) -> String {
+    let mut state = String::from("AnimatorState{from: {all: Forward {duration: ");
+    state.push_str(duration);
+    state.push_str("}} apply: {draw_bg: {color: ");
+    state.push_str(color);
+    state.push_str("}}}");
+    state
+}
+
+fn child_is_absolute(node: &ViewNode) -> bool {
+    match node {
+        ViewNode::El(el) => parse_classes(&el.class).absolute,
+        ViewNode::Show { child, .. } => child_is_absolute(child),
+        ViewNode::Slot { fn_name, nodes, .. } if fn_name.is_empty() => {
+            nodes.iter().any(child_is_absolute)
+        }
+        _ => false,
+    }
+}
+
+fn node_z(node: &ViewNode) -> i64 {
+    match node {
+        ViewNode::El(el) => parse_classes(&el.class).z_index.unwrap_or(0),
+        ViewNode::Show { child, .. } => node_z(child),
+        ViewNode::Slot { fn_name, nodes, .. } if fn_name.is_empty() => {
+            nodes.iter().map(node_z).max().unwrap_or(0)
+        }
+        _ => 0,
+    }
+}
+
+fn strip_position(class: &str) -> String {
+    class
+        .split_whitespace()
+        .filter(|token| {
+            !matches!(*token, "absolute" | "inset-0")
+                && !token.starts_with("left-")
+                && !token.starts_with("right-")
+                && !token.starts_with("top-")
+                && !token.starts_with("bottom-")
+                && !token.starts_with("inset-")
+                && !token.starts_with("z-")
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn emit_abs_frame(
+    el: &El,
+    row: Option<&RowEnv<'_>>,
+    indent: usize,
+    named: bool,
+    parent: FlowSpec,
+    shows: &mut ShowCursor<'_>,
+    slots: &mut String,
+    routes: &mut String,
+    pass_root: bool,
+) -> String {
+    let tag = tag_of(&el.tag);
+    let style = prepared_style(el, tag, parent, false);
+    let mut stripped = el.clone();
+    stripped.class = strip_position(&el.class);
+    if matches!(style.width, Some(SizeSpec::Fill)) && !stripped.class.contains("w-full") {
+        stripped.class.push_str(" w-full");
+    }
+    if matches!(style.height, Some(SizeSpec::Fill)) && !stripped.class.contains("h-full") {
+        stripped.class.push_str(" h-full");
+    }
+    let inner = emit_el(
+        &stripped,
+        row,
+        indent + 1,
+        named,
+        parent,
+        false,
+        shows,
+        slots,
+        routes,
+        pass_root,
+    );
+    abs_shell(&style, indent, inner)
+}
+
+fn emit_abs_frame_node(
+    node: &ViewNode,
+    indent: usize,
+    row: Option<&RowEnv<'_>>,
+    shows: &mut ShowCursor<'_>,
+    slots: &mut String,
+    routes: &mut String,
+    pass_root: bool,
+) -> String {
+    match node {
+        ViewNode::El(el) if parse_classes(&el.class).absolute => emit_abs_frame(
+            el, row, indent, true, FlowSpec::Column, shows, slots, routes, pass_root,
+        ),
+        other => emit_node(
+            other, indent, row, FlowSpec::Column, false, shows, slots, routes, pass_root,
+        ),
+    }
+}
+
+fn abs_shell(style: &Style, indent: usize, inner: String) -> String {
+    let pad = " ".repeat(indent * 4);
+    let left = style.abs_x.unwrap_or(0.0);
+    let top = style.abs_y.unwrap_or(0.0);
+    let right = style.abs_right.unwrap_or(0.0);
+    let bottom = style.abs_bottom.unwrap_or(0.0);
+    let x = if style.abs_right.is_some() && style.abs_x.is_none() {
+        1.0
+    } else {
+        0.0
+    };
+    let y = if style.abs_bottom.is_some() && style.abs_y.is_none() {
+        1.0
+    } else {
+        0.0
+    };
+    let align = if x == 0.0 && y == 0.0 {
+        String::new()
+    } else {
+        format!(
+            "{pad}    align: Align{{x: {} y: {}}}\n",
+            script_num(x),
+            script_num(y)
+        )
+    };
+    let padding = if left == 0.0 && top == 0.0 && right == 0.0 && bottom == 0.0 {
+        String::new()
+    } else {
+        format!(
+            "{pad}    padding: Inset{{left: {} top: {} right: {} bottom: {}}}\n",
+            script_num(left),
+            script_num(top),
+            script_num(right),
+            script_num(bottom)
+        )
+    };
+    format!("{pad}RoundedView {{\n{pad}    width: Fill\n{pad}    height: Fill\n{pad}    flow: Overlay\n{align}{padding}{inner}{pad}}}\n")
+}
+
+fn tree_has_portal(nodes: &[ViewNode]) -> bool {
+    nodes.iter().any(node_has_portal)
+}
+
+fn node_has_portal(node: &ViewNode) -> bool {
+    match node {
+        ViewNode::Portal { .. } => true,
+        ViewNode::El(el) => el.children.iter().any(node_has_portal),
+        ViewNode::Show { child, .. } => node_has_portal(child),
+        ViewNode::Slot { nodes, .. } => nodes.iter().any(node_has_portal),
+        ViewNode::Routes { routes } => routes.iter().any(|(_, nodes)| nodes.iter().any(node_has_portal)),
+        ViewNode::Suspense { fallback, child, .. } | ViewNode::Boundary { fallback, child, .. } => {
+            fallback.iter().any(node_has_portal) || node_has_portal(child)
+        }
+        ViewNode::For { child, .. } => child.children.iter().any(node_has_portal),
+    }
+}
+
+fn wrap_provides(provides: &[(String, String)], pad: &str, named: bool, widget: String) -> String {
+    if provides.is_empty() {
+        return widget;
+    }
+    let mut open = String::new();
+    let mut close = String::new();
+    for (index, (key, expr)) in provides.iter().enumerate() {
+        open.push_str(&format!("{pad}let quinn_prev_{index} = ok{{mod.ctx.{key}}}\n"));
+        open.push_str(&format!("{pad}mod.ctx.{key} = {expr}\n"));
+        close.push_str(&format!("{pad}mod.ctx.{key} = quinn_prev_{index}\n"));
+    }
+    if named {
+        format!("{open}{widget}{close}")
+    } else {
+        format!("{open}{pad}let quinn_w = {{\n{widget}{pad}}}\n{close}{pad}quinn_w\n")
+    }
 }
 
 fn emit_act(act: &Act, row: Option<&RowEnv<'_>>, pad: &str) -> String {
@@ -1322,6 +2057,18 @@ fn emit_stmts(stmts: &[HandlerStmt], row: Option<&RowEnv<'_>>) -> Vec<String> {
             }
             HandlerStmt::Navigate(expr) => {
                 lines.push(format!("state.route = {}", emit_hx(expr, row, &locals)));
+            }
+            HandlerStmt::Dispatch { action, arg } => {
+                let arg = emit_hx(arg, row, &locals);
+                lines.push(format!("state.{action}_pending = true"));
+                lines.push(format!("state.{action}_gen = state.{action}_gen + 1"));
+                lines.push(format!("state.{action}_arg = {arg}"));
+            }
+            HandlerStmt::ToggleTheme => {
+                lines.push(
+                    "if state.quinn_dark == 1 { quinn_theme_off() } else { quinn_theme_on() }"
+                        .into(),
+                );
             }
         }
     }
@@ -1471,6 +2218,7 @@ fn text_expr(el: &El, row: Option<&RowEnv<'_>>) -> String {
             ),
             Part::Param(name) => name.clone(),
             Part::Ctx(key) => format!("mod.ctx.{key}"),
+            Part::Job(name) => format!("state.{name}_value"),
         })
         .collect::<Vec<_>>()
         .join(" + ")
@@ -1512,26 +2260,6 @@ fn tag_of(tag: &str) -> Tag {
     }
 }
 
-fn tree_has_absolute(nodes: &[ViewNode]) -> bool {
-    nodes.iter().any(node_has_absolute)
-}
-
-fn node_has_absolute(node: &ViewNode) -> bool {
-    match node {
-        ViewNode::El(el) => {
-            let mut style = Style::default();
-            if !el.class.is_empty() {
-                style.merge_from(&parse_classes(&el.class));
-            }
-            style.absolute || el.children.iter().any(node_has_absolute)
-        }
-        ViewNode::Show { child, .. } => node_has_absolute(child),
-        ViewNode::Slot { nodes, .. } => tree_has_absolute(nodes),
-        ViewNode::Routes { routes } => routes.iter().any(|(_, nodes)| tree_has_absolute(nodes)),
-        ViewNode::For { child, .. } => child.children.iter().any(node_has_absolute),
-    }
-}
-
 fn host_fields(class: &str, release_clip: bool) -> String {
     let mut style = Tag::Div.defaults();
     style.merge_from(&parse_classes(class));
@@ -1552,10 +2280,50 @@ fn host_fields(class: &str, release_clip: bool) -> String {
         .map(|color| color.hex_script())
         .unwrap_or_else(|| "#xf4f0e6".into());
     lines.push(("draw_bg.color".into(), bg));
-    lines
-        .into_iter()
+    let mut map = std::collections::BTreeMap::new();
+    for (key, value) in lines {
+        map.insert(key, value);
+    }
+    // The root `<div class>` is the host, not a child `emit_el`. Shell
+    // variants on it (`dark:bg-stone-900`) still have to reach `draw_bg`.
+    for when in shell_variants(class) {
+        let mut on = style.clone();
+        on.merge_from(&parse_classes(&when.token));
+        on.width = Some(SizeSpec::Fill);
+        on.height = Some(SizeSpec::Fill);
+        if let Some(color) = on.background {
+            let key = "draw_bg.color".to_string();
+            let value = color.hex_script();
+            if map.get(&key).map(String::as_str) == Some(value.as_str()) {
+                continue;
+            }
+            let else_value = map
+                .get(&key)
+                .cloned()
+                .unwrap_or_else(|| "#xf4f0e6".into());
+            map.insert(
+                key,
+                format!("if {} {{ {value} }} else {{ {else_value} }}", shell_cond(&when)),
+            );
+        }
+    }
+    map.into_iter()
         .map(|(key, value)| format!("                            {key}: {value}\n"))
         .collect()
+}
+
+fn shell_cond(when: &quinn_styles::ShellWhen) -> String {
+    let mut parts = Vec::new();
+    if when.dark {
+        parts.push("state.quinn_dark == 1".to_string());
+    }
+    if let Some(width) = when.min_width {
+        parts.push(format!("state.quinn_width >= {}", script_num(width)));
+    }
+    if parts.is_empty() {
+        return "true".into();
+    }
+    parts.join(" && ")
 }
 
 fn class_cond(signal: &str, row: Option<&RowEnv<'_>>) -> String {
@@ -1593,6 +2361,26 @@ fn style_lines(
         );
         let on_map = prop_map(&on, tag);
         let cond = class_cond(&when.signal, row);
+        for (key, value) in on_map {
+            if base_map.get(&key).map(String::as_str) == Some(value.as_str()) {
+                continue;
+            }
+            let else_value = rendered
+                .get(&key)
+                .cloned()
+                .unwrap_or_else(|| prop_fallback(&key, &base));
+            rendered.insert(
+                key,
+                format!("if {cond} {{ {value} }} else {{ {else_value} }}"),
+            );
+        }
+    }
+    for when in shell_variants(&el.class) {
+        let mut on = base.clone();
+        on.merge_from(&parse_classes(&when.token));
+        tune_style(&mut on, parent, stretch && el.class.contains("self-stretch"));
+        let on_map = prop_map(&on, tag);
+        let cond = shell_cond(&when);
         for (key, value) in on_map {
             if base_map.get(&key).map(String::as_str) == Some(value.as_str()) {
                 continue;
@@ -1750,6 +2538,18 @@ fn implicit_row_px(el: &El) -> f64 {
                 }
             }
             ViewNode::For { .. } => {}
+            ViewNode::Suspense { fallback, child, .. }
+            | ViewNode::Boundary { fallback, child, .. } => {
+                for node in fallback {
+                    walk(node, max);
+                }
+                walk(child, max);
+            }
+            ViewNode::Portal { nodes } => {
+                for node in nodes {
+                    walk(node, max);
+                }
+            }
         }
     }
     for child in &el.children {
@@ -1876,14 +2676,6 @@ fn walk_pairs(style: &Style) -> Vec<(String, String)> {
     if let Some(margin) = inset_script(style.margin) {
         lines.push(("margin".into(), margin));
     }
-    if style.absolute {
-        let x = style.abs_x.unwrap_or(0.0);
-        let y = style.abs_y.unwrap_or(0.0);
-        lines.push((
-            "abs_pos".into(),
-            format!("vec2({}, {})", script_num(x), script_num(y)),
-        ));
-    }
     if let Some(span) = style.col_span {
         lines.push(("cell".into(), format!("CellPlacement{{col_span: {span}}}")));
     }
@@ -1936,7 +2728,14 @@ fn paint_pairs(style: &Style, tag: Tag) -> Vec<(String, String)> {
             }
         }
         if let Some(color) = style.hover_bg {
-            lines.push(("draw_bg.color_hover".into(), color.hex_script()));
+            if !matches!(tag, Tag::Div) {
+                lines.push(("draw_bg.color_hover".into(), color.hex_script()));
+            }
+        }
+        if let Some(color) = style.focus_bg {
+            if matches!(tag, Tag::Button | Tag::Input) {
+                lines.push(("draw_bg.color_focus".into(), color.hex_script()));
+            }
         }
         if let Some(color) = style.active_bg {
             lines.push(("draw_bg.color_down".into(), color.hex_script()));
@@ -1956,6 +2755,9 @@ fn paint_pairs(style: &Style, tag: Tag) -> Vec<(String, String)> {
     if matches!(tag, Tag::Button) {
         if let Some(color) = style.hover_fg {
             lines.push(("draw_text.color_hover".into(), color.hex_script()));
+        }
+        if let Some(color) = style.focus_fg {
+            lines.push(("draw_text.color_focus".into(), color.hex_script()));
         }
         if let Some(color) = style.active_fg {
             lines.push(("draw_text.color_down".into(), color.hex_script()));
@@ -2143,14 +2945,16 @@ fn prop_fallback(key: &str, base: &Style) -> String {
         "draw_bg.color"
         | "draw_bg.color_hover"
         | "draw_bg.color_down"
-        | "draw_bg.color_disabled" => base
+        | "draw_bg.color_disabled"
+        | "draw_bg.color_focus" => base
             .background
             .map(|color| color.hex_script())
             .unwrap_or_else(|| "#x000000".into()),
         "draw_text.color"
         | "draw_text.color_hover"
         | "draw_text.color_down"
-        | "draw_text.color_disabled" => base
+        | "draw_text.color_disabled"
+        | "draw_text.color_focus" => base
             .color
             .map(|color| color.hex_script())
             .unwrap_or_else(|| "#x000000".into()),
@@ -2221,7 +3025,8 @@ fn collect_provides(nodes: &[ViewNode], out: &mut Vec<(String, String)>) {
     for node in nodes {
         match node {
             ViewNode::El(el) => {
-                out.extend(el.provides.iter().cloned());
+                // Nested providers assign around the widget. They are not
+                // copied into the root nil-guard, or the first value would win.
                 collect_provides(&el.children, out);
             }
             ViewNode::Show { child, .. } => collect_provides(std::slice::from_ref(child), out),
@@ -2232,6 +3037,12 @@ fn collect_provides(nodes: &[ViewNode], out: &mut Vec<(String, String)>) {
                     collect_provides(nodes, out);
                 }
             }
+            ViewNode::Suspense { fallback, child, .. }
+            | ViewNode::Boundary { fallback, child, .. } => {
+                collect_provides(fallback, out);
+                collect_provides(std::slice::from_ref(child), out);
+            }
+            ViewNode::Portal { nodes } => collect_provides(nodes, out),
         }
     }
 }

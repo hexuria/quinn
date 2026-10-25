@@ -1,4 +1,7 @@
+use quinn::makepad_widgets::*;
 use quinn::prelude::*;
+
+mod chrome;
 
 #[component]
 fn Counter() -> impl IntoView {
@@ -20,4 +23,45 @@ fn Counter() -> impl IntoView {
     }
 }
 
-quinn::run!("Counter", 480, 360, view! { <Counter /> });
+app_main!(App);
+
+#[derive(Script, ScriptHook)]
+pub struct App {
+    #[live]
+    ui: WidgetRef,
+}
+
+impl MatchEvent for App {
+    fn handle_startup(&mut self, cx: &mut Cx) {
+        quinn::startup(cx, &self.ui, || view! { <Counter /> });
+    }
+
+    fn handle_actions(&mut self, cx: &mut Cx, actions: &Actions) {
+        quinn::on_actions(cx, actions);
+    }
+}
+
+impl AppMain for App {
+    fn script_mod(vm: &mut ScriptVm) -> ScriptValue {
+        quinn::makepad_widgets::script_mod(vm);
+        chrome::script_mod(vm)
+    }
+
+    fn handle_event(&mut self, cx: &mut Cx, event: &Event) {
+        // Disk hot reload stores the new script with Apply::Reload, which
+        // does not walk draw fields. request_style_reload asks the next tick
+        // to re-apply with ScriptReapply so the page color changes and the
+        // Rust-mounted counter stays. That follow-up reports Rebake here.
+        if let Event::LiveEdit = event {
+            if matches!(cx.live_edit_apply(), Apply::Reload) {
+                eprintln!(
+                    "hot_reload_followup pid={} window_stays=1 request_style_reload=1",
+                    std::process::id()
+                );
+                cx.request_style_reload();
+            }
+        }
+        self.match_event(cx, event);
+        self.ui.handle_event(cx, event, &mut Scope::empty());
+    }
+}

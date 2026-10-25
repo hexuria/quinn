@@ -43,7 +43,11 @@ Widgets are constructed with `ScriptVm::eval` + `WidgetRef::script_from_value` s
 
 Splash reload of `script_mod` preserves `mod.state` in the baseline counter (`if !vm.is_reload()`). `Apply::ScriptReapply` keeps runtime widget state; a full script reload rebuilds the shell. `view!` is compiled Rust. Changing it, or any signal logic, needs a rebuild and a new process. A release rebuild after `touch examples/counter/src/main.rs`, with Makepad already built, took 1.30 s median (three wall-clock runs, 1.25–1.32 s). One of those rebuilds plus a new process reaching `QUINN_READY` took 1.44 s. Reactive style and text updates apply to the existing `WidgetRef` without recreating it. ra-jit is not in the Makepad tree and is not a prerequisite.
 
-Makepad's own script reload was timed. `QUINN_LIVE=1` queues a `script_mod` change and calls `request_style_reload`. The next presented frame, still inside `post_draw_hook`, reported the reload in 78–85 ms on the Quinn counter (the signal stayed `"7"`) and 74–81 ms on the baseline (the label stayed `"Count: 7"`). See [benchmarks.md](benchmarks.md).
+Disk hot reload is Makepad's `--hot` watcher, started from `app_main!`. It re-reads `script_mod!` blocks from the Rust file. `script_eval!` in that same file makes the matcher reject the edit (`runtime has N, file has 1`). `quinn::run!` builds its shell with `ScriptVm::eval` of a string, so the watcher has no block to extract. The counter keeps the shell in `examples/counter/src/chrome.rs` as a real `script_mod!`. The baseline's evals live in `script_ops.rs`.
+
+`Apply::Reload` stores the new script and leaves existing draw colors alone. Both windows call `request_style_reload()` when a file edit arrives as `Reload`, and the next tick uses `Apply::ScriptReapply`. The count stays. The color changes. An `on_render` label keeps the text it already has. Measured write-to-red-pixel medians were 85 ms for the counter page and 136 ms for the baseline button, same PID and same X window id the whole time. See [benchmarks.md](benchmarks.md).
+
+`QUINN_LIVE=1` is a separate harness. It queues a synthetic buffer inside the already-running process. It does not edit the disk. The 74–85 ms figures from that harness are not the disk-watcher numbers.
 
 ## Script heap after unmount
 

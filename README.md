@@ -53,7 +53,7 @@ Other harness variables, read by `counter` and `baseline-counter`:
 | Variable | Effect |
 | --- | --- |
 | `QUINN_LATENCY=80` | Eighty signal-to-next-presented-frame samples, then quit |
-| `QUINN_LIVE=1` | Apply one Makepad script/style reload and record how long it took |
+| `QUINN_LIVE=1` | Inject one synthetic script reload in-process. This does not edit a file. Disk reload is `--hot` |
 | `QUINN_WIDGET_BENCH=200` | Time creating 200 labels and updating their text |
 | `QUINN_RETAIN=2000` | On `retain` only: two bursts of mount/unmount cycles |
 

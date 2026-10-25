@@ -96,14 +96,24 @@ Host children stay at 1. Cleanups go 1 → 501 → 1,001 for 500 cycles, and 1 �
 
 ## Live script reload
 
-`QUINN_LIVE=1` queues a `script_mod` file change through Makepad's watcher and calls `request_style_reload`. The clock starts after the queue and stops on the next `post_draw_hook` whose `reload_generation` moved. Rust `view!` source is not live-patched; a Rust change is the rebuild-and-restart number above.
+Two different things were easy to mix up.
 
-The counter harness clicks seven times, then replaces the shell color `#xf4f0e6` with `#xff3300`. The baseline harness recolors the label and rewrites its text. Applied runs:
+`QUINN_LIVE=1` does not watch the disk and does not restart the process. On the first presented frame it writes a synthetic `script_mod` buffer with `queue_file_change` and calls `request_style_reload`. Earlier timings of that path, from the queue to the next `post_draw_hook`, were 78–85 ms on the counter (signal still `"7"`) and 74–81 ms on the baseline (label still `"Count: 7"`). The screen recording that looked like a destroyed window was not that path. It started `baseline-counter`, quit it, then started `counter`. Two processes, two windows, cut together.
 
-| App | Elapsed | State after reload |
-| --- | --- | --- |
-| `counter` | 78.2–85.2 ms | signal still `"7"`, 3 nodes, 3 widgets |
-| `baseline-counter` | 74.4–81.4 ms | label still `"Count: 7"` |
+Makepad's real desktop path is the `--hot` flag. `app_main!` then starts the file watcher (`hot reload watching N script_mod source files`). A write to a watched Rust file is read back, matched against compiled `script_mod!` blocks, and applied in the same process. Rust `view!` is not part of that. A Rust change is still the rebuild-and-restart number above.
+
+The watcher rejects a file when the number of compiled script bodies for that path differs from the number of `script_mod!` blocks in the file. `script_eval!` bodies count. With those evals in `examples/baseline-counter/src/main.rs` the log was `runtime has 3, file has 1` and the pixels did not change, while the PID and X window stayed. Those evals now live in `script_ops.rs`, so `main.rs` has one block. `quinn::run!` evaluates its shell from a string, which the extractor cannot see. The counter's window chrome is therefore a real `script_mod!` in `examples/counter/src/chrome.rs`.
+
+A matched edit is stored with `Apply::Reload`. That kept the count and did not repaint draw colors. On `Event::LiveEdit`, when `live_edit_apply()` is `Reload`, both apps call `request_style_reload()`. The next tick re-applies with `Apply::ScriptReapply`. Draw colors update. Text the widget already holds, including an `on_render` label, stays. Changing `"Count: "` to `"Total: "` in the script did not change the on-screen string. Changing `draw_bg.color` did.
+
+Five disk edits in one process each, timed from `write()` returning to a frame that contains the new red (`#xff3300`):
+
+| App | What changed | PID / X id held | Visible recolor |
+| --- | --- | --- | --- |
+| `baseline-counter --hot` | button `draw_bg.color` in `main.rs` | pid 49286, starttime 1166678, window `0x1c00002` for all five | 89, 119, 136, 136, 195 ms (median 136) |
+| `counter --hot` | page `draw_bg.color` in `chrome.rs` | pid 48220, starttime 1155946, window `0x1c00002` for all five | 72, 79, 85, 100, 111 ms (median 85) |
+
+The baseline samples scanned the whole window for red pixels, so that median includes a few milliseconds of polling. The counter samples read one pixel. A separate single take of each app, with the title bar set to the PID and window id, kept both across the edit: baseline pid 49423 / `0x1e00002`, counter pid 49597 / `0x1e00002`. Both still showed 5 after the recolor. `/proc/<pid>/stat` starttime did not move, so the process was not replaced.
 
 ## Wasm
 

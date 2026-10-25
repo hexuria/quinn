@@ -48,17 +48,31 @@ cargo test -p quinn-styles -p quinn-reactive -p quinn-core -p quinn --no-default
 
 ## Live reload and latency
 
-These env vars work on the release `counter` and `baseline-counter` binaries:
+Launch the release binaries with Makepad's file watcher:
+
+```bash
+cargo run -p baseline-counter --release -- --hot
+cargo run -p counter --release -- --hot
+```
+
+Click the button until the count reads 5. Leave the process up. In another terminal, change one draw color and save:
+
+- `examples/baseline-counter/src/main.rs`: `increment_button`'s `draw_bg.color`
+- `examples/counter/src/chrome.rs`: the host `RoundedView`'s `draw_bg.color`
+
+The same window should recolor. The count should still be 5. The title bar can be set with `xdotool set_window --name` to the PID and the X id; both should be unchanged after the save. `log stream` or the terminal should contain `hot reload detected` and `hot reload applied`, then `hot_reload_followup pid=...`.
+
+`script_eval!` must not sit in the file you edit. Makepad counts those bodies and rejects the file when the counts disagree. `quinn::run!` does not emit a `script_mod!` the watcher can read. The counter's chrome file is the block.
+
+`QUINN_LIVE=1` is not this path. It injects a synthetic script buffer into the running process and does not modify a file.
 
 | Variable | Effect |
 | --- | --- |
 | `QUINN_LATENCY=80` | Eighty signal-to-next-frame samples, then quit. Optional `QUINN_LATENCY_OUT`. |
-| `QUINN_LIVE=1` | Queue one Makepad script/style reload after seven increments. Optional `QUINN_LIVE_OUT`. |
+| `QUINN_LIVE=1` | In-process synthetic script reload on the first frame. Not a disk edit. |
 | `QUINN_WIDGET_BENCH=200` | Create 200 labels and `set_text` them, seven times unless `QUINN_WIDGET_RUNS` is set. |
 
-`QUINN_LIVE` on the counter changes the shell background from `#xf4f0e6` to `#xff3300` and leaves the signal at `7`. On the baseline it recolors the label and leaves the text `Count: 7`.
-
-A Rust edit is not a live reload. Time `cargo build -p counter --release` after touching `examples/counter/src/main.rs`, then the next `QUINN_READY`.
+A change to Rust, including `view!`, is a rebuild and a new process. Time `cargo build -p counter --release` after touching `examples/counter/src/main.rs`, then the next `QUINN_READY`.
 
 ## Wasm
 

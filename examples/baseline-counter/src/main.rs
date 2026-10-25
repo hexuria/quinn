@@ -5,6 +5,8 @@ use std::time::Instant;
 
 use makepad_widgets::*;
 
+mod script_ops;
+
 app_main!(App);
 
 script_mod! {
@@ -88,10 +90,7 @@ impl MatchEvent for App {
 
     fn handle_actions(&mut self, cx: &mut Cx, actions: &Actions) {
         if self.ui.button(cx, ids!(increment_button)).clicked(actions) {
-            script_eval!(cx, {
-                mod.state.counter += 1
-                ui.main_view.render()
-            });
+            script_ops::increment(cx);
         }
     }
 }
@@ -100,12 +99,26 @@ impl AppMain for App {
     fn script_mod(vm: &mut ScriptVm) -> ScriptValue {
         crate::makepad_widgets::script_mod(vm);
         if !vm.is_reload() {
-            script_eval!(vm, { mod.state = { counter: 0 } true });
+            script_ops::seed_state(vm);
         }
         self::script_mod(vm)
     }
 
     fn handle_event(&mut self, cx: &mut Cx, event: &Event) {
+        // A disk edit arrives as Apply::Reload. That stores the new
+        // script_mod override but does not walk draw fields of the existing
+        // tree, so the window keeps the old color. The next tick's
+        // request_style_reload re-applies with ScriptReapply. The follow-up
+        // reports Rebake here, which stops the loop.
+        if let Event::LiveEdit = event {
+            if matches!(cx.live_edit_apply(), Apply::Reload) {
+                eprintln!(
+                    "hot_reload_followup pid={} window_stays=1 request_style_reload=1",
+                    std::process::id()
+                );
+                cx.request_style_reload();
+            }
+        }
         self.match_event(cx, event);
         self.ui.handle_event(cx, event, &mut Scope::empty());
     }
@@ -186,17 +199,13 @@ fn on_frame(cx: &mut Cx) {
 }
 
 fn step_counter(cx: &mut Cx) {
-    script_eval!(cx, {
-        mod.state.counter += 1
-        ui.main_view.render()
-    });
+    script_ops::increment(cx);
 }
 
 fn arm_live_reload(cx: &mut Cx) {
-    script_eval!(cx, {
-        mod.state.counter = 7
-        ui.main_view.render()
-    });
+    for _ in 0..7 {
+        script_ops::increment(cx);
+    }
     let path = concat!(env!("CARGO_MANIFEST_DIR"), "/src/main.rs");
     // `script_eval!` registers extra ScriptMods for this file, and the
     // extractor requires one `script_mod!` per compiled site. Replay those

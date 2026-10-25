@@ -18,6 +18,7 @@ cargo run -p form --release
 cargo run -p tailwind-gallery --release
 cargo run -p app-shell --release
 cargo run -p async-dashboard --release
+cargo run -p showcase --release
 cargo run -p baseline-counter --release
 cargo run -p probe-widget-lifecycle --release
 ```
@@ -30,7 +31,8 @@ What to look at:
 - `form`: typing in the field updates the echoed line. Clearing the field empties both. This example uses `value=` and `on:input`, which rewrites `TextInput.text` on each render, so the caret may jump. The text should not disappear.
 - `tailwind-gallery`: rows, wrap, a grid, a gradient, a shadow, an absolute label, and a short scrolling note. The window scrolls.
 - `app-shell`: Home, Board, and Form switch the page and leave the typed name and the accent in place. The board has a grid, a gradient, a shadow, and a note you can scroll. The pinned label sits inside its short parent (`left-2 top-1`), not at a draw-space point. The card is a component with a title prop and children. Form shows a stored city. Move to Cebu changes that field only. The name field is `bind:value`: the echo updates and the caret stays where you clicked.
-- `async-dashboard`: the note shows "Loading the note", then "Ada's note". The city list shows "Loading cities", then Manila, Cebu, and Davao from `fetch_cities`. The feed line becomes "Could not load the feed". The boom line becomes "The job panicked" (the future panics; the window stays up). Place starts as "Manila desk". Save Cebu shows "Saving", then "Action: Saved Cebu". Save Davao replaces that with "Saved Davao". Race Cebu and then Race Davao, quickly, ends on "Davao won"; the slower Cebu result is dropped. Refetch sets the city to Cebu and the place line refreshes. Theme flips the page to stone-900 and back. Open modal paints a card over the page; Close removes it. A window narrower than 768px stacks the sidebar. `hover:` on the amber chip turns it amber-600. The futures live in `examples/async-dashboard/src/jobs.rs`. Editing that file needs a rebuild. `QUINN_HTTP=1` with `--features net` GETs a public user list and falls back to the three cities if the request fails; without the variable the example never touches the network. The shell calls `quinn::drive_shell` after the widget handles the event. The earlier baked-job take (25 Oct 2026, about 7:45 PM Asia/Manila, pid 95336, starttime 3602412, window `0x2200002`, 325.3 ms and 231.7 ms) is not this binary.
+- `showcase`: a Notes-style window at 1440×900. Library selects Notes, Table, and Settings. Theme flips `window-background`. New Note opens a sheet. Delete opens an alert. Table’s Name header reverses the rows. Settings has a segmented control, a switch, a checkbox, a pop-up, a text field, push buttons, a stepper, and a stepped progress bar. The sidebar fill is translucent; it is not a blurred material. Search echoes in the inspector; it does not filter the list.
+- `async-dashboard`: the note shows "Loading the note", then "Ada's note". The city list shows "Loading cities", then Manila, Cebu, and Davao from `fetch_cities`. The feed line becomes "Could not load the feed". The boom line becomes "The job panicked" (the future panics; the window stays up). Place starts as "Manila desk". Save Cebu shows "Saving", then "Action: Saved Cebu". Save Davao replaces that with "Saved Davao". Race Cebu and then Race Davao, quickly, ends on "Davao won"; the slower Cebu result is dropped. Refetch sets the city to Cebu and the place line refreshes. Theme flips the page between the light and dark window backgrounds. Open modal paints a card over the page; Close removes it. A window narrower than 768px stacks the sidebar. `hover:` on the fill chip turns it system blue. The futures live in `examples/async-dashboard/src/jobs.rs`. Editing that file needs a rebuild. `QUINN_HTTP=1` with `--features net` GETs a public user list and falls back to the three cities if the request fails; without the variable the example never touches the network. The shell calls `quinn::drive_shell` after the widget handles the event. The earlier baked-job take (25 Oct 2026, about 7:45 PM Asia/Manila, pid 95336, starttime 3602412, window `0x2200002`, 325.3 ms and 231.7 ms) is not this binary.
 - `baseline-counter`: `Count: 0` and Increment are inside the window body. The label and the button are light text on a dark control. A click changes the count.
 - `probe-widget-lifecycle`: the process prints `PROBE_OK` and exits 0. `QUINN_PROBE_EXIT=1` makes a failed check a non-zero exit. The log path is `artifacts/probe-widget-lifecycle.log`.
 
@@ -113,3 +115,11 @@ Cross-Origin-Embedder-Policy: require-corp
 ```
 
 Open the page, click Increment, and confirm the label reads `Counter: 1`. The first wasm build of this workspace needed `wasm-bindgen-cli` 0.2.129 (`--bindgen`). Without it, instantiation failed on a missing `__wbindgen_placeholder__` import.
+
+## First click and typing
+
+A button’s face and label stay the colors from its class after a click. Hover and press return to that face. They do not stick on the theme’s pale outset.
+
+The first click in an unfocused window is swallowed unless Makepad’s `acceptsFirstMouse` returns `YES` for content. `patches/makepad-accepts-first-mouse.patch` does that. Apply it to the Makepad git checkout (`44ecb822`) and run `cargo clean -p makepad-platform` before the macOS build. Cargo keys the dependency on the git revision, so a dirty checkout is not rebuilt on its own. This repository’s Linux runs do not compile that file, so the patch is not proven here.
+
+Typing with the keyboard, and IME `insertText:`, reaches `TextInput`. An accessibility client that sets `AXValue` or uses XCUITest `typeText` does not: the view does not publish `AXValue` or `AXSelectedText`. `save.version()` on the async dashboard reads 0 before the first Save.

@@ -1,0 +1,13 @@
+[package]
+name = "showcase"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "showcase"
+path = "src/main.rs"
+
+[dependencies]
+quinn = { path = "../../crates/quinn" }

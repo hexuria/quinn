@@ -83,7 +83,12 @@ impl Sim {
             strings.insert(format!("{}_phase", job.name), phase.into());
             strings.insert(format!("{}_value", job.name), String::new());
             strings.insert(format!("{}_error", job.name), String::new());
-            state.insert(format!("{}_gen", job.name), 1);
+            let gen = if matches!(job.kind, JobKind::Action) {
+                0
+            } else {
+                1
+            };
+            state.insert(format!("{}_gen", job.name), gen);
             if !job.deps.is_empty() {
                 let deps = job.deps.clone();
                 strings.insert(format!("{}_source", job.name), deps_init(&model, &deps));

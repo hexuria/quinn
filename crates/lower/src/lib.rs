@@ -114,7 +114,74 @@ fn write_if_changed(path: &Path, body: &str) {
 
 pub fn lower_file(source: &str, shell: Shell) -> Result<String, String> {
     let model = parse_model(source)?;
+    let mut unknown = Vec::new();
+    collect_unknown(&model.root_class, &mut unknown);
+    for node in &model.nodes {
+        walk_unknown(node, &mut unknown);
+    }
+    if !unknown.is_empty() {
+        return Err(format!("unknown class: {}", unknown.join(", ")));
+    }
     Ok(emit::emit_rust(&model, &shell))
+}
+
+fn collect_unknown(class: &str, unknown: &mut Vec<String>) {
+    for token in quinn_styles::unknown_classes(class) {
+        if !unknown.contains(&token) {
+            unknown.push(token);
+        }
+    }
+}
+
+fn walk_unknown(node: &ViewNode, unknown: &mut Vec<String>) {
+    match node {
+        ViewNode::El(el) => walk_el(el, unknown),
+        ViewNode::Show { child, .. } => walk_unknown(child, unknown),
+        ViewNode::For { child, .. } => walk_el(child, unknown),
+        ViewNode::Slot { nodes, .. } => {
+            for node in nodes {
+                walk_unknown(node, unknown);
+            }
+        }
+        ViewNode::Routes { routes } => {
+            for (_, nodes) in routes {
+                for node in nodes {
+                    walk_unknown(node, unknown);
+                }
+            }
+        }
+        ViewNode::Suspense {
+            fallback, child, ..
+        } => {
+            for node in fallback {
+                walk_unknown(node, unknown);
+            }
+            walk_unknown(child, unknown);
+        }
+        ViewNode::Boundary {
+            fallback, child, ..
+        } => {
+            for node in fallback {
+                walk_unknown(node, unknown);
+            }
+            walk_unknown(child, unknown);
+        }
+        ViewNode::Portal { nodes } => {
+            for node in nodes {
+                walk_unknown(node, unknown);
+            }
+        }
+    }
+}
+
+fn walk_el(el: &El, unknown: &mut Vec<String>) {
+    collect_unknown(&el.class, unknown);
+    for when in &el.class_when {
+        collect_unknown(&when.token, unknown);
+    }
+    for child in &el.children {
+        walk_unknown(child, unknown);
+    }
 }
 
 pub fn parse_model(source: &str) -> Result<Model, String> {
@@ -447,6 +514,8 @@ mod tests {
             ("examples/async-dashboard/view.rs", "mod.quinn_apply = quinn_apply"),
             ("examples/async-dashboard/view.rs", "state.quinn_dark == 1"),
             ("examples/tailwind-gallery/view.rs", "state.quinn_width >= 768."),
+            ("examples/showcase/view.rs", "state.quinn_dark == 1"),
+            ("examples/showcase/view.rs", "draw_bg.border_radius: 12."),
         ];
         for (rel, needle) in cases {
             let source = std::fs::read_to_string(root.join(rel))
@@ -596,7 +665,7 @@ mod tests {
         for needle in needles {
             assert!(file.contains(needle), "missing {needle}:\n{file}");
         }
-        assert_eq!(file.matches("color_hover").count(), 2);
+        assert!(file.contains("draw_bg.color_hover: #xd97706"));
         assert!(!file.contains("draw_bg.color_hover: #x1c1917"));
     }
 
@@ -761,7 +830,7 @@ mod tests {
             "clip_x: true",
             "clip_y: true",
             "ScrollBars{show_scroll_x: true show_scroll_y: true}",
-            "RobotoFlex.ttf",
+            "Inter.ttf",
             "weight: 700.",
             "weight: 600.",
             "weight: 500.",
@@ -842,7 +911,7 @@ mod tests {
             "fn quinn_sync_jobs()",
             "fn quinn_theme_on()",
             "if state.quinn_dark == 1 { quinn_theme_off() } else { quinn_theme_on() }",
-            "if state.quinn_dark == 1 { #x1c1917 } else",
+            "if state.quinn_dark == 1 { #x282828 } else",
             "state.quinn_width >= 768.",
             "state.note_phase == \"loading\"",
             "state.place_value == \"\"",
@@ -1116,5 +1185,40 @@ mod tests {
         let keep = model.jobs.iter().find(|job| job.name == "keep").unwrap();
         assert_eq!(keep.func, "keep");
         assert!(keep.plan.is_empty());
+    }
+
+    #[test]
+    fn action_version_starts_at_zero_and_unknown_classes_fail() {
+        let source = r#"
+            #[component]
+            fn App() -> impl IntoView {
+                let save = Action::new(|name: &String| async move { save_place(name).await });
+                let note = LocalResource::new(|| async move { fetch_note().await });
+                view! {
+                    <div>
+                        <span>{move || save.version()}</span>
+                        <span>{note}</span>
+                        <button on:click=move |_| { save.dispatch("Cebu"); }>"Save"</button>
+                    </div>
+                }
+            }
+        "#;
+        let file = lower_file(source, shell()).unwrap_or_else(|err| panic!("{err}"));
+        assert!(file.contains("save_gen: 0"), "{file}");
+        assert!(file.contains("note_gen: 1"), "{file}");
+        assert!(!file.contains("save_gen: 1"), "{file}");
+        let sim = Sim::new(parse_model(source).unwrap());
+        assert_eq!(sim.gen("save"), 0);
+        assert_eq!(sim.gen("note"), 1);
+
+        let bad = r#"
+            #[component]
+            fn App() -> impl IntoView {
+                view! { <div class="bg-not-a-color p-4"><span>"Hi"</span></div> }
+            }
+        "#;
+        let err = lower_file(bad, shell()).unwrap_err();
+        assert!(err.contains("unknown class:"), "{err}");
+        assert!(err.contains("bg-not-a-color"), "{err}");
     }
 }

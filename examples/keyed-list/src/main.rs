@@ -1,6 +1,6 @@
 use quinn::makepad_widgets::*;
 
-app_main!(App);
+app_main!(App, font_assets: [makepad_platform::INTER_FONT_ASSET]);
 
 #[derive(Script, ScriptHook)]
 pub struct App {
@@ -23,8 +23,8 @@ impl AppMain for App {
             env!("CARGO_MANIFEST_DIR"),
             module_path!(),
             "Keyed list",
-            520,
-            520,
+            1440,
+            900,
             component,
         )
     }
@@ -44,5 +44,6 @@ impl AppMain for App {
         }
         self.match_event(cx, event);
         self.ui.handle_event(cx, event, &mut Scope::empty());
+        quinn::drive_shell(cx, event);
     }
 }

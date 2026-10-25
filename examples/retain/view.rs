@@ -9,8 +9,8 @@ struct Item {
 #[component]
 fn Detail() -> impl IntoView {
     view! {
-        <div class="p-2">
-            <button>"Detail"</button>
+        <div class="p-2 rounded-control bg-system-background">
+            <button class="px-3 h-control-large rounded-control text-body bg-system-blue text-white">"Detail"</button>
         </div>
     }
 }
@@ -19,9 +19,9 @@ fn Detail() -> impl IntoView {
 fn Row(item: Item) -> impl IntoView {
     let label = item.label;
     view! {
-        <div class="flex flex-row gap-2">
-            <span>{label}</span>
-            <button>"row"</button>
+        <div class="flex flex-row gap-2 items-center">
+            <span class="text-body text-label">{label}</span>
+            <button class="px-3 h-control-large rounded-control text-body bg-control-background text-label border border-separator">"row"</button>
         </div>
     }
 }
@@ -37,8 +37,8 @@ fn Retain() -> impl IntoView {
     quinn::retain_probe();
 
     view! {
-        <div class="flex flex-col gap-3 p-4">
-            <h1>"Retention"</h1>
+        <div class="flex flex-col gap-3 p-4 h-full bg-window-background">
+            <h1 class="text-title2 text-label">"Retention"</h1>
             <Show when=move || open.get()>
                 <Detail />
             </Show>

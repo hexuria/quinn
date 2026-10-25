@@ -1,6 +1,11 @@
 //! A closed style subset. Values map onto Makepad `Walk`, `Layout`, and draw
 //! fields. This is not a CSS cascade: later utilities in one class string win,
 //! and there is no inheritance.
+//!
+//! Color names are the Tailwind v3 palette plus Apple system colors. See
+//! `docs/design-system.md`. An unknown class is reported by [`unknown_classes`].
+
+mod palette_data;
 
 /// sRGB color. Alpha is kept for script patches; Makepad hex form is `#xRRGGBB`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -457,14 +462,91 @@ impl Style {
 }
 
 /// Tailwind-like utilities. Spacing numbers are multiplied by 4px (`gap-4` = 16).
-/// Unknown tokens are ignored so a class string can be extended later without
-/// breaking the ones this milestone understands.
+/// Unknown tokens do not change the style. [`unknown_classes`] lists them so
+/// the lowerer can fail the build instead of dropping them.
 pub fn parse_classes(input: &str) -> Style {
+    parse_classes_in(input, false)
+}
+
+/// Like [`parse_classes`], but Apple system colors use their dark sRGB value
+/// when `dark` is set. Tailwind hues stay the same.
+pub fn parse_classes_in(input: &str, dark: bool) -> Style {
+    palette_data::set_dark(dark);
     let mut style = Style::default();
     for token in input.split_whitespace() {
         apply_token(&mut style, token);
     }
+    palette_data::set_dark(false);
     style
+}
+
+/// Class tokens that do not map to a utility. Variant prefixes (`dark:`,
+/// `md:`, `hover:`) are stripped before the check. The returned strings are
+/// the original tokens, prefixes included.
+pub fn unknown_classes(class: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    for token in class.split_whitespace() {
+        let bare = strip_known_prefixes(token);
+        if bare.is_empty() {
+            continue;
+        }
+        if !utility_known(bare) {
+            out.push(token.to_string());
+        }
+    }
+    out
+}
+
+fn strip_known_prefixes(token: &str) -> &str {
+    let mut rest = token;
+    loop {
+        let next = if let Some(next) = rest.strip_prefix("dark:") {
+            next
+        } else if let Some(next) = rest.strip_prefix("sm:") {
+            next
+        } else if let Some(next) = rest.strip_prefix("md:") {
+            next
+        } else if let Some(next) = rest.strip_prefix("lg:") {
+            next
+        } else if let Some(next) = rest.strip_prefix("xl:") {
+            next
+        } else if let Some(next) = rest.strip_prefix("hover:") {
+            next
+        } else if let Some(next) = rest.strip_prefix("active:") {
+            next
+        } else if let Some(next) = rest.strip_prefix("focus:") {
+            next
+        } else if let Some(next) = rest.strip_prefix("disabled:") {
+            next
+        } else {
+            break;
+        };
+        rest = next;
+    }
+    rest
+}
+
+fn utility_known(token: &str) -> bool {
+    // These match a real utility but do not change `Style::default`.
+    const NEUTRAL: &[&str] = &[
+        "flex-nowrap",
+        "self-auto",
+        "grid",
+        "to-r",
+        "to-l",
+        "to-t",
+        "to-b",
+        "to-tr",
+        "to-tl",
+        "to-br",
+        "to-bl",
+    ];
+    if NEUTRAL.contains(&token) {
+        return true;
+    }
+    let mut style = Style::default();
+    apply_token(&mut style, token);
+    style != Style::default()
 }
 
 /// `key: value; key: value` inline styles. Lengths are raw pixels.
@@ -564,6 +646,7 @@ fn apply_token(style: &mut Style, token: &str) {
         "rounded-sm" => style.radius = Some(4.0),
         "rounded-lg" => style.radius = Some(12.0),
         "rounded-full" => style.radius = Some(999.0),
+        "border-0" => style.border_width = Some(0.0),
         "border" => {
             style.border_width = Some(1.0);
             if style.border_color.is_none() {
@@ -583,6 +666,33 @@ fn apply_token(style: &mut Style, token: &str) {
         "text-xl" => style.font_size = Some(20.0),
         "text-2xl" => style.font_size = Some(24.0),
         "text-3xl" => style.font_size = Some(30.0),
+        // macOS type scale. Sizes are points. Line spacing is line-height / size.
+        "text-large-title" => type_scale(style, 26.0, 400.0, 32.0 / 26.0),
+        "text-title1" | "text-title" => type_scale(style, 22.0, 400.0, 26.0 / 22.0),
+        "text-title2" => type_scale(style, 17.0, 400.0, 22.0 / 17.0),
+        "text-title3" => type_scale(style, 15.0, 400.0, 20.0 / 15.0),
+        "text-headline" => type_scale(style, 13.0, 600.0, 16.0 / 13.0),
+        "text-body" => type_scale(style, 13.0, 400.0, 16.0 / 13.0),
+        "text-callout" => type_scale(style, 12.0, 400.0, 15.0 / 12.0),
+        "text-subheadline" => type_scale(style, 11.0, 400.0, 14.0 / 11.0),
+        "text-footnote" => type_scale(style, 10.0, 400.0, 13.0 / 10.0),
+        "text-caption" => type_scale(style, 10.0, 400.0, 13.0 / 10.0),
+        "text-caption2" => type_scale(style, 10.0, 500.0, 13.0 / 10.0),
+        "h-control-mini" => set_height(style, SizeSpec::Px(16.0)),
+        "h-control-small" => set_height(style, SizeSpec::Px(18.0)),
+        "h-control" | "h-control-regular" => set_height(style, SizeSpec::Px(22.0)),
+        "h-control-large" => set_height(style, SizeSpec::Px(28.0)),
+        "rounded-control-sm" => style.radius = Some(5.0),
+        "rounded-control" => style.radius = Some(6.0),
+        "rounded-control-lg" => style.radius = Some(8.0),
+        "rounded-window" => style.radius = Some(10.0),
+        "rounded-sheet" => style.radius = Some(12.0),
+        "shadow-control" => style.shadow = Some(shadow(8.0, 2.0)),
+        "shadow-window" => style.shadow = Some(shadow(24.0, 8.0)),
+        "ring" => {
+            style.border_width = Some(2.0);
+            style.border_color = palette("system-blue");
+        }
         "absolute" => style.absolute = true,
         "inset-0" => {
             style.absolute = true;
@@ -624,6 +734,12 @@ fn apply_token(style: &mut Style, token: &str) {
         "bg-gradient-to-t" => set_gradient_dir(style, GradientAxis::Vertical, true),
         _ => apply_prefixed(style, token),
     }
+}
+
+fn type_scale(style: &mut Style, size: f64, weight: f64, leading: f64) {
+    style.font_size = Some(size);
+    style.font_weight = Some(weight);
+    style.line_height = Some(leading);
 }
 
 fn shadow(radius: f64, offset_y: f64) -> Shadow {
@@ -1059,19 +1175,7 @@ fn spacing(token: &str) -> Option<f64> {
 }
 
 fn palette(name: &str) -> Option<Rgba> {
-    Some(match name {
-        "white" => Rgba::new(255, 255, 255),
-        "black" => Rgba::new(0, 0, 0),
-        "slate-900" => Rgba::new(15, 23, 42),
-        "slate-600" => Rgba::new(71, 85, 105),
-        "slate-100" => Rgba::new(241, 245, 249),
-        "stone-900" => Rgba::new(28, 25, 23),
-        "stone-100" => Rgba::new(245, 245, 244),
-        "amber-700" => Rgba::new(180, 83, 9),
-        "amber-600" => Rgba::new(217, 119, 6),
-        "amber-100" => Rgba::new(254, 243, 199),
-        _ => return None,
-    })
+    palette_data::color(name)
 }
 
 fn apply_inline(style: &mut Style, key: &str, value: &str) {
@@ -1360,5 +1464,31 @@ mod tests {
         let ink = parse_classes("bg-[#1c191780]");
         assert_eq!(ink.background.unwrap().a, 0x80);
         assert_eq!(ink.background.unwrap().hex_script(), "#1c191780");
+    }
+
+    #[test]
+    fn tailwind_palette_apple_tokens_and_unknown_classes() {
+        let sky = parse_classes("bg-sky-100 text-rose-950");
+        assert_eq!(sky.background, Some(Rgba::new(224, 242, 254)));
+        assert_eq!(sky.color, Some(Rgba::new(76, 5, 25)));
+        assert!(unknown_classes("bg-sky-100 text-body").is_empty());
+        assert_eq!(
+            unknown_classes("bg-not-a-color md:text-nope"),
+            vec!["bg-not-a-color".to_string(), "md:text-nope".to_string()]
+        );
+        let blue = parse_classes("bg-system-blue text-label");
+        assert_eq!(blue.background, Some(Rgba::new(0, 122, 255)));
+        assert_eq!(blue.color.unwrap().a, 217);
+        let dark = parse_classes_in("bg-system-blue text-label", true);
+        assert_eq!(dark.background, Some(Rgba::new(10, 132, 255)));
+        assert_eq!(dark.color.unwrap().r, 255);
+        let headline = parse_classes("text-headline h-control-regular rounded-control");
+        assert_eq!(headline.font_size, Some(13.0));
+        assert_eq!(headline.font_weight, Some(600.0));
+        assert_eq!(headline.height, Some(SizeSpec::Px(22.0)));
+        assert_eq!(headline.radius, Some(6.0));
+        assert!(unknown_classes("grid flex-nowrap to-r").is_empty());
+        let hairline = parse_classes("border-0");
+        assert_eq!(hairline.border_width, Some(0.0));
     }
 }

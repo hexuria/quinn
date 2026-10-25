@@ -559,29 +559,32 @@ fn control_script(style: &Style) -> String {
     if let Some(color) = style.background {
         let hex = color.hex_script();
         parts.push(format!("draw_bg.color: {hex}"));
-        if let Some(hover) = style.hover_bg {
-            parts.push(format!("draw_bg.color_hover: {}", hover.hex_script()));
-        }
-        if let Some(active) = style.active_bg {
-            parts.push(format!("draw_bg.color_down: {}", active.hex_script()));
-        }
-        if let Some(disabled) = style.disabled_bg {
-            parts.push(format!("draw_bg.color_disabled: {}", disabled.hex_script()));
-        }
+        let hover = style.hover_bg.unwrap_or(color).hex_script();
+        let down = style.active_bg.unwrap_or(color).hex_script();
+        let focus = style.focus_bg.unwrap_or(color).hex_script();
+        let disabled = style.disabled_bg.unwrap_or(color).hex_script();
+        parts.push(format!("draw_bg.color_hover: {hover}"));
+        parts.push(format!("draw_bg.color_down: {down}"));
+        parts.push(format!("draw_bg.color_focus: {focus}"));
+        parts.push(format!("draw_bg.color_disabled: {disabled}"));
     }
     if let Some(color) = style.color {
         let hex = color.hex_script();
         parts.push(format!("draw_text.color: {hex}"));
-        if let Some(hover) = style.hover_fg {
-            parts.push(format!("draw_text.color_hover: {}", hover.hex_script()));
-        }
-        if let Some(active) = style.active_fg {
-            parts.push(format!("draw_text.color_down: {}", active.hex_script()));
-        }
-        if let Some(disabled) = style.disabled_fg {
-            parts.push(format!("draw_text.color_disabled: {}", disabled.hex_script()));
-        }
+        let hover = style.hover_fg.unwrap_or(color).hex_script();
+        let down = style.active_fg.unwrap_or(color).hex_script();
+        let focus = style.focus_fg.unwrap_or(color).hex_script();
+        let disabled = style.disabled_fg.unwrap_or(color).hex_script();
+        parts.push(format!("draw_text.color_hover: {hover}"));
+        parts.push(format!("draw_text.color_down: {down}"));
+        parts.push(format!("draw_text.color_focus: {focus}"));
+        parts.push(format!("draw_text.color_disabled: {disabled}"));
     }
+    // Flat face. The theme outset gradient and pressed mix are what turned a
+    // clicked button pale grey with an unreadable label.
+    parts.push("draw_bg.color_2: vec4(-1., -1., -1., -1.)".into());
+    parts.push("draw_bg.border_color_2: vec4(-1., -1., -1., -1.)".into());
+    parts.push("draw_bg.border_color_focus: #x007aff".into());
     if let Some(size) = style.font_size {
         parts.push(format!("draw_text.text_style.font_size: {size}"));
     }

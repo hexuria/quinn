@@ -2,7 +2,7 @@ use std::cell::RefCell;
 
 use quinn::makepad_widgets::*;
 
-app_main!(App);
+app_main!(App, font_assets: [makepad_platform::INTER_FONT_ASSET]);
 
 #[derive(Script, ScriptHook)]
 pub struct App {
@@ -28,8 +28,8 @@ impl AppMain for App {
             env!("CARGO_MANIFEST_DIR"),
             module_path!(),
             "Retain",
-            480,
-            420,
+            1440,
+            900,
             component,
         )
     }

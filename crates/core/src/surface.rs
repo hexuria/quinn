@@ -26,7 +26,19 @@ impl Tag {
 
     pub fn defaults(self) -> Style {
         let mut style = Style::default();
-        let ink = quinn_styles::Rgba::new(28, 25, 23);
+        // macOS label color, 85% black. See docs/design-system.md.
+        let ink = quinn_styles::Rgba {
+            r: 0,
+            g: 0,
+            b: 0,
+            a: 217,
+        };
+        let separator = quinn_styles::Rgba {
+            r: 60,
+            g: 60,
+            b: 67,
+            a: 74,
+        };
         match self {
             Self::Div => {
                 style.flow = Some(quinn_styles::FlowSpec::Column);
@@ -35,41 +47,63 @@ impl Tag {
             }
             Self::H1 => {
                 style.color = Some(ink);
-                style.font_size = Some(28.0);
+                style.font_size = Some(22.0);
+                style.font_weight = Some(400.0);
+                style.line_height = Some(26.0 / 22.0);
                 style.width = Some(quinn_styles::SizeSpec::Fill);
                 style.height = Some(quinn_styles::SizeSpec::Fit);
             }
             Self::H2 => {
                 style.color = Some(ink);
-                style.font_size = Some(22.0);
+                style.font_size = Some(17.0);
+                style.font_weight = Some(400.0);
+                style.line_height = Some(22.0 / 17.0);
                 style.width = Some(quinn_styles::SizeSpec::Fill);
                 style.height = Some(quinn_styles::SizeSpec::Fit);
             }
             Self::Span | Self::P | Self::Label => {
                 style.color = Some(ink);
-                style.font_size = Some(16.0);
+                style.font_size = Some(13.0);
+                style.font_weight = Some(400.0);
+                style.line_height = Some(16.0 / 13.0);
                 style.width = Some(quinn_styles::SizeSpec::Fit);
                 style.height = Some(quinn_styles::SizeSpec::Fit);
             }
             Self::Button => {
-                style.color = Some(quinn_styles::Rgba::new(246, 243, 236));
-                style.font_size = Some(16.0);
-                style.background = Some(quinn_styles::Rgba::new(28, 25, 23));
-                style.radius = Some(8.0);
-                style.padding = quinn_styles::Edges::all(10.0);
+                style.color = Some(ink);
+                style.font_size = Some(13.0);
+                style.font_weight = Some(400.0);
+                style.line_height = Some(16.0 / 13.0);
+                style.background = Some(quinn_styles::Rgba::new(255, 255, 255));
+                style.radius = Some(6.0);
+                style.border_width = Some(1.0);
+                style.border_color = Some(separator);
+                style.padding = quinn_styles::Edges {
+                    left: Some(12.0),
+                    top: Some(4.0),
+                    right: Some(12.0),
+                    bottom: Some(4.0),
+                };
                 style.width = Some(quinn_styles::SizeSpec::Fit);
                 style.height = Some(quinn_styles::SizeSpec::Fit);
             }
             Self::Input => {
                 style.color = Some(ink);
-                style.font_size = Some(16.0);
+                style.font_size = Some(13.0);
+                style.font_weight = Some(400.0);
+                style.line_height = Some(16.0 / 13.0);
                 style.background = Some(quinn_styles::Rgba::new(255, 255, 255));
                 style.border_width = Some(1.0);
-                style.border_color = Some(quinn_styles::Rgba::new(214, 211, 209));
+                style.border_color = Some(separator);
                 style.radius = Some(6.0);
-                style.padding = quinn_styles::Edges::all(8.0);
+                style.padding = quinn_styles::Edges {
+                    left: Some(8.0),
+                    top: Some(4.0),
+                    right: Some(8.0),
+                    bottom: Some(4.0),
+                };
                 style.width = Some(quinn_styles::SizeSpec::Fill);
-                style.height = Some(quinn_styles::SizeSpec::Px(36.0));
+                style.height = Some(quinn_styles::SizeSpec::Px(28.0));
             }
         }
         style

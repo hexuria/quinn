@@ -3,8 +3,8 @@ use quinn::prelude::*;
 #[component]
 fn Card(#[prop(into)] title: String, children: Children) -> impl IntoView {
     view! {
-        <div class="p-2 rounded-lg bg-white shadow-md flex flex-col gap-1">
-            <span class="font-semibold text-sm">{title}</span>
+        <div class="p-4 rounded-window bg-system-background shadow-control flex flex-col gap-2 dark:bg-system-background">
+            <span class="text-headline text-label dark:text-label">{title}</span>
             {children()}
         </div>
     }
@@ -14,7 +14,7 @@ fn Card(#[prop(into)] title: String, children: Children) -> impl IntoView {
 fn Badge() -> impl IntoView {
     let tone = use_context("tone");
     view! {
-        <span class="text-xs font-medium dark:text-stone-100">{tone}</span>
+        <span class="text-caption text-label dark:text-label">{tone}</span>
     }
 }
 
@@ -57,67 +57,67 @@ fn Dashboard() -> impl IntoView {
     let (open, set_open) = signal(false);
 
     view! {
-        <div class="flex flex-col gap-2 p-4 bg-stone-100 dark:bg-stone-900 h-full">
+        <div class="flex flex-col gap-3 p-4 h-full bg-window-background dark:bg-window-background overflow-y-auto">
             <div class="flex flex-row flex-wrap items-center gap-2">
-                <span class="text-lg font-semibold dark:text-stone-100">"Async dashboard"</span>
-                <button class="px-2 py-1 focus:bg-amber-100" on:click=move |_| { toggle_theme(); }>"Theme"</button>
-                <button class="px-2 py-1" on:click=move |_| { set_open.set(true); }>"Open modal"</button>
-                <button class="px-2 py-1" on:click=move |_| { save.dispatch("Cebu"); }>"Save Cebu"</button>
-                <button class="px-2 py-1" on:click=move |_| { save.dispatch("Davao"); }>"Save Davao"</button>
-                <button class="px-2 py-1" on:click=move |_| { set_city.set("Cebu"); }>"Refetch"</button>
-                <button class="px-2 py-1" on:click=move |_| { note.refetch(); }>"Reload"</button>
-                <button class="px-2 py-1" on:click=move |_| { race.dispatch("Cebu"); }>"Race Cebu"</button>
-                <button class="px-2 py-1" on:click=move |_| { race.dispatch("Davao"); }>"Race Davao"</button>
-                <button class="px-2 py-1" on:click=move |_| { set_page.set("2"); }>"Page 2"</button>
-                <button class="px-2 py-1" on:click=move |_| { stamp.dispatch(Place { city: city.get(), note: "desk" }); }>"Stamp"</button>
-                <span class="text-sm dark:text-stone-100">"Tone " {tone}</span>
+                <span class="text-title3 text-label dark:text-label">"Async dashboard"</span>
+                <button class="px-3 h-control-large rounded-control text-body text-system-blue border-0 bg-transparent dark:text-system-blue" on:click=move |_| { toggle_theme(); }>"Theme"</button>
+                <button class="px-3 h-control-large rounded-control text-body bg-system-blue text-white dark:bg-system-blue" on:click=move |_| { set_open.set(true); }>"Open modal"</button>
+                <button class="px-3 h-control-large rounded-control text-body bg-system-blue text-white dark:bg-system-blue" on:click=move |_| { save.dispatch("Cebu"); }>"Save Cebu"</button>
+                <button class="px-3 h-control-large rounded-control text-body bg-control-background text-label border border-separator dark:bg-control-background dark:text-label dark:border-separator" on:click=move |_| { save.dispatch("Davao"); }>"Save Davao"</button>
+                <button class="px-3 h-control-large rounded-control text-body bg-control-background text-label border border-separator dark:bg-control-background dark:text-label dark:border-separator" on:click=move |_| { set_city.set("Cebu"); }>"Refetch"</button>
+                <button class="px-3 h-control-large rounded-control text-body bg-control-background text-label border border-separator dark:bg-control-background dark:text-label dark:border-separator" on:click=move |_| { note.refetch(); }>"Reload"</button>
+                <button class="px-3 h-control-large rounded-control text-body bg-control-background text-label border border-separator dark:bg-control-background dark:text-label dark:border-separator" on:click=move |_| { race.dispatch("Cebu"); }>"Race Cebu"</button>
+                <button class="px-3 h-control-large rounded-control text-body bg-control-background text-label border border-separator dark:bg-control-background dark:text-label dark:border-separator" on:click=move |_| { race.dispatch("Davao"); }>"Race Davao"</button>
+                <button class="px-3 h-control-large rounded-control text-body bg-control-background text-label border border-separator dark:bg-control-background dark:text-label dark:border-separator" on:click=move |_| { set_page.set("2"); }>"Page 2"</button>
+                <button class="px-3 h-control-large rounded-control text-body bg-control-background text-label border border-separator dark:bg-control-background dark:text-label dark:border-separator" on:click=move |_| { stamp.dispatch(Place { city: city.get(), note: "desk" }); }>"Stamp"</button>
+                <span class="text-callout text-label-secondary dark:text-label-secondary">"Tone " {tone}</span>
                 <Shade />
             </div>
             <div class="flex flex-col md:flex-row gap-3">
-                <div class="h-[72px] w-full md:w-[180px] rounded bg-amber-100">
-                    <span class="text-sm font-semibold">"Sidebar"</span>
+                <div class="h-[72px] w-full md:w-[180px] rounded-control bg-sidebar dark:bg-sidebar">
+                    <span class="text-headline text-label dark:text-label">"Sidebar"</span>
                 </div>
-                <div class="flex flex-col gap-2">
-                    <Suspense fallback=|| view! { <span class="text-sm dark:text-stone-100">"Loading the note"</span> }>
-                        <span class="text-sm dark:text-stone-100">"Note: " {note}</span>
+                <div class="flex flex-col gap-2 flex-1">
+                    <Suspense fallback=|| view! { <span class="text-body text-label dark:text-label">"Loading the note"</span> }>
+                        <span class="text-body text-label dark:text-label">"Note: " {note}</span>
                     </Suspense>
-                    <Transition fallback=|| view! { <span class="text-sm dark:text-stone-100">"Refreshing"</span> }>
-                        <span class="text-sm dark:text-stone-100">"Place: " {place}</span>
+                    <Transition fallback=|| view! { <span class="text-body text-label dark:text-label">"Refreshing"</span> }>
+                        <span class="text-body text-label dark:text-label">"Place: " {place}</span>
                     </Transition>
-                    <ErrorBoundary fallback=|| view! { <span class="text-sm dark:text-stone-100">"Could not load the feed"</span> }>
-                        <span class="text-sm dark:text-stone-100">"Feed: " {feed}</span>
+                    <ErrorBoundary fallback=|| view! { <span class="text-body text-label dark:text-label">"Could not load the feed"</span> }>
+                        <span class="text-body text-label dark:text-label">"Feed: " {feed}</span>
                     </ErrorBoundary>
-                    <ErrorBoundary fallback=|| view! { <span class="text-sm dark:text-stone-100">"The job panicked"</span> }>
-                        <span class="text-sm dark:text-stone-100">"Boom: " {boom}</span>
+                    <ErrorBoundary fallback=|| view! { <span class="text-body text-label dark:text-label">"The job panicked"</span> }>
+                        <span class="text-body text-label dark:text-label">"Boom: " {boom}</span>
                     </ErrorBoundary>
                     <Show when=move || save.pending()>
-                        <span class="text-sm font-medium dark:text-stone-100">"Saving"</span>
+                        <span class="text-body text-label dark:text-label">"Saving"</span>
                     </Show>
-                    <span class="text-sm dark:text-stone-100">"Action: " {save}</span>
-                    <span class="text-sm dark:text-stone-100">{move || save.version()}</span>
+                    <span class="text-body text-label dark:text-label">"Action: " {save}</span>
+                    <span class="text-body text-label dark:text-label">{move || save.version()}</span>
                     <Show when=move || race.pending()>
-                        <span class="text-sm font-medium dark:text-stone-100">"Racing"</span>
+                        <span class="text-body text-label dark:text-label">"Racing"</span>
                     </Show>
-                    <span class="text-sm dark:text-stone-100">"Race: " {race}</span>
-                    <Suspense fallback=|| view! { <span class="text-sm dark:text-stone-100">"Loading cities"</span> }>
+                    <span class="text-body text-label dark:text-label">"Race: " {race}</span>
+                    <Suspense fallback=|| view! { <span class="text-body text-label dark:text-label">"Loading cities"</span> }>
                         <For each=move || cities.get() key=|city| city.name>
-                            <span class="text-sm dark:text-stone-100">{city.name}</span>
+                            <span class="text-body text-label dark:text-label">{city.name}</span>
                         </For>
                     </Suspense>
-                    <Suspense fallback=|| view! { <span class="text-sm dark:text-stone-100">"Loading the pair"</span> }>
-                        <span class="text-sm dark:text-stone-100">"Pair: " {pair}</span>
+                    <Suspense fallback=|| view! { <span class="text-body text-label dark:text-label">"Loading the pair"</span> }>
+                        <span class="text-body text-label dark:text-label">"Pair: " {pair}</span>
                     </Suspense>
-                    <span class="text-sm dark:text-stone-100">"Stamp: " {stamp}</span>
-                    <span class="text-sm dark:text-stone-100">"Cancelled: " {move || cancelled_count()}</span>
+                    <span class="text-body text-label dark:text-label">"Stamp: " {stamp}</span>
+                    <span class="text-body text-label dark:text-label">"Cancelled: " {move || cancelled_count()}</span>
                     <Card title="Ada".into()>
-                        <div class="h-[48px] rounded bg-stone-100">
+                        <div class="h-[48px] rounded-control bg-system-fill dark:bg-system-fill">
                             <div class="absolute left-2 top-1 z-10">
-                                <span class="text-xs font-medium">"Pinned in the card"</span>
+                                <span class="text-caption text-label dark:text-label">"Pinned in the card"</span>
                             </div>
                         </div>
                     </Card>
-                    <div class="h-[40px] w-[160px] rounded bg-amber-100 hover:bg-amber-600">
-                        <span class="text-sm">"Hover me"</span>
+                    <div class="flex flex-row items-center h-[40px] w-[160px] rounded-control bg-system-fill hover:bg-system-blue dark:bg-system-fill">
+                        <span class="text-body text-label dark:text-label">"Hover me"</span>
                     </div>
                 </div>
             </div>
@@ -125,11 +125,11 @@ fn Dashboard() -> impl IntoView {
                 <Show when=move || open.get()>
                     <div class="absolute inset-0">
                         <div class="absolute inset-0 z-40 bg-[#1c191780] hover:bg-[#1c191780]">
-                            <span class="text-sm text-stone-100">"Scrim"</span>
+                            <span class="text-body text-white">"Scrim"</span>
                         </div>
-                        <div class="absolute left-8 top-8 z-50 w-[280px] p-4 rounded-lg bg-white shadow-lg dark:bg-stone-900">
-                            <span class="text-lg font-semibold dark:text-stone-100">"Modal"</span>
-                            <button class="px-2 py-1" on:click=move |_| { set_open.set(false); }>"Close"</button>
+                        <div class="absolute left-8 top-8 z-50 w-[320px] p-4 rounded-sheet bg-system-background shadow-window dark:bg-system-background">
+                            <span class="text-title3 text-label dark:text-label">"Modal"</span>
+                            <button class="px-3 h-control-large rounded-control text-body bg-system-blue text-white dark:bg-system-blue" on:click=move |_| { set_open.set(false); }>"Close"</button>
                         </div>
                     </div>
                 </Show>

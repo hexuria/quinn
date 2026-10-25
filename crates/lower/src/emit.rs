@@ -4,7 +4,7 @@
 use std::cell::RefCell;
 
 use quinn_core::{Style, Tag};
-use quinn_styles::{parse_classes, shell_variants, AlignSpec, FlowSpec, SizeSpec};
+use quinn_styles::{parse_classes, parse_classes_in, shell_variants, AlignSpec, FlowSpec, SizeSpec};
 
 use crate::model::*;
 use crate::Shell;
@@ -897,7 +897,14 @@ fn seed_lines(model: &Model, shell: &Shell) -> Vec<String> {
         lines.push(format!("{}_phase: \"{phase}\"", job.name));
         lines.push(format!("{}_value: \"\"", job.name));
         lines.push(format!("{}_error: \"\"", job.name));
-        lines.push(format!("{}_gen: 1", job.name));
+        // Leptos `Action::version` is 0 until the first dispatch. Resources
+        // still start at 1 so the initial load runs.
+        let gen = if matches!(job.kind, JobKind::Action) {
+            0
+        } else {
+            1
+        };
+        lines.push(format!("{}_gen: {gen}", job.name));
         if !job.deps.is_empty() {
             lines.push(format!(
                 "{}_source: {}",
@@ -2536,7 +2543,7 @@ fn host_fields(class: &str, release_clip: bool) -> String {
     // variants on it (`dark:bg-stone-900`) still have to reach `draw_bg`.
     for when in shell_variants(class) {
         let mut on = style.clone();
-        on.merge_from(&parse_classes(&when.token));
+        on.merge_from(&parse_classes_in(&when.token, when.dark));
         on.width = Some(SizeSpec::Fill);
         on.height = Some(SizeSpec::Fill);
         if let Some(color) = on.background {
@@ -2625,7 +2632,7 @@ fn style_lines(
     }
     for when in shell_variants(&el.class) {
         let mut on = base.clone();
-        on.merge_from(&parse_classes(&when.token));
+        on.merge_from(&parse_classes_in(&when.token, when.dark));
         tune_style(&mut on, parent, stretch && el.class.contains("self-stretch"));
         let on_map = prop_map(&on, tag);
         let cond = shell_cond(&when);
@@ -2930,6 +2937,27 @@ fn walk_pairs(style: &Style) -> Vec<(String, String)> {
     lines
 }
 
+fn separator_rgba() -> quinn_styles::Rgba {
+    quinn_styles::Rgba {
+        r: 60,
+        g: 60,
+        b: 67,
+        a: 74,
+    }
+}
+
+/// Push `key` only when an earlier utility did not already set it.
+/// `prop_map` keeps the last write, so this must not clobber `hover:bg-*`.
+fn mirror_state(lines: &mut Vec<(String, String)>, key: &str, color: Option<quinn_styles::Rgba>) {
+    if lines.iter().any(|(have, _)| have == key) {
+        return;
+    }
+    let Some(color) = color else {
+        return;
+    };
+    lines.push((key.to_string(), color.hex_script()));
+}
+
 fn paint_pairs(style: &Style, tag: Tag) -> Vec<(String, String)> {
     let mut lines = Vec::new();
     if style.grid_cols.is_some() {
@@ -3018,34 +3046,95 @@ fn paint_pairs(style: &Style, tag: Tag) -> Vec<(String, String)> {
             lines.push(("draw_bg.disabled".into(), "1.".into()));
             lines.push(("draw_text.disabled".into(), "1.".into()));
         }
+        // The theme's color_focus / color_down are a pale outset. A click
+        // focuses the button and the pressed mix can stick across render, so
+        // the face went grey and the label went with the theme ink. Every
+        // state uses the face and label we already chose, and the pressed
+        // track is cut back to off on click. The focus ring is the border.
+        mirror_state(&mut lines, "draw_bg.color_hover", style.hover_bg.or(style.background));
+        mirror_state(&mut lines, "draw_bg.color_down", style.active_bg.or(style.background));
+        mirror_state(&mut lines, "draw_bg.color_focus", style.focus_bg.or(style.background));
+        mirror_state(
+            &mut lines,
+            "draw_bg.color_disabled",
+            style.disabled_bg.or(style.background),
+        );
+        mirror_state(&mut lines, "draw_text.color_hover", style.hover_fg.or(style.color));
+        mirror_state(&mut lines, "draw_text.color_down", style.active_fg.or(style.color));
+        mirror_state(&mut lines, "draw_text.color_focus", style.focus_fg.or(style.color));
+        mirror_state(
+            &mut lines,
+            "draw_text.color_disabled",
+            style.disabled_fg.or(style.color),
+        );
+        lines.push(("reset_hover_on_click".into(), "true".into()));
+        lines.push((
+            "draw_bg.color_2".into(),
+            "vec4(-1., -1., -1., -1.)".into(),
+        ));
+        lines.push((
+            "draw_bg.border_color_2".into(),
+            "vec4(-1., -1., -1., -1.)".into(),
+        ));
+        lines.push(("draw_bg.layer_hover".into(), "0.".into()));
+        lines.push(("draw_bg.layer_down".into(), "0.".into()));
+        let border_size = style.border_width.unwrap_or(1.0);
+        lines.push(("draw_bg.border_size".into(), script_num(border_size)));
+        let border = style.border_color.unwrap_or_else(separator_rgba);
+        mirror_state(&mut lines, "draw_bg.border_color", Some(border));
+        mirror_state(&mut lines, "draw_bg.border_color_hover", Some(border));
+        mirror_state(&mut lines, "draw_bg.border_color_down", Some(border));
+        // systemBlue, the HIG focus ring. Not the theme's pale focus fill.
+        lines.push(("draw_bg.border_color_focus".into(), "#x007aff".into()));
+    }
+    if matches!(tag, Tag::Input) {
+        // The inset theme tints a focused field. Keep the well flat and put
+        // systemBlue on the stroke, which is the macOS focus ring.
+        mirror_state(&mut lines, "draw_bg.color_hover", style.hover_bg.or(style.background));
+        mirror_state(&mut lines, "draw_bg.color_down", style.active_bg.or(style.background));
+        mirror_state(&mut lines, "draw_bg.color_focus", style.focus_bg.or(style.background));
+        mirror_state(&mut lines, "draw_bg.color_empty", style.background);
+        mirror_state(
+            &mut lines,
+            "draw_bg.color_disabled",
+            style.disabled_bg.or(style.background),
+        );
+        lines.push((
+            "draw_bg.color_2".into(),
+            "vec4(-1., -1., -1., -1.)".into(),
+        ));
+        lines.push((
+            "draw_bg.border_color_2".into(),
+            "vec4(-1., -1., -1., -1.)".into(),
+        ));
+        if style.border_width.is_none() {
+            lines.push(("draw_bg.border_size".into(), "1.".into()));
+        }
+        let border = style.border_color.unwrap_or_else(separator_rgba);
+        mirror_state(&mut lines, "draw_bg.border_color", Some(border));
+        mirror_state(&mut lines, "draw_bg.border_color_hover", Some(border));
+        mirror_state(&mut lines, "draw_bg.border_color_down", Some(border));
+        mirror_state(&mut lines, "draw_bg.border_color_empty", Some(border));
+        lines.push(("draw_bg.border_color_focus".into(), "#x007aff".into()));
+        mirror_state(&mut lines, "draw_text.color_hover", style.hover_fg.or(style.color));
+        mirror_state(&mut lines, "draw_text.color_down", style.active_fg.or(style.color));
+        mirror_state(&mut lines, "draw_text.color_focus", style.focus_fg.or(style.color));
     }
     if tag != Tag::Div {
-        if let Some(weight) = style.font_weight {
-            let mut fields = String::new();
-            if let Some(size) = style.font_size {
-                fields.push_str(&format!("font_size: {} ", script_num(size)));
-            }
-            let leading = style.line_height.unwrap_or(1.2);
-            fields.push_str(&format!("line_spacing: {} ", script_num(leading)));
-            fields.push_str(&format!(
-                "font_family: FontFamily{{latin := FontMember{{res: crate_resource(\"makepad_widgets:resources/RobotoFlex.ttf\") asc: -0.1 desc: 0.0 weight: {}}}}}",
+        let size = style.font_size.unwrap_or(13.0);
+        let weight = style.font_weight.unwrap_or(400.0);
+        let leading = style.line_height.unwrap_or(16.0 / 13.0);
+        // SF Pro cannot be redistributed. Makepad ships Inter, which is the
+        // fallback face. Weight is the Inter variable axis.
+        lines.push((
+            "draw_text.text_style".into(),
+            format!(
+                "TextStyle{{font_size: {} line_spacing: {} font_family: FontFamily{{latin := FontMember{{res: crate_resource(\"makepad_widgets:resources/Inter.ttf\") asc: 0.0 desc: 0.0 weight: {}}}}}}}",
+                script_num(size),
+                script_num(leading),
                 script_num(weight)
-            ));
-            lines.push((
-                "draw_text.text_style".into(),
-                format!("TextStyle{{{fields}}}"),
-            ));
-        } else {
-            if let Some(size) = style.font_size {
-                lines.push(("draw_text.text_style.font_size".into(), script_num(size)));
-            }
-            if let Some(leading) = style.line_height {
-                lines.push((
-                    "draw_text.text_style.line_spacing".into(),
-                    script_num(leading),
-                ));
-            }
-        }
+            ),
+        ));
     }
     if let Some(width) = style.border_width {
         if matches!(tag, Tag::Input | Tag::Div) {

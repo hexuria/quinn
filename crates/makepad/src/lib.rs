@@ -9,7 +9,7 @@
 mod host;
 mod probe;
 
-pub use host::{on_actions, reclaim_script_heap, startup, with_cx};
+pub use host::{boot_script, on_actions, reclaim_script_heap, startup, with_current_cx, with_cx};
 pub use makepad_widgets;
 pub use probe::{
     after_mount, flush_now, rss_kib, session_stats, set_frame_driver, set_inspector,

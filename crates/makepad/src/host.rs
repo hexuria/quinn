@@ -560,6 +560,24 @@ unsafe extern "C" {
     fn malloc_trim(pad: usize) -> i32;
 }
 
+/// Read the `Cx` published by [`with_cx`] for the current UI-thread call.
+pub fn with_current_cx<R>(body: impl FnOnce(&mut Cx) -> R) -> R {
+    body(cx())
+}
+
+/// Install the frame probe on a shell whose widgets already came from script.
+///
+/// Unlike [`startup`], this does not mount a Rust `view!`. Clicks are script
+/// `on_click` closures. The host view is the `host` name in that script.
+pub fn boot_script(cx: &mut Cx, ui: &WidgetRef) {
+    let host = ui.view(cx, ids!(host));
+    if host.is_empty() {
+        panic!("quinn host view was not created; the shell script did not register `host`");
+    }
+    crate::probe::run_widget_bench(&host);
+    crate::probe::install(cx);
+}
+
 pub fn startup<V: IntoView>(cx: &mut Cx, ui: &WidgetRef, build: impl FnOnce() -> V) {
     let host = ui.view(cx, ids!(host));
     if host.is_empty() {

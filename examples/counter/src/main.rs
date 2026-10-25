@@ -1,17 +1,21 @@
 use quinn::makepad_widgets::*;
 use quinn::prelude::*;
 
-mod chrome;
+mod ops;
+mod seed;
+mod ui_script;
 
+/// Authoring source. The body is lowered to `ui_script.rs` and is not mounted
+/// as a Rust view. Edits here hot-reload through that script when the binary
+/// was started with `--hot`.
+#[allow(dead_code)]
 #[component]
 fn Counter() -> impl IntoView {
     let (count, set_count) = signal(0);
-    let set_probe = set_count;
-    let read_probe = count;
     quinn::set_frame_driver(move || {
-        set_probe.update(|n| *n += 1);
+        set_count.update(|n| *n += 1);
     });
-    quinn::set_inspector(move || read_probe.get_untracked().to_string());
+    quinn::set_inspector(move || count.get_untracked().to_string());
 
     view! {
         <div class="flex flex-col gap-4 p-4">
@@ -33,32 +37,43 @@ pub struct App {
 
 impl MatchEvent for App {
     fn handle_startup(&mut self, cx: &mut Cx) {
-        quinn::startup(cx, &self.ui, || view! { <Counter /> });
-    }
-
-    fn handle_actions(&mut self, cx: &mut Cx, actions: &Actions) {
-        quinn::on_actions(cx, actions);
+        quinn::set_frame_driver(|| {
+            quinn::with_current_cx(|cx| ops::bump(cx));
+        });
+        quinn::set_inspector(|| quinn::with_current_cx(|cx| ops::read_count(cx)));
+        quinn::boot_script(cx, &self.ui);
+        if std::env::args().any(|arg| arg == "--hot") {
+            quinn_lower::spawn_watch(
+                concat!(env!("CARGO_MANIFEST_DIR"), "/src/main.rs"),
+                concat!(env!("CARGO_MANIFEST_DIR"), "/src/ui_script.rs"),
+                quinn_lower::Shell {
+                    title: "Counter",
+                    width: 480,
+                    height: 360,
+                },
+            );
+        }
     }
 }
 
 impl AppMain for App {
     fn script_mod(vm: &mut ScriptVm) -> ScriptValue {
         quinn::makepad_widgets::script_mod(vm);
-        chrome::script_mod(vm)
+        seed::seed(vm);
+        ui_script::script_mod(vm)
     }
 
     fn handle_event(&mut self, cx: &mut Cx, event: &Event) {
-        // Disk hot reload stores the new script with Apply::Reload, which
-        // does not walk draw fields. request_style_reload asks the next tick
-        // to re-apply with ScriptReapply so the page color changes and the
-        // Rust-mounted counter stays. That follow-up reports Rebake here.
+        // Apply::Reload already walked the new template. render() runs the
+        // new on_render, so text and children follow the script. ScriptReapply
+        // would keep the label string the widget already has.
         if let Event::LiveEdit = event {
             if matches!(cx.live_edit_apply(), Apply::Reload) {
                 eprintln!(
-                    "hot_reload_followup pid={} window_stays=1 request_style_reload=1",
+                    "script_reload pid={} window_stays=1 render=1",
                     std::process::id()
                 );
-                cx.request_style_reload();
+                ops::rerender(cx);
             }
         }
         self.match_event(cx, event);

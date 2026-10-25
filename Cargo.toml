@@ -4,6 +4,7 @@ members = [
     "crates/styles",
     "crates/reactive",
     "crates/core",
+    "crates/lower",
     "crates/macros",
     "crates/makepad",
     "crates/quinn",

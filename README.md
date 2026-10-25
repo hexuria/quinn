@@ -22,14 +22,14 @@ fn Counter() -> impl IntoView {
 quinn::run!("Counter", 480, 360, view! { <Counter /> });
 ```
 
-`run!` has to sit at the crate root. It expands to a Makepad `app_main!` shell. Rust 1.99.0 is pinned in `rust-toolchain.toml`.
+The syntax above is what you write. `examples/counter` lowers it into a Makepad `script_mod!` (`mod.state`, `on_render`, `on_click`) so `--hot` can reload the view in the same process. `run!` is what `conditional`, `keyed-list`, and `form` still use. It has to sit at the crate root and expands to a Makepad `app_main!` shell. Those three still run on `reactive_graph`. Rust 1.99.0 is pinned in `rust-toolchain.toml`.
 
 ## Test the reactive core
 
 This does not need a GPU or a display:
 
 ```bash
-cargo test -p quinn-styles -p quinn-reactive -p quinn-core -p quinn --no-default-features
+cargo test -p quinn-styles -p quinn-reactive -p quinn-core -p quinn-lower -p quinn --no-default-features
 ```
 
 ## Run a native example
@@ -64,6 +64,7 @@ Other harness variables, read by `counter` and `baseline-counter`:
 - `crates/styles` — utility / inline style subset
 - `crates/reactive` — upstream `reactive_graph`
 - `crates/core` — owners, surface, lifecycle tests
+- `crates/lower` — lowers the counter's `view!` into Makepad script
 - `crates/macros` — `view!`, `#[component]`, `run!`
 - `crates/makepad` — the only renderer
 - `crates/quinn` — what applications import

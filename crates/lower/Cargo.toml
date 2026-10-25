@@ -1,0 +1,14 @@
+[package]
+name = "quinn-lower"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "Lower view! and signal() into Makepad script"
+
+[dependencies]
+quinn-core = { path = "../core" }
+quinn-styles = { path = "../styles" }
+proc-macro2 = "1"
+rstml = "=0.13.1"
+syn = { version = "3", features = ["full", "extra-traits"] }

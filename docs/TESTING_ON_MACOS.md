@@ -48,21 +48,24 @@ cargo test -p quinn-styles -p quinn-reactive -p quinn-core -p quinn --no-default
 
 ## Live reload and latency
 
-Launch the release binaries with Makepad's file watcher:
+Build the release binaries, then run them directly so Cargo is not watching the tree:
 
 ```bash
-cargo run -p baseline-counter --release -- --hot
-cargo run -p counter --release -- --hot
+cargo build -p baseline-counter -p counter --release
+./target/release/baseline-counter --hot
+./target/release/counter --hot
 ```
 
-Click the button until the count reads 5. Leave the process up. In another terminal, change one draw color and save:
+`cargo run -- --hot` works for a color edit that does not rewrite a source file Cargo is compiling. The counter's watcher rewrites `examples/counter/src/ui_script.rs`. Under `cargo run` that rewrite starts a new process.
 
-- `examples/baseline-counter/src/main.rs`: `increment_button`'s `draw_bg.color`
-- `examples/counter/src/chrome.rs`: the host `RoundedView`'s `draw_bg.color`
+Click until the count reads 5. Leave the process up.
 
-The same window should recolor. The count should still be 5. The title bar can be set with `xdotool set_window --name` to the PID and the X id; both should be unchanged after the save. `log stream` or the terminal should contain `hot reload detected` and `hot reload applied`, then `hot_reload_followup pid=...`.
+- Baseline: change `increment_button`'s `draw_bg.color` in `examples/baseline-counter/src/main.rs` and save. The button recolors. The count stays 5. The log contains `hot reload applied`, then `hot_reload_followup pid=...`.
+- Counter: change the `view!` in `examples/counter/src/main.rs` (`gap-4` to `gap-8`, or `"Increment"` to `"Add one"`) and save. The same window updates. The count stays 5. The new button still increments. The log contains `quinn lowered view into .../ui_script.rs`, `hot reload applied` for that file, and `script_reload pid=...`.
 
-`script_eval!` must not sit in the file you edit. Makepad counts those bodies and rejects the file when the counts disagree. `quinn::run!` does not emit a `script_mod!` the watcher can read. The counter's chrome file is the block.
+The title bar can be set with `xdotool set_window --name` to the PID and the X id. Both should be unchanged after the save. Confirm the process with `starttime` in `/proc/<pid>/stat` as well as the window id. The X server recycles window ids across processes.
+
+`script_eval!` must not sit in the file you edit. Makepad counts those bodies and rejects the file when the counts disagree. The counter's seed and its Rust script calls live in `seed.rs` and `ops.rs`. `quinn::run!` does not emit a `script_mod!` the watcher can read.
 
 `QUINN_LIVE=1` is not this path. It injects a synthetic script buffer into the running process and does not modify a file.
 
@@ -72,7 +75,7 @@ The same window should recolor. The count should still be 5. The title bar can b
 | `QUINN_LIVE=1` | In-process synthetic script reload on the first frame. Not a disk edit. |
 | `QUINN_WIDGET_BENCH=200` | Create 200 labels and `set_text` them, seven times unless `QUINN_WIDGET_RUNS` is set. |
 
-A change to Rust, including `view!`, is a rebuild and a new process. Time `cargo build -p counter --release` after touching `examples/counter/src/main.rs`, then the next `QUINN_READY`.
+A change to a Rust handler that the lowerer does not understand, or to conditional / keyed-list / form, is a rebuild and a new process. The counter's lowered `view!` is not: with `--hot` it stays one process. Time `cargo build -p counter --release` after touching `examples/counter/src/main.rs` only when you are measuring a cold rebuild.
 
 ## Wasm
 

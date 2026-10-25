@@ -291,13 +291,13 @@ fn arm_live_reload(cx: &mut Cx) {
     cx.redraw_all();
 }
 
-fn write_live(cx: &Cx, probe: &Probe, now: Instant) {
+fn write_live(cx: &mut Cx, probe: &Probe, now: Instant) {
     let elapsed_us = probe
         .live_started
         .map(|t| now.duration_since(t).as_micros())
         .unwrap_or(0);
     let stats = session_stats();
-    let signal = inspect();
+    let signal = crate::host::with_cx(cx, inspect);
     let body = format!(
         "live_reload result=applied elapsed_us={elapsed_us} reload_generation={} frames_after_arm={} signal={signal:?} nodes={} widgets={} host_children={} texts={:?}\nmarker=post_draw_hook of the frame after Makepad processed the queued file change\n",
         cx.reload_generation, probe.live_frames, stats.nodes, stats.widgets, stats.host_children, stats.texts
@@ -308,13 +308,14 @@ fn write_live(cx: &Cx, probe: &Probe, now: Instant) {
     let _ = std::fs::write(path, body);
 }
 
-fn write_live_timeout(cx: &Cx, probe: &Probe) {
+fn write_live_timeout(cx: &mut Cx, probe: &Probe) {
     let stats = session_stats();
+    let signal = crate::host::with_cx(cx, inspect);
     let body = format!(
         "live_reload result=timeout reload_generation={} frames={} signal={:?} nodes={} widgets={} host_children={} texts={:?}\n",
         cx.reload_generation,
         probe.live_frames,
-        inspect(),
+        signal,
         stats.nodes,
         stats.widgets,
         stats.host_children,

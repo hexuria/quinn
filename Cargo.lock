@@ -133,6 +133,7 @@ name = "counter"
 version = "0.1.0"
 dependencies = [
  "quinn",
+ "quinn-lower",
 ]
 
 [[package]]
@@ -1000,6 +1001,17 @@ version = "0.1.0"
 dependencies = [
  "quinn-reactive",
  "quinn-styles",
+]
+
+[[package]]
+name = "quinn-lower"
+version = "0.1.0"
+dependencies = [
+ "proc-macro2",
+ "quinn-core",
+ "quinn-styles",
+ "rstml",
+ "syn 3.0.9",
 ]
 
 [[package]]

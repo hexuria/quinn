@@ -280,7 +280,7 @@ fn Showcase() -> impl IntoView {
                             <div class="flex flex-col gap-6 w-full bp1120:w-[280px]">
                                 <div class="flex flex-col gap-2">
                                     <span class="text-control text-primary dark:text-primary">"Actions"</span>
-                                    <div class="flex flex-row items-center gap-2">
+                                    <div class="flex flex-row flex-wrap items-center gap-2">
                                         <Button variant="danger" on:click=move |_| { set_alert.set(true); }>"Delete note"</Button>
                                         <Button variant="secondary" on:click=move |_| { set_toast.set(true); }>"Bordered"</Button>
                                         <Button variant="ghost">"Borderless"</Button>
@@ -361,7 +361,7 @@ fn Showcase() -> impl IntoView {
                         </div>
                         <div class="flex flex-col gap-4">
                             <span class="text-section text-primary dark:text-primary">"Controls"</span>
-                            <div class="flex flex-row items-center gap-2">
+                            <div class="flex flex-row flex-wrap items-center gap-2">
                                 <Button>"Primary"</Button>
                                 <Button variant="secondary">"Secondary"</Button>
                                 <Button variant="ghost">"Ghost"</Button>

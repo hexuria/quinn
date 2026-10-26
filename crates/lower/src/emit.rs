@@ -2211,8 +2211,15 @@ fn child_is_absolute(node: &ViewNode) -> bool {
     match node {
         ViewNode::El(el) => parse_classes(&el.class).absolute,
         ViewNode::Show { child, .. } => child_is_absolute(child),
-        ViewNode::Slot { fn_name, nodes, .. } if fn_name.is_empty() => {
-            nodes.iter().any(child_is_absolute)
+        ViewNode::Slot { fn_name, nodes, .. } => {
+            if fn_name.is_empty() {
+                nodes.iter().any(child_is_absolute)
+            } else {
+                // A component child that is only an absolute overlay has to
+                // cover its parent. A named slot is one call, so the call
+                // itself has to join the absolute layer.
+                !nodes.is_empty() && nodes.iter().all(child_is_absolute)
+            }
         }
         _ => false,
     }
@@ -2222,9 +2229,7 @@ fn node_z(node: &ViewNode) -> i64 {
     match node {
         ViewNode::El(el) => parse_classes(&el.class).z_index.unwrap_or(0),
         ViewNode::Show { child, .. } => node_z(child),
-        ViewNode::Slot { fn_name, nodes, .. } if fn_name.is_empty() => {
-            nodes.iter().map(node_z).max().unwrap_or(0)
-        }
+        ViewNode::Slot { nodes, .. } => nodes.iter().map(node_z).max().unwrap_or(0),
         _ => 0,
     }
 }

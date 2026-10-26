@@ -9,7 +9,9 @@ use quinn_ui::components::*;
 
 `components.rs` is authoring source. Cargo does not compile it. The host passes `quinn_ui::SOURCE` into the lowerer (`load_hot_view_with`). A `view.rs` save reloads in the same process and still resolves these components.
 
-Call-site `on:click`, `class`, `class:`, `bind:value`, and `placeholder` are forwarded. `variant` and `disabled` are props. A text child becomes the button label. Element children fill `{children()}`.
+Call-site `on:click`, `class`, `class:`, `bind:value`, and `placeholder` are forwarded. `variant` and `disabled` are props. A text child becomes the button label. Element children fill `{children()}`. Several element children share the parent's row, gap, and alignment. A child that is only an absolute overlay is placed on the absolute layer, which is how the slider's hit targets cover the track.
+
+Every color utility on these components has a `dark:` pair. A light-only face under `dark:text-*` made the toast title disappear.
 
 Keyboard behavior below is the behavior this desktop host can stand behind. Anything else is marked unsupported.
 

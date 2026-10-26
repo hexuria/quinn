@@ -8,7 +8,7 @@ fn Button(
     children: Children,
 ) -> impl IntoView {
     view! {
-        <button class="h-fit min-h-control px-control py-1 rounded-control border border-accent bg-accent text-on-accent text-control hover:bg-accent-hover active:bg-accent-pressed disabled:bg-disabled-bg disabled:text-disabled-fg">
+        <button class="h-fit min-h-control px-control py-1 rounded-control border border-accent bg-accent text-on-accent text-control hover:bg-accent-hover active:bg-accent-pressed disabled:bg-disabled-bg disabled:text-disabled-fg dark:border-accent dark:bg-accent dark:text-on-accent dark:hover:bg-accent-hover dark:active:bg-accent-pressed dark:disabled:bg-disabled-bg dark:disabled:text-disabled-fg">
             {children()}
         </button>
     }
@@ -21,8 +21,8 @@ fn Field(
 ) -> impl IntoView {
     view! {
         <div class="flex flex-col w-full gap-2">
-            <span class="text-control text-primary">{label}</span>
-            <input class="w-full h-control px-3 rounded-control bg-surface text-body text-primary border border-control" />
+            <span class="text-control text-primary dark:text-primary">{label}</span>
+            <input class="w-full h-control px-3 rounded-control bg-surface text-body text-primary border border-control dark:bg-surface dark:text-primary dark:border-control" />
         </div>
     }
 }
@@ -37,7 +37,7 @@ fn Search(
             <div class="absolute left-[20px] top-[21px] w-[2px] h-[2px] bg-muted"></div>
             <div class="absolute left-[22px] top-[23px] w-[2px] h-[2px] bg-muted"></div>
             <div class="absolute left-[24px] top-[25px] w-[2px] h-[2px] bg-muted"></div>
-            <input class="w-full h-control pl-[36px] pr-3 rounded-control bg-subtle text-body text-primary border border-control" />
+            <input class="w-full h-control pl-[36px] pr-3 rounded-control bg-subtle text-body text-primary border border-control dark:bg-subtle dark:text-primary dark:border-control" />
         </div>
     }
 }
@@ -60,7 +60,7 @@ fn CheckRow(
     view! {
         <div class="flex flex-row items-center gap-2 h-control">
             {children()}
-            <span class="text-body text-primary">{label}</span>
+            <span class="text-body text-primary dark:text-primary">{label}</span>
             <button class="absolute inset-0 border-0 bg-transparent">" "</button>
         </div>
     }
@@ -69,13 +69,13 @@ fn CheckRow(
 #[component]
 fn CheckOn() -> impl IntoView {
     view! {
-        <div class="w-[18px] h-[18px] rounded-[4px] bg-accent">
-            <div class="absolute left-[4px] top-[9px] w-[2px] h-[2px] bg-on-accent"></div>
-            <div class="absolute left-[6px] top-[11px] w-[2px] h-[2px] bg-on-accent"></div>
-            <div class="absolute left-[8px] top-[9px] w-[2px] h-[3px] bg-on-accent"></div>
-            <div class="absolute left-[10px] top-[7px] w-[2px] h-[3px] bg-on-accent"></div>
-            <div class="absolute left-[12px] top-[5px] w-[2px] h-[3px] bg-on-accent"></div>
-            <div class="absolute left-[14px] top-[4px] w-[2px] h-[2px] bg-on-accent"></div>
+        <div class="w-[18px] h-[18px] rounded-[4px] bg-accent dark:bg-accent">
+            <div class="absolute left-[4px] top-[9px] w-[2px] h-[2px] bg-on-accent dark:bg-on-accent"></div>
+            <div class="absolute left-[6px] top-[11px] w-[2px] h-[2px] bg-on-accent dark:bg-on-accent"></div>
+            <div class="absolute left-[8px] top-[9px] w-[2px] h-[3px] bg-on-accent dark:bg-on-accent"></div>
+            <div class="absolute left-[10px] top-[7px] w-[2px] h-[3px] bg-on-accent dark:bg-on-accent"></div>
+            <div class="absolute left-[12px] top-[5px] w-[2px] h-[3px] bg-on-accent dark:bg-on-accent"></div>
+            <div class="absolute left-[14px] top-[4px] w-[2px] h-[2px] bg-on-accent dark:bg-on-accent"></div>
         </div>
     }
 }
@@ -83,7 +83,7 @@ fn CheckOn() -> impl IntoView {
 #[component]
 fn CheckOff() -> impl IntoView {
     view! {
-        <div class="w-[18px] h-[18px] rounded-[4px] bg-surface border border-control"></div>
+        <div class="w-[18px] h-[18px] rounded-[4px] bg-surface border border-control dark:bg-surface dark:border-control"></div>
     }
 }
 
@@ -93,10 +93,10 @@ fn SwitchOn(
 ) -> impl IntoView {
     view! {
         <div class="flex flex-row items-center gap-2 h-control">
-            <div class="flex flex-row items-center justify-end w-[40px] h-[24px] rounded-full bg-accent px-1">
-                <div class="w-[16px] h-[16px] rounded-full bg-surface"></div>
+            <div class="flex flex-row items-center justify-end w-[40px] h-[24px] rounded-full bg-accent px-1 dark:bg-accent">
+                <div class="w-[16px] h-[16px] rounded-full bg-surface dark:bg-surface"></div>
             </div>
-            <span class="text-body text-primary">{label}</span>
+            <span class="text-body text-primary dark:text-primary">{label}</span>
             <button class="absolute inset-0 border-0 bg-transparent">" "</button>
         </div>
     }
@@ -108,10 +108,10 @@ fn SwitchOff(
 ) -> impl IntoView {
     view! {
         <div class="flex flex-row items-center gap-2 h-control">
-            <div class="flex flex-row items-center w-[40px] h-[24px] rounded-full bg-subtle border border-control px-1">
-                <div class="w-[16px] h-[16px] rounded-full bg-surface border border-control"></div>
+            <div class="flex flex-row items-center w-[40px] h-[24px] rounded-full bg-subtle border border-control px-1 dark:bg-subtle dark:border-control">
+                <div class="w-[16px] h-[16px] rounded-full bg-surface border border-control dark:bg-surface dark:border-control"></div>
             </div>
-            <span class="text-body text-primary">{label}</span>
+            <span class="text-body text-primary dark:text-primary">{label}</span>
             <button class="absolute inset-0 border-0 bg-transparent">" "</button>
         </div>
     }
@@ -133,11 +133,11 @@ fn Slider(
 ) -> impl IntoView {
     view! {
         <div class="w-[240px] max-w-full h-control">
-            <div class="absolute left-0 top-[16px] z-[-1] w-full h-[4px] rounded-full bg-divider"></div>
-            <div class="absolute left-0 top-[16px] z-[-1] h-[4px] rounded-full bg-accent" bind:width="__slider__*2.24+8"></div>
+            <div class="absolute left-0 top-[16px] z-[-1] w-full h-[4px] rounded-full bg-divider dark:bg-divider"></div>
+            <div class="absolute left-0 top-[16px] z-[-1] h-[4px] rounded-full bg-accent dark:bg-accent" bind:width="__slider__*2.24+8"></div>
             <div class="flex flex-row items-center h-control">
                 <div class="h-[16px]" bind:width="__slider__*2.24"></div>
-                <div class="w-[16px] h-[16px] rounded-full bg-surface border border-control"></div>
+                <div class="w-[16px] h-[16px] rounded-full bg-surface border border-control dark:bg-surface dark:border-control"></div>
             </div>
             {children()}
         </div>
@@ -147,7 +147,7 @@ fn Slider(
 #[component]
 fn Overlay(children: Children) -> impl IntoView {
     view! {
-        <div class="absolute right-[16px] top-[64px] z-50 flex flex-col gap-2 w-[360px] max-w-full p-4 rounded-lg bg-surface border border-divider shadow-lg">
+        <div class="absolute right-[16px] top-[64px] z-50 flex flex-col gap-2 w-[360px] max-w-full p-4 rounded-lg bg-surface border border-divider shadow-lg dark:bg-surface dark:border-divider">
             {children()}
         </div>
     }

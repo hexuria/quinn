@@ -1569,12 +1569,14 @@ fn variant_class(value: Option<&PropVal>) -> Option<&'static str> {
     };
     match name.as_str() {
         "secondary" => Some(
-            "bg-surface text-primary border-control hover:bg-surface-hover active:bg-surface-pressed",
+            "bg-surface text-primary border-control hover:bg-surface-hover active:bg-surface-pressed dark:bg-surface dark:text-primary dark:border-control dark:hover:bg-surface-hover dark:active:bg-surface-pressed",
         ),
-        "ghost" => Some("bg-transparent text-primary border-0 hover:bg-subtle active:bg-surface-pressed"),
-        "danger" | "destructive" => {
-            Some("bg-danger-bg text-danger border-danger hover:bg-danger-bg active:bg-surface-pressed")
-        }
+        "ghost" => Some(
+            "bg-transparent text-primary border-0 hover:bg-subtle active:bg-surface-pressed dark:text-primary dark:hover:bg-subtle dark:active:bg-surface-pressed",
+        ),
+        "danger" | "destructive" => Some(
+            "bg-danger-bg text-danger border-danger hover:bg-danger-bg active:bg-surface-pressed dark:bg-danger-bg dark:text-danger dark:border-danger dark:hover:bg-danger-bg dark:active:bg-surface-pressed",
+        ),
         _ => None,
     }
 }

@@ -101,6 +101,21 @@ fn lower_expr_stmt(expr: &Expr, signals: &[Signal]) -> Result<Vec<HandlerStmt>, 
         if path_ends(&call.func, &["toggle_theme"]) {
             return Ok(vec![HandlerStmt::ToggleTheme]);
         }
+        if path_ends(&call.func, &["set_density"]) {
+            let Some(arg) = call.args.first() else {
+                return Err("set_density needs 0, 1, or 2".into());
+            };
+            let Expr::Lit(lit) = arg else {
+                return Err("set_density needs an integer".into());
+            };
+            let syn::Lit::Int(value) = &lit.lit else {
+                return Err("set_density needs an integer".into());
+            };
+            let n = value
+                .base10_parse::<i64>()
+                .map_err(|err| err.to_string())?;
+            return Ok(vec![HandlerStmt::SetDensity(n)]);
+        }
     }
     let Expr::MethodCall(call) = expr else {
         return Err(reject_expr(expr));

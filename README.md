@@ -2,7 +2,7 @@
 
 Leptos-style components, rendered by Makepad. There is no WebView and no second layout engine.
 
-The showcase follows Apple’s macOS Human Interface Guidelines. Light and dark, at 1440×900:
+The showcase is the Notes, Table, Settings, and component gallery window. Its visual contract is [docs/design-system-prd.md](docs/design-system-prd.md): slate surfaces, accent `#1D4ED8`, and the density and shell rules in [docs/design-system.md](docs/design-system.md). Light and dark, at 1440×900:
 
 ![Notes, light](docs/images/notes-light.png)
 
@@ -54,7 +54,7 @@ export LIBGL_ALWAYS_SOFTWARE=1
 cargo run -p counter --release -- --hot
 ```
 
-Edit `examples/counter/view.rs` while that process is up. The same command works for `conditional`, `keyed-list`, `form`, `retain`, `tailwind-gallery`, `app-shell`, `async-dashboard`, and `showcase`. Saving `src/main.rs` still rebuilds. `baseline-counter` and `probe-widget-lifecycle` are hand-written Makepad programs; they have no `view.rs`. `showcase` is the macOS window (sidebar, toolbar, content, inspector) and is the place to look at the design system. `async-dashboard` and the other themed examples call `quinn::drive_shell` so resources, the dark flag, and the window width update without a rebuild.
+Edit `examples/counter/view.rs` while that process is up. The same command works for `conditional`, `keyed-list`, `form`, `retain`, `tailwind-gallery`, `app-shell`, `async-dashboard`, and `showcase`. Saving `src/main.rs` still rebuilds. `baseline-counter` and `probe-widget-lifecycle` are hand-written Makepad programs; they have no `view.rs`. `showcase` is the Notes window (navigation, collection, editor, inspector, and the component gallery) and is the place to look at the design system. `async-dashboard` and the other themed examples call `quinn::drive_shell` so resources, the dark flag, and the window width update without a rebuild.
 
 `xvfb-run -a cargo run -p counter --release` still starts a window when you are not reloading. Drop `xvfb-run -a` if `DISPLAY` is already a real X server. On macOS, leave both GPU variables unset and follow [docs/TESTING_ON_MACOS.md](docs/TESTING_ON_MACOS.md).
 
@@ -73,7 +73,8 @@ Other harness variables, read by `counter` and `baseline-counter`:
 
 ## Layout of the workspace
 
-- `crates/styles` — utility / inline style subset. Apple’s macOS type scale and system colors, plus the Tailwind v3 palette. See [docs/design-system.md](docs/design-system.md).
+- `crates/styles` — semantic tokens, type scale, density, and shell breakpoints, plus the Tailwind palette. See [docs/design-system.md](docs/design-system.md).
+- `crates/ui` — component library (`Button`, `Field`, `NavRow`, and the rest). `components.rs` is authoring source. See [docs/components.md](docs/components.md).
 - `crates/reactive` — upstream `reactive_graph`
 - `crates/core` — owners, surface, lifecycle tests
 - `crates/lower` — lowers `view.rs` (`Show`, `For`, inputs, clicks) into Makepad script
@@ -86,7 +87,9 @@ Other harness variables, read by `counter` and `baseline-counter`:
 
 ## Docs
 
-- [Design system](docs/design-system.md)
+- [Design system PRD](docs/design-system-prd.md)
+- [Token reference](docs/design-system.md)
+- [Component specs](docs/components.md)
 - [Research](docs/research.md)
 - [Architecture](docs/architecture.md)
 - [Decisions](docs/decisions.md)

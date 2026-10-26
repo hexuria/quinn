@@ -21,10 +21,76 @@ pub fn is_dark() -> bool {
 }
 
 pub fn color(name: &str) -> Option<Rgba> {
+    if let Some(color) = semantic(name, is_dark()) {
+        return Some(color);
+    }
     if let Some(color) = apple(name, is_dark()) {
         return Some(color);
     }
     tailwind(name)
+}
+
+/// Quinn semantic colors. Light and dark are named pairs from the design
+/// system, not an inversion of each other. Checked before the Apple palette
+/// so `accent` is `#1D4ED8` / `#93C5FD` rather than system blue.
+fn semantic(name: &str, dark: bool) -> Option<Rgba> {
+    Some(match (name, dark) {
+        ("canvas", false) => Rgba::new(248, 250, 252),
+        ("canvas", true) => Rgba::new(15, 23, 42),
+        ("surface", false) => Rgba::new(255, 255, 255),
+        ("surface", true) => Rgba::new(17, 24, 39),
+        ("subtle", false) => Rgba::new(241, 245, 249),
+        ("subtle", true) => Rgba::new(30, 41, 59),
+        ("raised", false) => Rgba::new(255, 255, 255),
+        ("raised", true) => Rgba::new(30, 41, 59),
+        ("primary", false) => Rgba::new(15, 23, 42),
+        ("primary", true) => Rgba::new(248, 250, 252),
+        ("secondary", false) => Rgba::new(71, 85, 105),
+        ("secondary", true) => Rgba::new(203, 213, 225),
+        ("muted", false) => Rgba::new(95, 111, 133),
+        ("muted", true) => Rgba::new(148, 163, 184),
+        ("divider", false) => Rgba::new(203, 213, 225),
+        ("divider", true) => Rgba::new(51, 65, 85),
+        ("control", false) => Rgba::new(100, 116, 139),
+        ("control", true) => Rgba::new(148, 163, 184),
+        ("accent", false) => Rgba::new(29, 78, 216),
+        ("accent", true) => Rgba::new(147, 197, 253),
+        ("on-accent", false) => Rgba::new(255, 255, 255),
+        ("on-accent", true) => Rgba::new(15, 23, 42),
+        ("selection", false) => Rgba::new(219, 234, 254),
+        ("selection", true) => Rgba::new(30, 58, 138),
+        ("on-selection", false) => Rgba::new(30, 58, 138),
+        ("on-selection", true) => Rgba::new(239, 246, 255),
+        ("danger", false) => Rgba::new(185, 28, 28),
+        ("danger", true) => Rgba::new(252, 165, 165),
+        ("success", false) => Rgba::new(22, 101, 52),
+        ("success", true) => Rgba::new(134, 239, 172),
+        ("warning", false) => Rgba::new(146, 64, 14),
+        ("warning", true) => Rgba::new(253, 230, 138),
+        ("accent-hover", false) => Rgba::new(30, 64, 175),
+        ("accent-hover", true) => Rgba::new(191, 219, 254),
+        ("accent-pressed", false) => Rgba::new(30, 58, 138),
+        ("accent-pressed", true) => Rgba::new(219, 234, 254),
+        ("surface-hover", false) => Rgba::new(241, 245, 249),
+        ("surface-hover", true) => Rgba::new(30, 41, 59),
+        ("surface-pressed", false) => Rgba::new(226, 232, 240),
+        ("surface-pressed", true) => Rgba::new(51, 65, 85),
+        ("disabled-bg", false) => Rgba::new(226, 232, 240),
+        ("disabled-bg", true) => Rgba::new(30, 41, 59),
+        ("disabled-fg", false) => Rgba::new(71, 85, 105),
+        ("disabled-fg", true) => Rgba::new(148, 163, 184),
+        ("danger-bg", false) => Rgba::new(254, 226, 226),
+        ("danger-bg", true) => Rgba::new(69, 10, 10),
+        ("success-bg", false) => Rgba::new(220, 252, 231),
+        ("success-bg", true) => Rgba::new(5, 46, 22),
+        ("warning-bg", false) => Rgba::new(254, 243, 199),
+        ("warning-bg", true) => Rgba::new(69, 26, 3),
+        ("focus", false) => Rgba::new(29, 78, 216),
+        ("focus", true) => Rgba::new(147, 197, 253),
+        ("scrim", false) => rgba(15, 23, 42, 128),
+        ("scrim", true) => rgba(0, 0, 0, 153),
+        _ => return None,
+    })
 }
 
 fn rgba(r: u8, g: u8, b: u8, a: u8) -> Rgba {
@@ -35,8 +101,8 @@ fn rgba(r: u8, g: u8, b: u8, a: u8) -> Rgba {
 /// Guidelines system palette. Alpha is the published label and fill opacity.
 fn apple(name: &str, dark: bool) -> Option<Rgba> {
     Some(match (name, dark) {
-        ("system-blue" | "accent" | "accent-blue", false) => Rgba::new(0, 122, 255),
-        ("system-blue" | "accent" | "accent-blue", true) => Rgba::new(10, 132, 255),
+        ("system-blue" | "accent-blue", false) => Rgba::new(0, 122, 255),
+        ("system-blue" | "accent-blue", true) => Rgba::new(10, 132, 255),
         ("system-green", false) => Rgba::new(52, 199, 89),
         ("system-green", true) => Rgba::new(48, 209, 88),
         ("system-indigo", false) => Rgba::new(88, 86, 214),

@@ -935,6 +935,7 @@ fn seed_lines(model: &Model, shell: &Shell) -> Vec<String> {
     }
     lines.push(format!("quinn_width: {}.", shell.width));
     lines.push("quinn_dark: 0".into());
+    lines.push("quinn_density: 1".into());
     if !model.jobs.is_empty() {
         lines.push("quinn_cancelled: 0".into());
     }
@@ -2386,6 +2387,9 @@ fn emit_stmts(stmts: &[HandlerStmt], row: Option<&RowEnv<'_>>) -> Vec<String> {
                         .into(),
                 );
             }
+            HandlerStmt::SetDensity(n) => {
+                lines.push(format!("state.quinn_density = {n}"));
+            }
             HandlerStmt::If {
                 cond,
                 then_branch,
@@ -3116,7 +3120,7 @@ fn layout_pairs(style: &Style, container: bool) -> Vec<(String, String)> {
         if let Some(gap) = style.cross_gap() {
             lines.push(("row_gap".into(), script_num(gap)));
         }
-        if let Some(padding) = inset_script(style.padding) {
+        if let Some(padding) = padding_script(style) {
             lines.push(("padding".into(), padding));
         }
         push_clip(style, &mut lines);
@@ -3137,7 +3141,7 @@ fn layout_pairs(style: &Style, container: bool) -> Vec<(String, String)> {
         return lines;
     }
     if !lay_out {
-        if let Some(padding) = inset_script(style.padding) {
+        if let Some(padding) = padding_script(style) {
             lines.push(("padding".into(), padding));
         }
         push_clip(style, &mut lines);
@@ -3162,7 +3166,7 @@ fn layout_pairs(style: &Style, container: bool) -> Vec<(String, String)> {
             lines.push(("wrap_spacing".into(), script_num(gap)));
         }
     }
-    if let Some(padding) = inset_script(style.padding) {
+    if let Some(padding) = padding_script(style) {
         lines.push(("padding".into(), padding));
     }
     if let Some(align) = align_script(style) {
@@ -3210,7 +3214,9 @@ fn walk_pairs(style: &Style) -> Vec<(String, String)> {
     if let Some(bound) = style.max_width {
         lines.push(("max_width".into(), bound_script(bound)));
     }
-    if let Some(bound) = style.min_height {
+    if style.min_control {
+        lines.push(("min_height".into(), density_height(28.0, 36.0, 48.0)));
+    } else if let Some(bound) = style.min_height {
         lines.push(("min_height".into(), bound_script(bound)));
     }
     if let Some(bound) = style.max_height {
@@ -3226,11 +3232,20 @@ fn walk_pairs(style: &Style) -> Vec<(String, String)> {
 }
 
 fn focus_ring() -> &'static str {
-    "if state.quinn_dark == 1 { #x0a84ff } else { #x007aff }"
+    "if state.quinn_dark == 1 { #x93c5fd } else { #x1d4ed8 }"
 }
 
 fn placeholder_ink() -> String {
-    "if state.quinn_dark == 1 { #ebebf54d } else { #3c3c434d }".into()
+    "if state.quinn_dark == 1 { #x94a3b8 } else { #x5f6f85 }".into()
+}
+
+fn density_height(compact: f64, standard: f64, touch: f64) -> String {
+    format!(
+        "if state.quinn_density == 2 {{ {} }} else {{ if state.quinn_density == 0 {{ {} }} else {{ {} }} }}",
+        script_num(touch),
+        script_num(compact),
+        script_num(standard)
+    )
 }
 
 /// Makepad `GaussRoundedView` samples the window scene (a render-to-texture
@@ -3462,9 +3477,9 @@ fn paint_pairs(style: &Style, tag: Tag) -> Vec<(String, String)> {
         mirror_state(&mut lines, "draw_text.color_focus", style.focus_fg.or(style.color));
     }
     if tag != Tag::Div {
-        let size = style.font_size.unwrap_or(13.0);
+        let size = style.font_size.unwrap_or(14.0);
         let weight = style.font_weight.unwrap_or(400.0);
-        let leading = style.line_height.unwrap_or(16.0 / 13.0);
+        let leading = style.line_height.unwrap_or(20.0 / 14.0);
         // SF Pro cannot be redistributed. Makepad ships Inter, which is the
         // fallback face. Weight is the Inter variable axis.
         lines.push((
@@ -3559,7 +3574,22 @@ fn size_script(size: SizeSpec) -> String {
             script_num(shrink),
             script_num(basis)
         ),
+        SizeSpec::Control => density_height(28.0, 36.0, 48.0),
+        SizeSpec::Bar => density_height(48.0, 48.0, 56.0),
     }
+}
+
+fn padding_script(style: &Style) -> Option<String> {
+    if style.control_pad {
+        let (_, top, _, bottom) = style.padding.resolve();
+        let x = density_height(8.0, 12.0, 16.0);
+        return Some(format!(
+            "Inset{{left: {x} top: {} right: {x} bottom: {}}}",
+            script_num(top),
+            script_num(bottom)
+        ));
+    }
+    inset_script(style.padding)
 }
 
 fn bound_script(bound: quinn_styles::Bound) -> String {

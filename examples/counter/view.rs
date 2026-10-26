@@ -12,20 +12,20 @@ fn Counter() -> impl IntoView {
     quinn::set_inspector(move || count.get_untracked().to_string());
 
     view! {
-        <div class="flex flex-col h-full bg-window-background dark:bg-window-background">
-            <div class="flex flex-row items-center h-[52px] px-4 gap-3">
-                <span class="text-headline text-label dark:text-label">"Counter"</span>
+        <div class="flex flex-col h-full bg-canvas dark:bg-canvas">
+            <div class="flex flex-row items-center h-toolbar px-4 gap-2 bg-surface dark:bg-surface">
+                <span class="text-section text-primary dark:text-primary">"Counter"</span>
                 <div class="flex-1"></div>
-                <button class="px-3 h-control-large rounded-control text-body text-system-blue border-0 bg-transparent dark:text-system-blue" on:click=move |_| { toggle_theme(); }>"Theme"</button>
+                <button class="h-control px-3 rounded-control text-control text-accent border-0 bg-transparent dark:text-accent" on:click=move |_| { toggle_theme(); }>"Theme"</button>
             </div>
-            <div class="h-[1px] bg-separator dark:bg-separator"></div>
-            <div class="flex flex-col flex-1 items-center justify-center p-8">
-                <div class="flex flex-col gap-3 p-6 w-[420px] rounded-window bg-system-background shadow-control dark:bg-system-background">
-                    <span class="text-footnote text-label-secondary dark:text-label-secondary">"COUNT"</span>
-                    <h1 class="text-large-title text-label dark:text-label">"Counter: " {move || count.get()}</h1>
-                    <span class="text-body text-label-secondary dark:text-label-secondary">"Each click adds one. The window also ticks while it is open."</span>
+            <div class="h-[1px] bg-divider dark:bg-divider"></div>
+            <div class="flex flex-col flex-1 items-center justify-center p-6">
+                <div class="flex flex-col gap-4 p-6 w-[420px] max-w-full rounded-[8px] bg-surface border border-divider dark:bg-surface dark:border-divider">
+                    <span class="text-caption text-secondary dark:text-secondary">"Count"</span>
+                    <h1 class="text-page text-primary dark:text-primary">"Counter: " {move || count.get()}</h1>
+                    <span class="text-body text-secondary dark:text-secondary">"Each click adds one. The window also ticks while it is open."</span>
                     <div class="flex flex-row gap-2">
-                        <button class="px-3 h-control-large rounded-control text-body bg-system-blue text-white dark:bg-system-blue" on:click=move |_| {
+                        <button class="h-control px-3 rounded-control text-control bg-accent text-on-accent border border-accent dark:bg-accent dark:text-on-accent dark:border-accent" on:click=move |_| {
                             set_count.update(|n| *n += 1);
                         }>"Increment"</button>
                     </div>

@@ -11,3 +11,4 @@ path = "src/main.rs"
 
 [dependencies]
 quinn = { path = "../../crates/quinn" }
+quinn-ui = { path = "../../crates/ui" }

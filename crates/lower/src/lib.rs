@@ -37,6 +37,16 @@ pub struct Shell {
 
 /// Watch `source` and rewrite `output` when the view changes.
 pub fn spawn_watch(source: impl Into<PathBuf>, output: impl Into<PathBuf>, shell: Shell) {
+    spawn_watch_with(source, output, shell, String::new());
+}
+
+/// Like [`spawn_watch`], but component calls resolve against `library` source.
+pub fn spawn_watch_with(
+    source: impl Into<PathBuf>,
+    output: impl Into<PathBuf>,
+    shell: Shell,
+    library: String,
+) {
     let source = source.into();
     let output = output.into();
     std::thread::spawn(move || {
@@ -50,7 +60,7 @@ pub fn spawn_watch(source: impl Into<PathBuf>, output: impl Into<PathBuf>, shell
             std::thread::sleep(Duration::from_millis(40));
             last = mtime(&source);
             match std::fs::read_to_string(&source) {
-                Ok(text) => match lower_file(&text, shell) {
+                Ok(text) => match lower_file_with(&text, shell, &library) {
                     Ok(file) => write_if_changed(&output, &file),
                     Err(err) => eprintln!("quinn lower failed: {err}"),
                 },
@@ -64,10 +74,20 @@ static WATCH_ARMED: AtomicBool = AtomicBool::new(false);
 
 /// Start [`spawn_watch`] once per process. `script_mod` runs again on reload.
 pub fn watch_once(source: impl Into<PathBuf>, output: impl Into<PathBuf>, shell: Shell) {
+    watch_once_with(source, output, shell, String::new());
+}
+
+/// Start [`spawn_watch_with`] once per process.
+pub fn watch_once_with(
+    source: impl Into<PathBuf>,
+    output: impl Into<PathBuf>,
+    shell: Shell,
+    library: String,
+) {
     if WATCH_ARMED.swap(true, Ordering::SeqCst) {
         return;
     }
-    spawn_watch(source, output, shell);
+    spawn_watch_with(source, output, shell, library);
 }
 
 pub fn view_path(manifest_dir: &str) -> PathBuf {
@@ -80,9 +100,19 @@ pub fn hot_ui_path(manifest_dir: &str) -> PathBuf {
 
 /// Lower `source` into `output` when the text changed.
 pub fn write_lowered(source: &Path, output: &Path, shell: Shell) -> Result<(), String> {
+    write_lowered_with(source, output, shell, "")
+}
+
+/// Lower `source` with `library` component source merged in front of it.
+pub fn write_lowered_with(
+    source: &Path,
+    output: &Path,
+    shell: Shell,
+    library: &str,
+) -> Result<(), String> {
     let text = std::fs::read_to_string(source)
         .map_err(|err| format!("read {}: {err}", source.display()))?;
-    let file = lower_file(&text, shell)?;
+    let file = lower_file_with(&text, shell, library)?;
     if let Some(parent) = output.parent() {
         std::fs::create_dir_all(parent)
             .map_err(|err| format!("mkdir {}: {err}", parent.display()))?;
@@ -113,7 +143,11 @@ fn write_if_changed(path: &Path, body: &str) {
 }
 
 pub fn lower_file(source: &str, shell: Shell) -> Result<String, String> {
-    let model = parse_model(source)?;
+    lower_file_with(source, shell, "")
+}
+
+pub fn lower_file_with(source: &str, shell: Shell, library: &str) -> Result<String, String> {
+    let model = parse::parse_model_with(source, library)?;
     let mut unknown = Vec::new();
     collect_unknown(&model.root_class, &mut unknown);
     for node in &model.nodes {
@@ -186,6 +220,10 @@ fn walk_el(el: &El, unknown: &mut Vec<String>) {
 
 pub fn parse_model(source: &str) -> Result<Model, String> {
     parse::parse_model(source)
+}
+
+pub fn parse_model_with(source: &str, library: &str) -> Result<Model, String> {
+    parse::parse_model_with(source, library)
 }
 
 #[cfg(test)]
@@ -548,7 +586,15 @@ mod tests {
         for (rel, needle) in cases {
             let source = std::fs::read_to_string(root.join(rel))
                 .unwrap_or_else(|err| panic!("read {rel}: {err}"));
-            let file = lower_file(&source, shell()).unwrap_or_else(|err| panic!("{rel}: {err}"));
+            let library = if source.contains("quinn_ui::components") {
+                let path = root.join("crates/ui/components.rs");
+                std::fs::read_to_string(&path)
+                    .unwrap_or_else(|err| panic!("read {}: {err}", path.display()))
+            } else {
+                String::new()
+            };
+            let file = lower_file_with(&source, shell(), &library)
+                .unwrap_or_else(|err| panic!("{rel}: {err}"));
             assert!(
                 file.contains(needle),
                 "{rel} script missing {needle}:\n{file}"
@@ -557,6 +603,57 @@ mod tests {
             assert!(extracted.code.contains("#(0)"), "{rel}");
             assert_eq!(extracted.code.matches("script_mod").count(), 0);
         }
+    }
+
+    #[test]
+    fn library_button_forwards_click_variant_and_field() {
+        let library = r#"
+            #[component]
+            fn Button(
+                #[prop(default = "primary")] variant: String,
+                #[prop(optional, default = false)] disabled: bool,
+                children: Children,
+            ) -> impl IntoView {
+                view! {
+                    <button class="h-control min-h-control px-control bg-accent text-on-accent border border-accent rounded-control">{children()}</button>
+                }
+            }
+            #[component]
+            fn Field(
+                #[prop(into)] label: String,
+                #[prop(optional, into, default = "")] placeholder: String,
+            ) -> impl IntoView {
+                view! {
+                    <div class="flex flex-col gap-2 w-full">
+                        <span class="text-control text-primary">{label}</span>
+                        <input class="w-full h-control px-3 rounded-control bg-surface text-body text-primary border border-control" />
+                    </div>
+                }
+            }
+        "#;
+        let source = r#"
+            use quinn_ui::components::*;
+            #[component]
+            fn App() -> impl IntoView {
+                let (n, set_n) = signal(0i64);
+                let (name, set_name) = signal(String::new());
+                view! {
+                    <div class="flex flex-col gap-6 bg-canvas">
+                        <Button variant="secondary" on:click=move |_| { set_n.update(|v| *v += 1); }>"Save"</Button>
+                        <Button disabled=true>"Waiting"</Button>
+                        <Field label="Folder" placeholder="Folder name" bind:value=name />
+                    </div>
+                }
+            }
+        "#;
+        let file = lower_file_with(source, shell(), library).unwrap();
+        assert!(file.contains("state.n += 1"), "{file}");
+        assert!(file.contains("on_click"), "{file}");
+        assert!(file.contains("quinn_density"), "{file}");
+        assert!(file.contains("empty_text: \"Folder name\""), "{file}");
+        assert!(file.contains("state.name = text"), "{file}");
+        assert!(file.contains("#xffffff"), "{file}");
+        assert!(file.contains("enabled: false"), "{file}");
     }
 
     const P0: &str = r#"

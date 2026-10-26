@@ -121,6 +121,10 @@ pub enum SizeSpec {
         shrink: f64,
         basis: f64,
     },
+    /// Control height from `state.quinn_density`: compact 28, standard 36, touch 48.
+    Control,
+    /// Top bar: 48 on compact and standard, 56 on touch.
+    Bar,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -229,6 +233,10 @@ pub struct Style {
     pub focus_fg: Option<Rgba>,
     /// Bare `disabled` class: the button starts in the disabled animator state.
     pub disabled: bool,
+    /// `px-control`: horizontal padding follows density (8 / 12 / 16).
+    pub control_pad: bool,
+    /// `min-h-control`: minimum height follows the control density scale.
+    pub min_control: bool,
     pub border_width: Option<f64>,
     pub border_color: Option<Rgba>,
     pub radius: Option<f64>,
@@ -381,6 +389,12 @@ impl Style {
         if over.disabled {
             self.disabled = true;
         }
+        if over.control_pad {
+            self.control_pad = true;
+        }
+        if over.min_control {
+            self.min_control = true;
+        }
         if over.border_width.is_some() {
             self.border_width = over.border_width;
         }
@@ -514,6 +528,12 @@ fn strip_known_prefixes(token: &str) -> &str {
         } else if let Some(next) = rest.strip_prefix("lg:") {
             next
         } else if let Some(next) = rest.strip_prefix("xl:") {
+            next
+        } else if let Some(next) = rest.strip_prefix("bp800:") {
+            next
+        } else if let Some(next) = rest.strip_prefix("bp1120:") {
+            next
+        } else if let Some(next) = rest.strip_prefix("bp1440:") {
             next
         } else if let Some(next) = rest.strip_prefix("hover:") {
             next
@@ -681,16 +701,29 @@ fn apply_token(style: &mut Style, token: &str) {
         "text-title2" => type_scale(style, 17.0, 400.0, 22.0 / 17.0),
         "text-title3" => type_scale(style, 15.0, 400.0, 20.0 / 15.0),
         "text-headline" => type_scale(style, 13.0, 600.0, 16.0 / 13.0),
-        "text-body" => type_scale(style, 13.0, 400.0, 16.0 / 13.0),
+        "text-body" => type_scale(style, 14.0, 400.0, 20.0 / 14.0),
+        "text-control" => type_scale(style, 14.0, 500.0, 20.0 / 14.0),
+        "text-reading" => type_scale(style, 16.0, 400.0, 24.0 / 16.0),
+        "text-section" => type_scale(style, 18.0, 600.0, 24.0 / 18.0),
+        "text-page" => type_scale(style, 24.0, 600.0, 32.0 / 24.0),
+        "text-display" => type_scale(style, 32.0, 600.0, 40.0 / 32.0),
         "text-callout" => type_scale(style, 12.0, 400.0, 15.0 / 12.0),
         "text-subheadline" => type_scale(style, 11.0, 400.0, 14.0 / 11.0),
         "text-footnote" => type_scale(style, 10.0, 400.0, 13.0 / 10.0),
-        "text-caption" => type_scale(style, 10.0, 400.0, 13.0 / 10.0),
+        "text-caption" => type_scale(style, 12.0, 400.0, 16.0 / 12.0),
         "text-caption2" => type_scale(style, 10.0, 500.0, 13.0 / 10.0),
         "h-control-mini" => set_height(style, SizeSpec::Px(16.0)),
         "h-control-small" => set_height(style, SizeSpec::Px(18.0)),
-        "h-control" | "h-control-regular" => set_height(style, SizeSpec::Px(22.0)),
+        "h-control" | "h-control-regular" => set_height(style, SizeSpec::Control),
         "h-control-large" => set_height(style, SizeSpec::Px(28.0)),
+        "w-control" => set_width(style, SizeSpec::Control),
+        "h-toolbar" => set_height(style, SizeSpec::Bar),
+        "min-h-control" => style.min_control = true,
+        "px-control" => {
+            style.control_pad = true;
+            style.padding.left = Some(12.0);
+            style.padding.right = Some(12.0);
+        },
         "rounded-control-sm" => style.radius = Some(5.0),
         "rounded-control" => style.radius = Some(6.0),
         "rounded-control-lg" => style.radius = Some(8.0),
@@ -1007,7 +1040,15 @@ fn shell_token(token: &str) -> Option<ShellWhen> {
             rest = next;
             continue;
         }
-        let bp = [("sm:", 640.0), ("md:", 768.0), ("lg:", 1024.0), ("xl:", 1280.0)];
+        let bp = [
+            ("sm:", 640.0),
+            ("md:", 768.0),
+            ("lg:", 1024.0),
+            ("xl:", 1280.0),
+            ("bp800:", 800.0),
+            ("bp1120:", 1120.0),
+            ("bp1440:", 1440.0),
+        ];
         let mut hit = false;
         for (prefix, width) in bp {
             if let Some(next) = rest.strip_prefix(prefix) {
@@ -1495,8 +1536,38 @@ mod tests {
         let headline = parse_classes("text-headline h-control-regular rounded-control");
         assert_eq!(headline.font_size, Some(13.0));
         assert_eq!(headline.font_weight, Some(600.0));
-        assert_eq!(headline.height, Some(SizeSpec::Px(22.0)));
+        assert_eq!(headline.height, Some(SizeSpec::Control));
         assert_eq!(headline.radius, Some(6.0));
+        let body = parse_classes("text-body text-control text-reading text-section text-page text-display text-caption");
+        assert_eq!(parse_classes("text-body").font_size, Some(14.0));
+        assert_eq!(parse_classes("text-control").font_weight, Some(500.0));
+        assert_eq!(parse_classes("text-reading").font_size, Some(16.0));
+        assert_eq!(parse_classes("text-section").font_size, Some(18.0));
+        assert_eq!(parse_classes("text-page").font_size, Some(24.0));
+        assert_eq!(parse_classes("text-display").font_size, Some(32.0));
+        assert_eq!(parse_classes("text-caption").font_size, Some(12.0));
+        let _ = body;
+        let accent = parse_classes("bg-accent text-on-accent border-control");
+        assert_eq!(accent.background, Some(Rgba::new(29, 78, 216)));
+        assert_eq!(accent.color, Some(Rgba::new(255, 255, 255)));
+        assert_eq!(accent.border_color, Some(Rgba::new(100, 116, 139)));
+        let canvas = parse_classes_in("bg-canvas text-secondary", true);
+        assert_eq!(canvas.background, Some(Rgba::new(15, 23, 42)));
+        assert_eq!(canvas.color, Some(Rgba::new(203, 213, 225)));
+        assert_eq!(
+            parse_classes_in("text-muted", true).color,
+            Some(Rgba::new(148, 163, 184))
+        );
+        let pad = parse_classes("px-control min-h-control h-toolbar w-control");
+        assert!(pad.control_pad);
+        assert!(pad.min_control);
+        assert_eq!(pad.height, Some(SizeSpec::Bar));
+        assert_eq!(pad.width, Some(SizeSpec::Control));
+        let bp = shell_variants("bp800:w-[64px] bp1120:w-[224px] bp1440:flex");
+        assert_eq!(bp[0].min_width, Some(800.0));
+        assert_eq!(bp[1].min_width, Some(1120.0));
+        assert_eq!(bp[2].min_width, Some(1440.0));
+        assert!(unknown_classes("bg-canvas text-primary bp800:bg-surface").is_empty());
         assert!(unknown_classes("grid flex-nowrap to-r").is_empty());
         let hairline = parse_classes("border-0");
         assert_eq!(hairline.border_width, Some(0.0));

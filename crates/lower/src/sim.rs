@@ -75,6 +75,7 @@ impl Sim {
             ctx.insert(key.clone(), ctx_literal(expr));
         }
         state.insert("quinn_dark".into(), 0);
+        state.insert("quinn_density".into(), 1);
         for job in &model.jobs {
             let phase = match job.kind {
                 JobKind::Action => "idle",
@@ -992,6 +993,9 @@ impl Sim {
                 HandlerStmt::ToggleTheme => {
                     let dark = self.state.get("quinn_dark").copied().unwrap_or(0);
                     self.state.insert("quinn_dark".into(), if dark == 0 { 1 } else { 0 });
+                }
+                HandlerStmt::SetDensity(n) => {
+                    self.state.insert("quinn_density".into(), *n);
                 }
                 HandlerStmt::If {
                     cond,

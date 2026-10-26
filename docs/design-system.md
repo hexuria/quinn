@@ -1,154 +1,99 @@
-# Design system
+# Quinn design system
 
-Quinn’s look is Apple’s [Human Interface Guidelines for macOS](https://developer.apple.com/design/human-interface-guidelines/designing-for-macos). One system, used as published: [typography](https://developer.apple.com/design/human-interface-guidelines/typography), [color](https://developer.apple.com/design/human-interface-guidelines/color), [materials](https://developer.apple.com/design/human-interface-guidelines/materials), [layout](https://developer.apple.com/design/human-interface-guidelines/layout), and the standard controls ([buttons](https://developer.apple.com/design/human-interface-guidelines/buttons), [toggles](https://developer.apple.com/design/human-interface-guidelines/toggles), [text fields](https://developer.apple.com/design/human-interface-guidelines/text-fields), [sidebars](https://developer.apple.com/design/human-interface-guidelines/sidebars)).
+The contract is [design-system-prd.md](design-system-prd.md). This page is the token reference the utilities actually implement. Component anatomy and props are in [components.md](components.md). The audit of the previous showcase is [audit-ff86f73.md](audit-ff86f73.md).
 
-The names are Tailwind-shaped utilities in `quinn-styles` (`text-headline`, `bg-system-background`, `text-label-secondary`, `accent-blue`). The full Tailwind v3 hue palette (22 hues, steps 50–950, plus `white`, `black`, and `transparent`) stays available. An unknown token fails the lower (`unknown class: …`) and the previous script stays on screen.
+`quinn-styles` maps utility classes onto Makepad layout fields. An unknown class fails the lower (`unknown class: …`) and the previous script stays on screen. The Tailwind v3 hue palette remains, so older examples keep compiling. Apple system colors (`bg-system-blue`, `text-label`, `bg-window-background`) also remain as a compatibility leftover. New screens use the semantic names below. `accent` is the slate accent, not system blue. `accent-blue` is the old system blue.
 
-`examples/showcase` is the native window: sidebar, toolbar, content, inspector, in light and dark.
-
-![Notes, light appearance](images/notes-light.png)
-
-![Settings, light appearance](images/settings-light.png)
-
-![Notes, dark appearance](images/notes-dark.png)
-
-![Settings, dark appearance](images/settings-dark.png)
-
-## Type
-
-SF Pro cannot be redistributed. Every text node uses the variable Inter that Makepad already ships at `makepad_widgets/resources/Inter.ttf`. Example binaries pass `makepad_platform::INTER_FONT_ASSET` to `app_main!`. Weight is the `wght` axis. There is no CSS inheritance: each text node sets its own `text-*` color.
-
-The scale is the macOS text styles, in points. Line spacing is line-height / size.
-
-| Utility | Style | Size | Weight | Line |
-| --- | --- | --- | --- | --- |
-| `text-large-title` | Large Title | 26 | 400 | 32 |
-| `text-title1`, `text-title` | Title 1 | 22 | 400 | 26 |
-| `text-title2` | Title 2 | 17 | 400 | 22 |
-| `text-title3` | Title 3 | 15 | 400 | 20 |
-| `text-headline` | Headline | 13 | 600 | 16 |
-| `text-body` | Body | 13 | 400 | 16 |
-| `text-callout` | Callout | 12 | 400 | 15 |
-| `text-subheadline` | Subheadline | 11 | 400 | 14 |
-| `text-footnote` | Footnote | 10 | 400 | 13 |
-| `text-caption` | Caption 1 | 10 | 400 | 13 |
-| `text-caption2` | Caption 2 | 10 | 500 | 13 |
-
-A later `font-bold` / `font-semibold` / `font-medium` overrides the weight. `text-xs` through `text-3xl` are still the Tailwind sizes.
-
-Unstyled tags follow the same scale: `h1` is Title 1, `h2` is Title 2, body text is 13 pt, a push button and a text field are 13 pt.
+The face is Inter, the variable font Makepad already ships. SF Pro is not bundled. There is no CSS inheritance: each text node sets its own color and size.
 
 ## Color
 
-System colors use the published sRGB pairs. `dark:` reads the dark value. Tailwind hues do not flip.
+Light and dark are named pairs. Dark is not an inversion, and disabled is not a faded copy of the enabled control.
 
-| Name | Light | Dark |
-| --- | --- | --- |
-| `system-blue`, `accent`, `accent-blue` | `#007AFF` | `#0A84FF` |
-| `system-green` | `#34C759` | `#30D158` |
-| `system-indigo` | `#5856D6` | `#5E5CE6` |
-| `system-orange` | `#FF9500` | `#FF9F0A` |
-| `system-pink` | `#FF2D55` | `#FF375F` |
-| `system-purple` | `#AF52DE` | `#BF5AF2` |
-| `system-red` | `#FF3B30` | `#FF453A` |
-| `system-teal` | `#30B0C7` | `#40C8E0` |
-| `system-yellow` | `#FFCC00` | `#FFD60A` |
-| `system-gray` | `#8E8E93` | `#8E8E93` |
-| `system-gray2` … `system-gray6` | the system gray ramp | the dark ramp |
+| Token | Light | Dark | Utilities |
+| --- | --- | --- | --- |
+| Canvas | `#F8FAFC` | `#0F172A` | `bg-canvas` |
+| Surface | `#FFFFFF` | `#111827` | `bg-surface` |
+| Subtle | `#F1F5F9` | `#1E293B` | `bg-subtle` |
+| Raised | `#FFFFFF` | `#1E293B` | `bg-raised` |
+| Primary text | `#0F172A` | `#F8FAFC` | `text-primary` |
+| Secondary text | `#475569` | `#CBD5E1` | `text-secondary` |
+| Muted text | `#5F6F85` | `#94A3B8` | `text-muted` |
+| Divider | `#CBD5E1` | `#334155` | `bg-divider` |
+| Control boundary | `#64748B` | `#94A3B8` | `border-control` |
+| Accent | `#1D4ED8` | `#93C5FD` | `bg-accent`, `border-accent` |
+| Text on accent | `#FFFFFF` | `#0F172A` | `text-on-accent` |
+| Selection background | `#DBEAFE` | `#1E3A8A` | `bg-selection` |
+| Selection foreground | `#1E3A8A` | `#EFF6FF` | `text-on-selection` |
+| Danger | `#B91C1C` | `#FCA5A5` | `text-danger`, `border-danger` |
+| Success | `#166534` | `#86EFAC` | `text-success`, `border-success` |
+| Warning | `#92400E` | `#FDE68A` | `text-warning`, `border-warning` |
+| Accent hover | `#1E40AF` | `#BFDBFE` | `hover:bg-accent-hover` |
+| Accent pressed | `#1E3A8A` | `#DBEAFE` | `active:bg-accent-pressed` |
+| Surface hover | `#F1F5F9` | `#1E293B` | `hover:bg-surface-hover` |
+| Surface pressed | `#E2E8F0` | `#334155` | `active:bg-surface-pressed` |
+| Disabled background | `#E2E8F0` | `#1E293B` | `disabled:bg-disabled-bg` |
+| Disabled text | `#475569` | `#94A3B8` | `disabled:text-disabled-fg` |
+| Danger background | `#FEE2E2` | `#450A0A` | `bg-danger-bg` |
+| Success background | `#DCFCE7` | `#052E16` | `bg-success-bg` |
+| Warning background | `#FEF3C7` | `#451A03` | `bg-warning-bg` |
+| Focus | `#1D4ED8` | `#93C5FD` | focus stroke |
+| Scrim | `#0F172A` at 50% | black at 60% | `bg-scrim` |
 
-Semantic colors, with the published alpha:
+`dark:` reads `state.quinn_dark`. `toggle_theme()` flips it. Measured contrast for the pairs that ship is in [verification-matrix.md](verification-matrix.md).
 
-| Name | Light | Dark |
-| --- | --- | --- |
-| `label` | black 85% | white 85% |
-| `label-secondary` | `rgb(60 60 67 / 60%)` | `rgb(235 235 245 / 60%)` |
-| `label-tertiary` | `rgb(60 60 67 / 30%)` | `rgb(235 235 245 / 30%)` |
-| `label-quaternary` | `rgb(60 60 67 / 18%)` | `rgb(235 235 245 / 18%)` |
-| `separator` | `rgb(60 60 67 / 29%)` | `rgb(84 84 88 / 65%)` |
-| `system-background` | `#FFFFFF` | `#1C1C1E` |
-| `system-background-secondary` | `#F2F2F7` | `#2C2C2E` |
-| `system-grouped-background` | `#F2F2F7` | `#000000` |
-| `window-background` | `#ECECEC` | `#282828` |
-| `control-background` | `#FFFFFF` | `#3A3A3C` |
-| `sidebar` | `rgb(246 246 246 / 92%)` | `rgb(32 32 34 / 92%)` |
-| `system-fill` and the secondary, tertiary, and quaternary fills | the system fill alphas | the dark fill alphas |
+Dividers are decorative. A control that must be identifiable uses `border-control`, which clears 3:1 against white and against `#111827`.
 
-`bg-sky-100` is `#E0F2FE`. A missing name such as `bg-not-a-color` is an error from `lower_file`, not a silent drop.
+## Type
 
-## Materials, radii, shadows, controls
+| Utility | Role | Size / line | Weight |
+| --- | --- | --- | --- |
+| `text-caption` | Caption, metadata | 12 / 16 | 400 |
+| `text-control` | Control label | 14 / 20 | 500 |
+| `text-body` | Body | 14 / 20 | 400 |
+| `text-reading` | Reading | 16 / 24 | 400 |
+| `text-section` | Section | 18 / 24 | 600 |
+| `text-page` | Page title | 24 / 32 | 600 |
+| `text-display` | Display | 32 / 40 | 600 |
 
-The sidebar uses the `vibrancy` utility. That lowers to Makepad’s `GaussRoundedView`: a render-to-texture of the window scene, a blur pyramid (`gauss_view.rs`), and a tint. It is not `NSVisualEffectView`. The texture is the app’s own scene, not the desktop wallpaper, so a sidebar beside the content frosts the window fill. A sheet or toast drawn over the content can frost that content. `fallback_color` matches the sidebar tint, so a failed capture (software GL often looks flat) still reads as a solid sidebar. `MAKEPAD_NO_GAUSS=1` forces the opaque fallback.
+`text-headline`, `text-title`, `text-title1` through `text-title3`, `text-callout`, `text-subheadline`, `text-footnote`, `text-caption2`, and `text-large-title` are the old macOS sizes. They still parse. New UI does not use them. `text-xs` through `text-3xl` are the Tailwind sizes.
 
-| Utility | Value |
+Text scaling to 150% and 200% is not implemented. Sizes are class constants. That gate is unverified.
+
+## Spacing, radius, density
+
+Spacing numbers are multiplied by 4. `gap-2` is 8, `px-3` is 12, `p-6` is 24, `gap-8` is 32. That is the PRD scale (`space.1` = 4 through `space.12` = 48). The parent sets the gap between siblings. The component sets its own padding.
+
+| Utility | Meaning |
 | --- | --- |
-| `rounded-control-sm` | 5 pt |
-| `rounded-control` | 6 pt |
-| `rounded-control-lg` | 8 pt |
-| `rounded-window` | 10 pt |
-| `rounded-sheet` | 12 pt |
-| `h-control-mini` | 16 pt |
-| `h-control-small` | 18 pt |
-| `h-control`, `h-control-regular` | 22 pt |
-| `h-control-large` | 28 pt |
-| `shadow-control` | radius 8, offset 2 |
-| `shadow-window` | radius 24, offset 8 |
-| `ring` | 2 pt stroke in `system-blue` |
+| `rounded-control` | 6, controls |
+| `rounded` | 8, grouped panels |
+| `rounded-lg`, `rounded-sheet` | 12, overlays |
+| `rounded-full` | pills, badges, switch, slider thumb |
+| `h-control`, `w-control` | compact 28, standard 36, touch 48 |
+| `min-h-control` | same floor, so a wrapping label can grow |
+| `h-toolbar` | 48, or 56 when touch density is on |
+| `px-control` | horizontal padding 8 / 12 / 16 |
 
-`shadow` still paints `#0006`. `border-0` sets a zero stroke so a borderless button and a selected source-list row do not keep the hairline.
+`set_density(0)`, `set_density(1)`, and `set_density(2)` write `state.quinn_density`. Standard (1) is the default. Density is an application setting. It is not text scaling and it is not inferred from the window width.
 
-## Icons
+## Shell
 
-[SF Symbols](https://developer.apple.com/sf-symbols/) cannot be redistributed. Makepad’s `Button` `DrawSvg` path tints a whole silhouette white, so a Lucide stroke would not stay a stroke. The showcase draws small vector marks from rounded views: a page, a four-cell table, a gear, a magnifying glass, a folder, a sun, and a moon. They are not SF Symbols and not Lucide paths. Inter does not draw “✓” or “▾”; the checkbox check is a few white blocks.
+`bp800:`, `bp1120:`, and `bp1440:` are minimum window widths, read from `state.quinn_width`. The older `sm` `md` `lg` `xl` prefixes stay.
 
-## Controls
-
-These are Makepad `Button`, `TextInput`, and `RoundedView` widgets wearing the utilities. They are not AppKit controls.
-
-| HIG control | How the showcase draws it |
+| Width | Default |
 | --- | --- |
-| Push button, default | `bg-system-blue text-white`, 6 pt radius, 28 pt |
-| Push button, bordered | `bg-control-background` and a `separator` hairline |
-| Push button, borderless | `border-0 bg-transparent text-system-blue` |
-| Segmented control | a `system-fill` track; the selected segment is a `system-background` pill with a hairline, and the label is a transparent button on top |
-| Toggle | a 44×26 pill, `system-fill` off and `system-green` on, with a white knob |
-| Checkbox | a 14 pt rounded square; accent-filled with a block check when on, bordered when off |
-| Pop-up button | a bordered button that shows a shadowed menu |
-| Text field | 28 pt, `separator` stroke; focus sets `border_color_focus` to system blue (`#007AFF` light, `#0A84FF` dark) inside the view script |
-| Search field | `system-fill`, a drawn magnifying glass, placeholder in `tertiaryLabel` (`#3C3C434D` light, `#EBEBF54D` dark) |
-| Sidebar source list | full window height, 28 pt rows, icon then label, selection inset 10 pt, section header 11 pt in the secondary label color |
-| Toolbar | 52 pt, headline title on the left, icon buttons, a hairline; Theme is a sun/moon toggle in the showcase |
-| Toast | a floating rounded card with a shadow, not a full-width bar. A root-level `absolute` child is lifted onto the host overlay and shrink-wraps unless it sets a width |
-| Sheet | a portal card, 12 pt radius, over a translucent scrim |
-| Alert | a smaller sheet with a `system-red` default button |
-| Popover | the pop-up menu, `shadow-window` |
-| Table | `<For let:item let:index>` passes the enumerate index. `odd:` / `even:` paint zebra rows |
-| Slider | a track, a `system-blue` fill, and a knob. `bind:width="level*2"` and `bind:width="level*2-9"` place the fill and the knob. Clicks set the value; it does not drag |
-| Stepper | one joined vertical control. Handlers use `if` / `else` and `clamp` |
-| Progress | the same fill as the slider |
-| Tab view | the source list is the tab. Settings also has the segmented control |
+| 1440 and up | Navigation, collection, main, and inspector |
+| 1120–1439 | Inspector width becomes 0; open it from Info |
+| 800–1119 | Navigation is a 64-wide rail; collection width becomes 0 |
+| Below 800 | Navigation width becomes 0; Library opens the drawer |
 
-A click used to leave a button pale grey with a faint label. The theme’s pressed and focus fills were mixed in and could stick across `render()`. Every button state now uses the face and label already chosen, the outset gradient is turned off (`color_2` alpha is negative), and `reset_hover_on_click` cuts the hover track after the click. The focus ring is the border, in system blue, and the view script uses the dark accent when `quinn_dark` is on. The host `control_script` patch still uses `#007AFF`, because that patch runs outside the view script.
+Pane widths at the wide step: navigation 224 (min 200, max 280), collection 280 (min 240, max 360), inspector 280 (min 260, max 360). Main content uses `bp800:min-w-[480px]`.
 
-`class:` reads both palettes, so `class:bg-system-blue` is `#0A84FF` in dark mode. `class:dark:token=signal` applies only when the signal is on and `quinn_dark == 1`.
+## Focus
 
-Handlers can branch: `if` / `else` / `else if`, comparisons, and `min` / `max` / `clamp`. `bind:width` takes `"signal"`, `"signal*factor"`, or `"signal*factor-bias"`.
+Buttons and inputs paint `border_color_focus` with the accent. The stroke uses the control’s existing border width, so focus does not change the outer size. A 2-unit ring drawn outside the control, with 2 units of separation, is not available. Divs do not take a focus track.
 
-A `md:flex-row items-stretch` parent gives its children a full height at that breakpoint, so a sidebar and an inspector meet the bottom of the window. The separator uses `md:h-full`.
+## What this host does not do
 
-## Layout
-
-The showcase follows the HIG window: sidebar, content, inspector, with the toolbar across the top. Content padding is 24 pt. Controls sit 8–12 pt apart. Below 768 pt (`md:`) the three columns stack. `drive_shell` writes `state.quinn_width` on resize and is what makes `md:` follow the window.
-
-Light and dark are `state.quinn_dark`, toggled by `toggle_theme()`. The switch is instant. The window fill is a child of the host, because the host does not repaint its own background when `on_render` runs again. Button hover and press still use Makepad’s 0.1 s and 0.2 s tracks.
-
-## Other limits
-
-- Real keystrokes and IME `insertText:` reach a `TextInput`. Accessibility synthetic typing does not. The macOS view has no `AXValue` or `AXSelectedText`, so XCUITest `typeText` does not land in the field. See [Testing on macOS](TESTING_ON_MACOS.md).
-- The first click on an unfocused window is delivered only after `patches/makepad-accepts-first-mouse.patch`. AppKit’s `acceptsFirstMouse` returned `NO` for content, which swallowed the activating click. This machine is Linux, so that path was not executed here. On a Mac, apply the patch to the Makepad checkout and run `cargo clean -p makepad-platform` before building. Cargo fingerprints the git revision, not the edited file.
-- `Action::version` (`save.version()`) is 0 until the first `dispatch`. A resource’s generation still starts at 1 so the initial load runs.
-- Gradients are two stops, linear. There is no `animate-spin`.
-- The slider does not drag. Eight transparent buttons set the value.
-- `GaussRoundedView` blurs the app scene, not the wallpaper. On this machine’s software GL the sidebar reads as a flat tint.
-- Source-list icons are built from rounded rectangles. They are not SF Symbols.
-- A `RoundedShadowView` smaller than the shadow padding can lose its face. The selected segment is a plain rounded view with a hairline, not a shadow widget.
-- The host focus ring stays `#007AFF`. Only the view script flips it to `#0A84FF`.
+Accessibility APIs, screen readers, IME, RTL, touch hardware, text scaling, display-scale matrices, and the 390×844 and 320 CSS viewports are not implemented. The verification matrix marks them unverified. Live slider dragging is not implemented: the handler language has click and `bind:width`, not pointer move. Arrow keys do not move the thumb. The minus and plus buttons do.

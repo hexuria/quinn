@@ -10,7 +10,8 @@ mod host;
 mod probe;
 
 pub use host::{
-    boot_script, census_host, drive_shell, eval_hot_file, load_hot_view, on_actions,
+    boot_script, census_host, drive_shell, eval_hot_file, load_hot_view, load_hot_view_with,
+    on_actions,
     reclaim_script_heap, startup, with_current_cx, with_cx, WidgetCensus,
 };
 pub use quinn_lower::{accept_gen, cancelled_count, job, JobArg, JobValue};

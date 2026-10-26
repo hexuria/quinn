@@ -1,0 +1,9 @@
+[package]
+name = "quinn-ui"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "Quinn component library. components.rs is authoring source, not a Rust module."
+
+[dependencies]

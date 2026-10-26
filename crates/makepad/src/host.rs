@@ -504,6 +504,8 @@ fn size_of(size: SizeSpec) -> Size {
             },
             factor,
         },
+        SizeSpec::Control => Size::Fixed(36.0),
+        SizeSpec::Bar => Size::Fixed(48.0),
         SizeSpec::Flex { weight, shrink, basis } => Size::Fill {
             weight,
             basis: FitBound::Abs(basis),
@@ -584,7 +586,7 @@ fn control_script(style: &Style) -> String {
     // clicked button pale grey with an unreadable label.
     parts.push("draw_bg.color_2: vec4(-1., -1., -1., -1.)".into());
     parts.push("draw_bg.border_color_2: vec4(-1., -1., -1., -1.)".into());
-    parts.push("draw_bg.border_color_focus: #x007aff".into());
+    parts.push("draw_bg.border_color_focus: #x1d4ed8".into());
     if let Some(size) = style.font_size {
         parts.push(format!("draw_text.text_style.font_size: {size}"));
     }
@@ -641,6 +643,8 @@ fn size_script_host(size: SizeSpec) -> String {
         SizeSpec::Flex { weight, shrink, basis } => {
             format!("Fill{{weight: {weight} shrink: {shrink} basis: {basis}}}")
         }
+        SizeSpec::Control => "36".into(),
+        SizeSpec::Bar => "48".into(),
     }
 }
 
@@ -770,6 +774,37 @@ pub fn load_hot_view(
         }
         if std::env::args().any(|arg| arg == "--hot") {
             quinn_lower::watch_once(view, hot.clone(), shell);
+        }
+    }
+    eval_hot_file(vm, &hot, manifest_dir, module_path, component)
+}
+
+/// [`load_hot_view`] plus a component-library source string. Hot reload keeps
+/// that string, so a `view.rs` edit still resolves `<Button>`.
+pub fn load_hot_view_with(
+    vm: &mut ScriptVm,
+    manifest_dir: &str,
+    module_path: &str,
+    title: &'static str,
+    width: u32,
+    height: u32,
+    component: ScriptValue,
+    library: &str,
+) -> ScriptValue {
+    let view = quinn_lower::view_path(manifest_dir);
+    let hot = quinn_lower::hot_ui_path(manifest_dir);
+    if !vm.is_reload() {
+        let shell = quinn_lower::Shell {
+            title,
+            width,
+            height,
+        };
+        if std::env::var("QUINN_SKIP_LOWER").is_err() {
+            quinn_lower::write_lowered_with(&view, &hot, shell, library)
+                .unwrap_or_else(|err| panic!("lower {title} view: {err}"));
+        }
+        if std::env::args().any(|arg| arg == "--hot") {
+            quinn_lower::watch_once_with(view, hot.clone(), shell, library.to_string());
         }
     }
     eval_hot_file(vm, &hot, manifest_dir, module_path, component)

@@ -8,6 +8,7 @@ members = [
     "crates/macros",
     "crates/makepad",
     "crates/quinn",
+    "crates/ui",
     "probes/widget-lifecycle",
     "examples/baseline-counter",
     "examples/counter",

@@ -80,24 +80,18 @@ struct Build {
 }
 
 pub fn parse_model(source: &str) -> Result<Model, String> {
-    let file = syn::parse_file(source).map_err(|err| err.to_string())?;
+    parse_model_with(source, "")
+}
+
+/// `library` is more `#[component]` source, merged under the app file.
+/// The app's last component stays the root. App names replace library names.
+pub fn parse_model_with(source: &str, library: &str) -> Result<Model, String> {
     let mut comps = HashMap::new();
-    let mut order = Vec::new();
-    for item in file.items {
-        let Item::Fn(func) = item else {
-            continue;
-        };
-        if !func
-            .attrs
-            .iter()
-            .any(|attr| attr.path().is_ident("component"))
-        {
-            continue;
-        }
-        let name = func.sig.ident.to_string();
-        order.push(name.clone());
-        comps.insert(name, parse_comp(&func)?);
+    if !library.is_empty() {
+        ingest_components(library, &mut comps, &mut Vec::new())?;
     }
+    let mut order = Vec::new();
+    ingest_components(source, &mut comps, &mut order)?;
     let Some(root_name) = order.last() else {
         return Err("expected a #[component]".into());
     };
@@ -186,6 +180,30 @@ pub fn parse_model(source: &str) -> Result<Model, String> {
         ctx_init,
         jobs,
     })
+}
+
+fn ingest_components(
+    source: &str,
+    comps: &mut HashMap<String, Comp>,
+    order: &mut Vec<String>,
+) -> Result<(), String> {
+    let file = syn::parse_file(source).map_err(|err| err.to_string())?;
+    for item in file.items {
+        let Item::Fn(func) = item else {
+            continue;
+        };
+        if !func
+            .attrs
+            .iter()
+            .any(|attr| attr.path().is_ident("component"))
+        {
+            continue;
+        }
+        let name = func.sig.ident.to_string();
+        order.push(name.clone());
+        comps.insert(name, parse_comp(&func)?);
+    }
+    Ok(())
 }
 
 fn contains_routes(nodes: &[ViewNode]) -> bool {
@@ -1034,6 +1052,7 @@ impl Build {
         let saved_children_fn = self.in_children_fn;
         self.in_children_fn = children_fn;
         let mut call_children = Vec::new();
+        let mut call_parts: Vec<Part> = Vec::new();
         for child in element.children() {
             if is_blank(child) {
                 continue;
@@ -1041,10 +1060,63 @@ impl Build {
             if !takes_children {
                 return Err(format!("<{name}> does not take child elements"));
             }
-            call_children.push(self.lower_node(child, parent_signals, in_row)?);
+            match child {
+                Node::Text(text) => {
+                    let value = text.value_string();
+                    if !value.is_empty() {
+                        call_parts.push(Part::Lit(value));
+                    }
+                }
+                Node::RawText(raw) => {
+                    let value = raw.to_string_best();
+                    if !value.trim().is_empty() {
+                        call_parts.push(Part::Lit(value));
+                    }
+                }
+                Node::Block(block) => {
+                    if children_call(block).is_some() {
+                        continue;
+                    }
+                    call_parts.push(parse_interp(
+                        block,
+                        parent_signals,
+                        in_row,
+                        &self.prop_env,
+                        &self.ctx_env,
+                        self.in_children_fn,
+                        &self.job_names,
+                        self.row_var.as_deref(),
+                        self.index_var.as_deref(),
+                    )?);
+                }
+                Node::Element(_) | Node::Fragment(_) => {
+                    call_children.push(self.lower_node(child, parent_signals, in_row)?);
+                }
+                other => {
+                    return Err(format!("unsupported child in <{name}>: {other:?}"));
+                }
+            }
         }
         self.in_children_fn = saved_children_fn;
+        let call = read_call_site(element, parent_signals, in_row)?;
         let given = prop_values(&comp, element, parent_signals)?;
+        let touch = Touch {
+            class: call.class,
+            when: call.when,
+            click: call.click,
+            bind: call.bind,
+            placeholder: match given.get("placeholder") {
+                Some(PropVal::Lit(text)) if !text.is_empty() => Some(text.clone()),
+                _ => None,
+            },
+            variant_class: variant_class(given.get("variant")),
+            disabled: matches!(given.get("disabled"), Some(PropVal::Bool(true))),
+            slider: match given.get("signal") {
+                Some(PropVal::Lit(name)) if !name.is_empty() => Some(name.clone()),
+                Some(PropVal::Sig(name)) => Some(name.clone()),
+                _ => None,
+            },
+        };
         let saved_props = std::mem::replace(&mut self.prop_env, given);
         let saved_ctx =
             std::mem::replace(&mut self.ctx_env, comp.contexts.iter().cloned().collect());
@@ -1078,7 +1150,13 @@ impl Build {
                     self.pending_row_signals.push(signal.clone());
                 }
             }
-            inline_children(&mut node, call_children);
+            if call_children.is_empty() {
+                let _ = splice_label(&mut node, &call_parts);
+            } else {
+                inline_children(&mut node, call_children);
+            }
+        } else if call_children.is_empty() {
+            let _ = splice_label(&mut node, &call_parts);
         } else {
             self.seal_children(&mut node, call_children);
         }
@@ -1087,6 +1165,7 @@ impl Build {
                 el.name = self.fresh(&prefix);
             }
         }
+        retouch(&mut node, &touch);
         let _ = comp.aliases;
         Ok(node)
     }
@@ -1415,6 +1494,299 @@ impl Comp {
     }
 }
 
+struct CallSite {
+    class: String,
+    when: Vec<ClassWhen>,
+    click: Option<Act>,
+    bind: Option<String>,
+}
+
+struct Touch {
+    class: String,
+    when: Vec<ClassWhen>,
+    click: Option<Act>,
+    bind: Option<String>,
+    placeholder: Option<String>,
+    variant_class: Option<&'static str>,
+    disabled: bool,
+    slider: Option<String>,
+}
+
+fn read_call_site(
+    element: &NodeElement<rstml::Infallible>,
+    signals: &[Signal],
+    in_row: bool,
+) -> Result<CallSite, String> {
+    let class = class_of(element).unwrap_or_default();
+    let mut when = Vec::new();
+    let mut click = None;
+    let mut bind = None;
+    for attr in element.attributes() {
+        let NodeAttribute::Attribute(attr) = attr else {
+            continue;
+        };
+        let key = attr_key(attr);
+        if let Some(token) = key.strip_prefix("class:") {
+            let Some(expr) = attr.value() else {
+                return Err(format!("class:{token} needs a bool signal"));
+            };
+            let (token, dark) = token
+                .strip_prefix("dark:")
+                .map(|rest| (rest.to_string(), true))
+                .unwrap_or_else(|| (token.to_string(), false));
+            when.push(ClassWhen {
+                token,
+                dark,
+                signal: bool_signal(expr, signals)?,
+            });
+            continue;
+        }
+        if key == "on:click" {
+            let Some(expr) = attr.value() else {
+                return Err("on:click needs a handler".into());
+            };
+            click = Some(crate::handler::parse_handler(expr, signals, in_row)?);
+            continue;
+        }
+        if key == "bind:value" {
+            let Some(expr) = attr.value() else {
+                return Err("bind:value needs a signal".into());
+            };
+            bind = Some(bind_signal(expr, signals)?);
+        }
+    }
+    Ok(CallSite {
+        class,
+        when,
+        click,
+        bind,
+    })
+}
+
+fn variant_class(value: Option<&PropVal>) -> Option<&'static str> {
+    let Some(PropVal::Lit(name)) = value else {
+        return None;
+    };
+    match name.as_str() {
+        "secondary" => Some(
+            "bg-surface text-primary border-control hover:bg-surface-hover active:bg-surface-pressed",
+        ),
+        "ghost" => Some("bg-transparent text-primary border-0 hover:bg-subtle active:bg-surface-pressed"),
+        "danger" | "destructive" => {
+            Some("bg-danger-bg text-danger border-danger hover:bg-danger-bg active:bg-surface-pressed")
+        }
+        _ => None,
+    }
+}
+
+fn splice_label(node: &mut ViewNode, parts: &[Part]) -> bool {
+    match node {
+        ViewNode::El(el) => {
+            let has_slot = el.children.iter().any(|child| {
+                matches!(child, ViewNode::Slot { fn_name, .. } if fn_name == "__children__")
+            });
+            if has_slot {
+                el.parts.extend(parts.iter().cloned());
+                el.children.retain(|child| {
+                    !matches!(child, ViewNode::Slot { fn_name, .. } if fn_name == "__children__")
+                });
+                return true;
+            }
+            for child in &mut el.children {
+                if splice_label(child, parts) {
+                    return true;
+                }
+            }
+            false
+        }
+        ViewNode::Show { child, .. } => splice_label(child, parts),
+        ViewNode::Slot { nodes, .. } | ViewNode::Portal { nodes } => {
+            for child in nodes {
+                if splice_label(child, parts) {
+                    return true;
+                }
+            }
+            false
+        }
+        ViewNode::Suspense { fallback, child, .. }
+        | ViewNode::Boundary { fallback, child, .. } => {
+            for node in fallback {
+                if splice_label(node, parts) {
+                    return true;
+                }
+            }
+            splice_label(child, parts)
+        }
+        ViewNode::Routes { routes } => {
+            for (_, nodes) in routes {
+                for child in nodes {
+                    if splice_label(child, parts) {
+                        return true;
+                    }
+                }
+            }
+            false
+        }
+        ViewNode::For { .. } => false,
+    }
+}
+
+fn retouch(node: &mut ViewNode, touch: &Touch) {
+    if let ViewNode::El(el) = node {
+        let mut extra = String::new();
+        if let Some(variant) = touch.variant_class {
+            extra.push(' ');
+            extra.push_str(variant);
+        }
+        if !touch.class.is_empty() {
+            extra.push(' ');
+            extra.push_str(&touch.class);
+        }
+        if touch.disabled {
+            extra.push_str(" disabled");
+        }
+        if !extra.is_empty() {
+            el.class = format!("{}{}", el.class, extra);
+        }
+        el.class_when.extend(touch.when.clone());
+    }
+    let _ = stamp_click(node, touch.click.clone());
+    stamp_input(node, touch.placeholder.clone(), touch.bind.clone());
+    if let Some(name) = &touch.slider {
+        rename_slider(node, name);
+    }
+}
+
+fn stamp_click(node: &mut ViewNode, click: Option<Act>) -> bool {
+    let Some(click) = click else {
+        return true;
+    };
+    match node {
+        ViewNode::El(el) => {
+            if el.tag == "button" && el.click.is_none() {
+                el.click = Some(click);
+                return true;
+            }
+            for child in &mut el.children {
+                if stamp_click(child, Some(click.clone())) {
+                    return true;
+                }
+            }
+            false
+        }
+        ViewNode::Show { child, .. } => stamp_click(child, Some(click)),
+        ViewNode::Slot { nodes, .. } | ViewNode::Portal { nodes } => {
+            for child in nodes {
+                if stamp_click(child, Some(click.clone())) {
+                    return true;
+                }
+            }
+            false
+        }
+        ViewNode::Suspense { fallback, child, .. }
+        | ViewNode::Boundary { fallback, child, .. } => {
+            for node in fallback {
+                if stamp_click(node, Some(click.clone())) {
+                    return true;
+                }
+            }
+            stamp_click(child, Some(click))
+        }
+        ViewNode::Routes { routes } => {
+            for (_, nodes) in routes {
+                for child in nodes {
+                    if stamp_click(child, Some(click.clone())) {
+                        return true;
+                    }
+                }
+            }
+            false
+        }
+        ViewNode::For { .. } => false,
+    }
+}
+
+fn stamp_input(node: &mut ViewNode, placeholder: Option<String>, bind: Option<String>) {
+    match node {
+        ViewNode::El(el) => {
+            if el.tag == "input" {
+                if el.placeholder.is_none() {
+                    if let Some(text) = placeholder.clone() {
+                        el.placeholder = Some(text);
+                    }
+                }
+                if el.bind.is_none() {
+                    if let Some(signal) = bind.clone() {
+                        el.bind = Some(signal.clone());
+                        el.input = Some(signal);
+                    }
+                }
+                return;
+            }
+            for child in &mut el.children {
+                stamp_input(child, placeholder.clone(), bind.clone());
+            }
+        }
+        ViewNode::Show { child, .. } => stamp_input(child, placeholder, bind),
+        ViewNode::Slot { nodes, .. } | ViewNode::Portal { nodes } => {
+            for child in nodes {
+                stamp_input(child, placeholder.clone(), bind.clone());
+            }
+        }
+        ViewNode::Suspense { fallback, child, .. }
+        | ViewNode::Boundary { fallback, child, .. } => {
+            for node in fallback {
+                stamp_input(node, placeholder.clone(), bind.clone());
+            }
+            stamp_input(child, placeholder, bind);
+        }
+        ViewNode::Routes { routes } => {
+            for (_, nodes) in routes {
+                for child in nodes {
+                    stamp_input(child, placeholder.clone(), bind.clone());
+                }
+            }
+        }
+        ViewNode::For { .. } => {}
+    }
+}
+
+fn rename_slider(node: &mut ViewNode, name: &str) {
+    match node {
+        ViewNode::El(el) => {
+            if let Some(bind) = &mut el.bind_width {
+                if bind.signal == "__slider__" {
+                    bind.signal = name.to_string();
+                }
+            }
+            for child in &mut el.children {
+                rename_slider(child, name);
+            }
+        }
+        ViewNode::Show { child, .. } => rename_slider(child, name),
+        ViewNode::Slot { nodes, .. } | ViewNode::Portal { nodes } => {
+            for child in nodes {
+                rename_slider(child, name);
+            }
+        }
+        ViewNode::Suspense { fallback, child, .. }
+        | ViewNode::Boundary { fallback, child, .. } => {
+            for node in fallback {
+                rename_slider(node, name);
+            }
+            rename_slider(child, name);
+        }
+        ViewNode::Routes { routes } => {
+            for (_, nodes) in routes {
+                for child in nodes {
+                    rename_slider(child, name);
+                }
+            }
+        }
+        ViewNode::For { .. } => {}
+    }
+}
+
 fn prop_values(
     comp: &Comp,
     element: &NodeElement<rstml::Infallible>,
@@ -1426,7 +1798,12 @@ fn prop_values(
             continue;
         };
         let key = attr_key(attr);
-        if key == "class" || key.starts_with("let:") {
+        if key == "class"
+            || key.starts_with("let:")
+            || key.starts_with("class:")
+            || key.starts_with("on:")
+            || key.starts_with("bind:")
+        {
             continue;
         }
         let Some(spec) = comp.params.iter().find(|prop| prop.name == key) else {
@@ -1800,7 +2177,9 @@ fn rename_stmts(stmts: &mut [HandlerStmt], orig: &[Signal], prefix: &str) {
             }
             HandlerStmt::Navigate(expr) => rename_expr(expr, orig, prefix),
             HandlerStmt::Dispatch { arg, .. } => rename_expr(arg, orig, prefix),
-            HandlerStmt::Refetch { .. } | HandlerStmt::ToggleTheme => {}
+            HandlerStmt::Refetch { .. }
+            | HandlerStmt::ToggleTheme
+            | HandlerStmt::SetDensity(_) => {}
             HandlerStmt::If {
                 cond,
                 then_branch,

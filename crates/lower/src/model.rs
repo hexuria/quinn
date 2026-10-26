@@ -136,6 +136,8 @@ pub enum HandlerStmt {
     },
     /// Flip `state.quinn_dark`. The shell signal behind `dark:` classes.
     ToggleTheme,
+    /// `set_density(0|1|2)`. 0 compact, 1 standard, 2 touch.
+    SetDensity(i64),
     /// `if cond { ... } else { ... }`. Both branches are statement lists.
     If {
         cond: HxExpr,

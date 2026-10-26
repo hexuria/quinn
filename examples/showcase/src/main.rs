@@ -18,7 +18,7 @@ impl AppMain for App {
     fn script_mod(vm: &mut ScriptVm) -> ScriptValue {
         quinn::makepad_widgets::script_mod(vm);
         let component = Self::script_component(vm).script_to_value(vm);
-        quinn::load_hot_view(
+        quinn::load_hot_view_with(
             vm,
             env!("CARGO_MANIFEST_DIR"),
             module_path!(),
@@ -26,6 +26,7 @@ impl AppMain for App {
             1440,
             900,
             component,
+            quinn_ui::SOURCE,
         )
     }
 

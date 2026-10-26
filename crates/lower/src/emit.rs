@@ -2741,16 +2741,22 @@ fn library_toggle_lines(
             glyph("chevron-up")
         ));
         let ink = |dark: bool| {
-            parse_classes_in("text-secondary", dark)
+            parse_classes_in("text-primary", dark)
                 .color
                 .map(|color| color.hex_script())
                 .unwrap_or_default()
         };
-        lines.push(format!(
-            "draw_icon_end.color: if state.quinn_dark == 1 {{ {} }} else {{ {} }}",
+        let themed = format!(
+            "if state.quinn_dark == 1 {{ {} }} else {{ {} }}",
             ink(true),
             ink(false)
-        ));
+        );
+        // The chevron shows on the column the list is sorted by.
+        let color = match &selected {
+            Some(sorted) => format!("if {sorted} {{ {themed} }} else {{ #x00000000 }}"),
+            None => themed,
+        };
+        lines.push(format!("draw_icon_end.color: {color}"));
     }
     if style.disabled {
         lines.push("enabled: false".into());
@@ -3089,6 +3095,13 @@ fn emit_stmts(stmts: &[HandlerStmt], row: Option<&RowEnv<'_>>) -> Vec<String> {
             HandlerStmt::Reverse { items } => {
                 lines.push(format!("state.{items} = quinn_reverse(state.{items})"))
             }
+            HandlerStmt::SortBy {
+                items,
+                field,
+                descending,
+            } => lines.push(format!(
+                "state.{items} = mod.quinn.sort_by(state.{items}, \"{field}\", {descending})"
+            )),
             HandlerStmt::RemoveKey { items, key } => {
                 let key = emit_hx(key, row, &locals);
                 lines.push(format!(

@@ -1118,8 +1118,13 @@ impl Build {
                 Some(PropVal::Sig(name)) => Some(name.clone()),
                 _ => None,
             },
-            // `checked` is the same flag on a switch or a checkbox.
-            selected: match given.get("selected").or(given.get("checked")) {
+            // `checked` (a switch, a checkbox) and `sorted` (a sort header)
+            // are the same flag.
+            selected: match given
+                .get("selected")
+                .or(given.get("checked"))
+                .or(given.get("sorted"))
+            {
                 Some(PropVal::Sig(name)) => Some(name.clone()),
                 _ => None,
             },
@@ -2376,7 +2381,9 @@ fn rename_stmts(stmts: &mut [HandlerStmt], orig: &[Signal], prefix: &str) {
                 rename_expr(id, orig, prefix);
                 rename_expr(label, orig, prefix);
             }
-            HandlerStmt::Pop { items } | HandlerStmt::Reverse { items } => {
+            HandlerStmt::Pop { items }
+            | HandlerStmt::Reverse { items }
+            | HandlerStmt::SortBy { items, .. } => {
                 *items = prefixed(items, orig, prefix);
             }
             HandlerStmt::RemoveKey { items, key } => {

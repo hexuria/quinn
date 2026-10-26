@@ -111,6 +111,13 @@ pub enum HandlerStmt {
     Reverse {
         items: String,
     },
+    /// Order the items by `field` (`id` or `label`). Labels compare without
+    /// regard to case; equal keys keep their order.
+    SortBy {
+        items: String,
+        field: String,
+        descending: bool,
+    },
     /// Drop the item whose `id` equals `key`.
     RemoveKey {
         items: String,

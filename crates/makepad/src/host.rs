@@ -759,6 +759,7 @@ pub fn eval_hot_file(
     // Also registers this crate's manifest, which is how
     // `crate_resource("quinn_makepad:resources/icons/...")` resolves.
     crate::widgets::script_mod(vm);
+    crate::list::script_mod(vm);
     vm.eval(ScriptMod {
         cargo_manifest_path: manifest_dir.trim_start_matches(r"\\?\").to_string(),
         module_path: module_path.to_string(),

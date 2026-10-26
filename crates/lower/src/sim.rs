@@ -951,6 +951,28 @@ impl Sim {
                         self.items.reverse();
                     }
                 }
+                HandlerStmt::SortBy {
+                    items,
+                    field,
+                    descending,
+                } => {
+                    if self.item_signals.iter().any(|name| name == items) {
+                        // `mod.quinn.sort_by`: ids as numbers, labels without
+                        // regard to case, stable on ties.
+                        self.items.sort_by(|a, b| {
+                            let order = if field == "id" {
+                                a.id.cmp(&b.id)
+                            } else {
+                                a.label.to_lowercase().cmp(&b.label.to_lowercase())
+                            };
+                            if *descending {
+                                order.reverse()
+                            } else {
+                                order
+                            }
+                        });
+                    }
+                }
                 HandlerStmt::RemoveKey { items, key } => {
                     if self.item_signals.iter().any(|name| name == items) {
                         let key = self.eval(key, row, &locals).as_int();

@@ -8,6 +8,7 @@
 
 mod control;
 mod host;
+mod list;
 mod probe;
 mod widgets;
 

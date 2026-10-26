@@ -167,12 +167,20 @@ It does not queue, does not cap at three, and does not flip when it would leave 
 
 ## SortHeader
 
-A column header that acts on click: the `QHeader` template, caption type in the secondary ink, tinted under the pointer. `descending=move || signal.get()` draws the direction after the label: a chevron up for A to Z, down for Z to A. The handler sorts and flips the signal.
+A column header that acts on click: the `QHeader` template, caption type in the secondary ink, tinted under the pointer. `sorted` marks the column the list is ordered by: its caption takes the primary ink and shows the direction after the label, a chevron up for A to Z and down for Z to A (`descending`). The handler sorts with `sort_by` and sets the flags.
 
 ```rust
-<SortHeader descending=move || sort_desc.get() on:click=move |_| {
-    set_rows.update(|rows| { rows.reverse(); });
-    set_sort_desc.update(|value| *value = !*value);
+<SortHeader sorted=move || sorted.get() descending=move || sort_desc.get() on:click=move |_| {
+    if sort_asc.get() {
+        set_rows.update(|rows| { rows.sort_by(|a, b| b.label.cmp(&a.label)); });
+        set_sort_asc.set(false);
+        set_sort_desc.set(true);
+    } else {
+        set_rows.update(|rows| { rows.sort_by(|a, b| a.label.cmp(&b.label)); });
+        set_sort_asc.set(true);
+        set_sort_desc.set(false);
+    }
+    set_sorted.set(true);
 }>"Name"</SortHeader>
 ```
 

@@ -363,6 +363,27 @@ fn lower_list_op(signal: &str, expr: &Expr) -> Result<HandlerStmt, String> {
         "reverse" => Ok(HandlerStmt::Reverse {
             items: signal.to_string(),
         }),
+        "sort_by" | "sort_unstable_by" => {
+            let Some(Expr::Closure(closure)) = call.args.first() else {
+                return Err(reject("sort_by", "rows.sort_by(|a, b| a.label.cmp(&b.label))"));
+            };
+            let (field, descending) = sort_by_order(closure)?;
+            Ok(HandlerStmt::SortBy {
+                items: signal.to_string(),
+                field,
+                descending,
+            })
+        }
+        "sort_by_key" | "sort_unstable_by_key" => {
+            let Some(Expr::Closure(closure)) = call.args.first() else {
+                return Err(reject("sort_by_key", "rows.sort_by_key(|row| row.label.clone())"));
+            };
+            Ok(HandlerStmt::SortBy {
+                items: signal.to_string(),
+                field: sort_key_field(closure)?,
+                descending: false,
+            })
+        }
         "swap" | "swap_by_key" | "swap_key" => {
             let (a, b) = two_args(&call.args, "swap")?;
             Ok(HandlerStmt::SwapKey {
@@ -392,7 +413,7 @@ fn lower_list_op(signal: &str, expr: &Expr) -> Result<HandlerStmt, String> {
         }
         other => Err(reject(
             &format!("list.{other}()"),
-            "push, pop, reverse, swap(id, id), remove(id), or retain(|row| row.id != id)",
+            "push, pop, reverse, sort_by, sort_by_key, swap(id, id), remove(id), or retain(|row| row.id != id)",
         )),
     }
 }
@@ -438,6 +459,106 @@ fn retain_key(closure: &syn::ExprClosure) -> Result<HxExpr, String> {
         return Err(reject("that retain test", "|row| row.id != <id>"));
     }
     lower_expr(&binary.right, &[])
+}
+
+/// The closure's body, with a one-statement block unwrapped.
+fn closure_body(closure: &syn::ExprClosure) -> Option<Expr> {
+    match &*closure.body {
+        Expr::Block(block) => match block.block.stmts.as_slice() {
+            [Stmt::Expr(expr, _)] => Some(expr.clone()),
+            _ => None,
+        },
+        other => Some(other.clone()),
+    }
+}
+
+fn closure_params(closure: &syn::ExprClosure) -> Vec<String> {
+    closure
+        .inputs
+        .iter()
+        .filter_map(|input| match input {
+            syn::Pat::Ident(ident) => Some(ident.ident.to_string()),
+            syn::Pat::Type(typed) => match &*typed.pat {
+                syn::Pat::Ident(ident) => Some(ident.ident.to_string()),
+                _ => None,
+            },
+            _ => None,
+        })
+        .collect()
+}
+
+/// `param.field`, through `&`, `.clone()`, and `.to_lowercase()`: the item
+/// variable and the field. Only `id` and `label` are item fields.
+fn item_field(expr: &Expr) -> Option<(String, String)> {
+    match expr {
+        Expr::Reference(reference) => item_field(&reference.expr),
+        Expr::Paren(paren) => item_field(&paren.expr),
+        Expr::MethodCall(call)
+            if call.args.is_empty()
+                && matches!(call.method.to_string().as_str(), "clone" | "to_lowercase" | "to_string") =>
+        {
+            item_field(&call.receiver)
+        }
+        Expr::Field(field) => {
+            let syn::Member::Named(name) = &field.member else {
+                return None;
+            };
+            let Expr::Path(path) = &*field.base else {
+                return None;
+            };
+            let base = path.path.get_ident()?.to_string();
+            Some((base, name.to_string()))
+        }
+        _ => None,
+    }
+}
+
+fn sort_field(field: String) -> Result<String, String> {
+    if field == "id" || field == "label" {
+        Ok(field)
+    } else {
+        Err(format!("cannot sort by `{field}`: a list item has `id` and `label`"))
+    }
+}
+
+/// `|a, b| a.field.cmp(&b.field)` is ascending; `b.field.cmp(&a.field)`
+/// is descending.
+fn sort_by_order(closure: &syn::ExprClosure) -> Result<(String, bool), String> {
+    let usage = "rows.sort_by(|a, b| a.label.cmp(&b.label))";
+    let params = closure_params(closure);
+    let [first, second] = params.as_slice() else {
+        return Err(reject("that sort_by closure", usage));
+    };
+    let Some(Expr::MethodCall(call)) = closure_body(closure) else {
+        return Err(reject("that sort_by body", usage));
+    };
+    if call.method != "cmp" || call.args.len() != 1 {
+        return Err(reject("that sort_by body", usage));
+    }
+    let left = item_field(&call.receiver);
+    let right = item_field(&call.args[0]);
+    match (left, right) {
+        (Some((l, lf)), Some((r, rf))) if lf == rf && &l == first && &r == second => {
+            Ok((sort_field(lf)?, false))
+        }
+        (Some((l, lf)), Some((r, rf))) if lf == rf && &l == second && &r == first => {
+            Ok((sort_field(lf)?, true))
+        }
+        _ => Err(reject("that sort_by body", usage)),
+    }
+}
+
+/// `|row| row.field` (or `.clone()`, `.to_lowercase()`): ascending by field.
+fn sort_key_field(closure: &syn::ExprClosure) -> Result<String, String> {
+    let usage = "rows.sort_by_key(|row| row.label.clone())";
+    let params = closure_params(closure);
+    let [row] = params.as_slice() else {
+        return Err(reject("that sort_by_key closure", usage));
+    };
+    match closure_body(closure).as_ref().and_then(item_field) {
+        Some((base, field)) if &base == row => sort_field(field),
+        _ => Err(reject("that sort_by_key body", usage)),
+    }
 }
 
 fn field_is_id(field: &syn::ExprField) -> bool {
@@ -716,7 +837,7 @@ fn reject(found: &str, expected: &str) -> String {
 fn reject_expr(expr: &Expr) -> String {
     let text = short_expr(expr);
     format!(
-        "cannot lower `{text}`. Handlers may set or update a signal with arithmetic (+ - * /), comparisons, min, max, and clamp, a boolean not, if / else, a string, or a field write (profile.name = ...); may navigate(path); and may push, pop, reverse, swap, or remove a list by item id. This expression is outside that set"
+        "cannot lower `{text}`. Handlers may set or update a signal with arithmetic (+ - * /), comparisons, min, max, and clamp, a boolean not, if / else, a string, or a field write (profile.name = ...); may navigate(path); and may push, pop, reverse, sort, swap, or remove a list by item id. This expression is outside that set"
     )
 }
 

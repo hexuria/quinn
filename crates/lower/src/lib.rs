@@ -588,6 +588,8 @@ mod tests {
             ("examples/showcase/view.rs", "QMenuItem {"),
             ("examples/showcase/view.rs", "QHeader {"),
             ("examples/showcase/view.rs", "draw_icon_end.svg: if state.sort_desc { crate_resource(\"quinn_makepad:resources/icons/chevron-down.svg\") }"),
+            ("examples/showcase/view.rs", "state.rows = mod.quinn.sort_by(state.rows, \"label\", false)"),
+            ("examples/showcase/view.rs", "state.rows = mod.quinn.sort_by(state.rows, \"label\", true)"),
             ("examples/showcase/view.rs", "QButtonSecondary {"),
             ("examples/showcase/view.rs", "draw_bg.selected: if state.density_std"),
             ("examples/showcase/view.rs", "step: state.step\n"),
@@ -1454,6 +1456,68 @@ mod tests {
             file.contains("align: if state.quinn_width >= 1120. { Align{x: 0. y: 0.} }"),
             "{file}"
         );
+    }
+
+    const SORTED: &str = r#"
+        struct Item { id: u64, label: String, }
+        #[component]
+        fn Row(item: Item) -> impl IntoView {
+            let (count, set_count) = signal(0i32);
+            let label = item.label;
+            view! {
+                <div class="flex flex-row gap-4 items-center">
+                    <span>{label}</span>
+                    <button on:click=move |_| { set_count.update(|n| *n += 1); }>
+                        {move || count.get()}
+                    </button>
+                </div>
+            }
+        }
+        #[component]
+        fn Sorted() -> impl IntoView {
+            let (items, set_items) = signal(vec![
+                Item { id: 3, label: "gamma".into() },
+                Item { id: 1, label: "Beta".into() },
+                Item { id: 2, label: "alpha".into() },
+            ]);
+            view! {
+                <div class="flex flex-col gap-3 p-4">
+                    <For each=move || items.get() key=|item| item.id let:item>
+                        <Row item=item />
+                    </For>
+                    <button on:click=move |_| { set_items.update(|rows| { rows.sort_by(|a, b| a.label.cmp(&b.label)); }); }>"Ascending"</button>
+                    <button on:click=move |_| { set_items.update(|rows| { rows.sort_by(|a, b| b.label.cmp(&a.label)); }); }>"Descending"</button>
+                    <button on:click=move |_| { set_items.update(|rows| { rows.sort_by_key(|row| row.id); }); }>"Ids"</button>
+                </div>
+            }
+        }
+    "#;
+
+    /// A real sort: labels without regard to case, either way, and by id;
+    /// a row's own state follows its item.
+    #[test]
+    fn sort_by_orders_items_and_keeps_row_state() {
+        let mut sim = Sim::new(parse_model(SORTED).unwrap());
+        assert_eq!(sim.item_ids(), vec![3, 1, 2]);
+        assert!(sim.click_row(1));
+        assert!(sim.click("ascending"));
+        assert_eq!(sim.item_ids(), vec![2, 1, 3]);
+        assert!(sim.click("descending"));
+        assert_eq!(sim.item_ids(), vec![3, 1, 2]);
+        assert!(sim.click("ids"));
+        assert_eq!(sim.item_ids(), vec![1, 2, 3]);
+        assert_eq!(sim.row_count(1), 1);
+        let file = lower_file(SORTED, shell()).unwrap();
+        assert!(file.contains("state.items = mod.quinn.sort_by(state.items, \"label\", false)"), "{file}");
+        assert!(file.contains("state.items = mod.quinn.sort_by(state.items, \"label\", true)"), "{file}");
+        assert!(file.contains("state.items = mod.quinn.sort_by(state.items, \"id\", false)"), "{file}");
+    }
+
+    #[test]
+    fn sort_by_rejects_a_field_items_do_not_have() {
+        let src = SORTED.replace("a.label.cmp(&b.label)", "a.title.cmp(&b.title)");
+        let err = lower_file(&src, shell()).unwrap_err();
+        assert!(err.contains("cannot sort by `title`"), "{err}");
     }
 
 }

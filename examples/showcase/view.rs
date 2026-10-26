@@ -69,17 +69,19 @@ fn Showcase() -> impl IntoView {
     let (density_compact, set_density_compact) = signal(false);
     let (density_std, set_density_std) = signal(true);
     let (density_touch, set_density_touch) = signal(false);
-    let (sort_asc, set_sort_asc) = signal(true);
+    let (unsorted, set_unsorted) = signal(true);
+    let (sorted, set_sorted) = signal(false);
+    let (sort_asc, set_sort_asc) = signal(false);
     let (sort_desc, set_sort_desc) = signal(false);
     let (rows, set_rows) = signal(vec![
-        Item { id: 8, label: "Cabinet sample".into() },
         Item { id: 1, label: "Grocery list".into() },
-        Item { id: 6, label: "Island plan".into() },
-        Item { id: 5, label: "Joiner Thursday".into() },
         Item { id: 2, label: "Kitchen remodel".into() },
-        Item { id: 7, label: "Linen order".into() },
-        Item { id: 4, label: "Paint colors".into() },
         Item { id: 3, label: "Saturday market".into() },
+        Item { id: 4, label: "Paint colors".into() },
+        Item { id: 5, label: "Joiner Thursday".into() },
+        Item { id: 6, label: "Island plan".into() },
+        Item { id: 7, label: "Linen order".into() },
+        Item { id: 8, label: "Cabinet sample".into() },
     ]);
 
     view! {
@@ -220,10 +222,18 @@ fn Showcase() -> impl IntoView {
                         <span class="text-page text-primary dark:text-primary">"All notes"</span>
                         <div class="rounded-[8px] bg-surface border border-divider overflow-y-auto dark:bg-surface dark:border-divider">
                             <div class="flex flex-row items-center h-[36px] px-3">
-                                <SortHeader descending=move || sort_desc.get() on:click=move |_| {
-                                    set_rows.update(|rows| { rows.reverse(); });
-                                    set_sort_asc.update(|value| *value = !*value);
-                                    set_sort_desc.update(|value| *value = !*value);
+                                <SortHeader sorted=move || sorted.get() descending=move || sort_desc.get() on:click=move |_| {
+                                    if sort_asc.get() {
+                                        set_rows.update(|rows| { rows.sort_by(|a, b| b.label.cmp(&a.label)); });
+                                        set_sort_asc.set(false);
+                                        set_sort_desc.set(true);
+                                    } else {
+                                        set_rows.update(|rows| { rows.sort_by(|a, b| a.label.cmp(&b.label)); });
+                                        set_sort_asc.set(true);
+                                        set_sort_desc.set(false);
+                                    }
+                                    set_sorted.set(true);
+                                    set_unsorted.set(false);
                                 }>"Name"</SortHeader>
                                 <div class="flex-1"></div>
                                 <span class="text-caption text-secondary px-3 dark:text-secondary">"Kind"</span>
@@ -539,6 +549,9 @@ fn Showcase() -> impl IntoView {
                             <span class="text-body text-primary dark:text-primary">"8"</span>
                         </InfoRow>
                         <InfoRow label="Sorted by">
+                            <Show when=move || unsorted.get()>
+                                <span class="text-body text-primary dark:text-primary">"Added order"</span>
+                            </Show>
                             <Show when=move || sort_asc.get()>
                                 <span class="text-body text-primary dark:text-primary">"Name, A to Z"</span>
                             </Show>

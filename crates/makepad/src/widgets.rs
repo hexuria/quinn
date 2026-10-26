@@ -400,10 +400,18 @@ script_mod! {
         padding: Inset{left: 12 right: 12}
         spacing: 4
         icon_end_walk: Walk{width: 12 height: 12}
+        // The sorted column (`selected`) takes the primary ink and keeps a
+        // clear face.
+        draw_bg +: {
+            face_selected: #xe2e8f000
+            face_selected_dark: #x33415500
+        }
         draw_text +: {
             color: #x475569
             color_hover: #x475569
             color_dark: #xcbd5e1
+            color_selected: #x0f172a
+            color_selected_dark: #xf8fafc
             text_style: TextStyle{font_size: 9. font_family: FontFamily{latin := FontMember{res: crate_resource("makepad_widgets:resources/Inter.ttf") asc: 0.0 desc: 0.0 weight: 400.0}}}
         }
     }

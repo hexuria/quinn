@@ -218,9 +218,9 @@ fn Showcase() -> impl IntoView {
                         <span class="text-page text-primary dark:text-primary">"All notes"</span>
                         <div class="rounded-[8px] bg-surface border border-divider overflow-y-auto dark:bg-surface dark:border-divider">
                             <div class="flex flex-row items-center h-[36px] px-3">
-                                <button class="h-control px-3 rounded-control text-caption text-secondary border-0 bg-transparent dark:text-secondary" on:click=move |_| {
+                                <SortHeader on:click=move |_| {
                                     set_rows.update(|rows| { rows.reverse(); });
-                                }>"Name"</button>
+                                }>"Name"</SortHeader>
                                 <div class="flex-1"></div>
                                 <span class="text-caption text-secondary px-3 dark:text-secondary">"Kind"</span>
                             </div>
@@ -256,11 +256,11 @@ fn Showcase() -> impl IntoView {
                                     <span class="text-control text-primary dark:text-primary">"Account"</span>
                                     <Button variant="secondary" on:click=move |_| { set_menu.update(|value| *value = !*value); }>{choice}</Button>
                                     <Show when=move || menu.get()>
-                                        <div class="flex flex-col w-[220px] p-1 rounded-control bg-surface border border-divider shadow-lg dark:bg-surface dark:border-divider" data-popover="below">
-                                            <button class="h-[32px] px-3 rounded-control text-body text-primary border-0 bg-transparent dark:text-primary" on:click=move |_| { set_choice.set("On My Mac".to_string()); set_menu.set(false); }>"On My Mac"</button>
-                                            <button class="h-[32px] px-3 rounded-control text-body text-primary border-0 bg-transparent dark:text-primary" on:click=move |_| { set_choice.set("iCloud".to_string()); set_menu.set(false); }>"iCloud"</button>
-                                            <button class="h-[32px] px-3 rounded-control text-body text-primary border-0 bg-transparent dark:text-primary" on:click=move |_| { set_choice.set("Recently Deleted".to_string()); set_menu.set(false); }>"Recently Deleted"</button>
-                                        </div>
+                                        <Menu>
+                                            <MenuItem on:click=move |_| { set_choice.set("On My Mac".to_string()); set_menu.set(false); }>"On My Mac"</MenuItem>
+                                            <MenuItem on:click=move |_| { set_choice.set("iCloud".to_string()); set_menu.set(false); }>"iCloud"</MenuItem>
+                                            <MenuItem on:click=move |_| { set_choice.set("Recently Deleted".to_string()); set_menu.set(false); }>"Recently Deleted"</MenuItem>
+                                        </Menu>
                                     </Show>
                                 </div>
                                 <div class="flex flex-col gap-1 w-full">
@@ -489,10 +489,8 @@ fn Showcase() -> impl IntoView {
                         <div class="flex flex-col w-full max-w-[880px] gap-6">
                             <span class="text-section text-primary dark:text-primary">"Feedback and overlays"</span>
                             <Specimen title="Toast" note="Top end corner, 16 from the edges, at most 360 wide. Escape dismisses it.">
-                                <div class="flex flex-row items-center w-full max-w-[360px] gap-3 p-4 rounded-lg bg-surface border border-divider shadow-lg dark:bg-surface dark:border-divider">
-                                    <Icon name="check" class="w-[16px] text-success dark:text-success" />
-                                    <span class="text-body text-primary dark:text-primary flex-1 min-w-0">"Moved to Recently Deleted"</span>
-                                    <Button variant="ghost">"Dismiss"</Button>
+                                <div class="flex flex-col w-full max-w-[360px]">
+                                    <Toast message="Moved to Recently Deleted" />
                                 </div>
                                 <Button variant="secondary" on:click=move |_| { set_toast_msg.set("Toast from the gallery".to_string()); set_toast.set(true); }>"Show a toast"</Button>
                             </Specimen>
@@ -612,27 +610,23 @@ fn Showcase() -> impl IntoView {
             </div>
             <Show when=move || toast.get()>
                 <Overlay>
-                    <div class="flex flex-row items-center w-full gap-3">
-                        <Icon name="check" class="w-[16px] text-success dark:text-success" />
-                        <span class="text-body text-primary flex-1 min-w-0 dark:text-primary">{toast_msg}</span>
-                        <Button variant="ghost" on:click=move |_| { set_toast.set(false); }>"Dismiss"</Button>
-                    </div>
+                    <Toast message=toast_msg on:click=move |_| { set_toast.set(false); } />
                 </Overlay>
             </Show>
             <Show when=move || nav_open.get()>
-                <div class="absolute left-[8px] top-[64px] z-50 flex flex-col gap-1 w-[224px] p-2 rounded-lg bg-surface border border-divider shadow-lg dark:bg-surface dark:border-divider">
-                    <Button variant="ghost" on:click=move |_| { set_notes.set(true); set_table.set(false); set_settings.set(false); set_gallery.set(false); set_nav_open.set(false); }>"Notes"</Button>
-                    <Button variant="ghost" on:click=move |_| { set_notes.set(false); set_table.set(true); set_settings.set(false); set_gallery.set(false); set_nav_open.set(false); }>"Table"</Button>
-                    <Button variant="ghost" on:click=move |_| { set_notes.set(false); set_table.set(false); set_settings.set(true); set_gallery.set(false); set_nav_open.set(false); }>"Settings"</Button>
-                    <Button variant="ghost" on:click=move |_| { set_notes.set(false); set_table.set(false); set_settings.set(false); set_gallery.set(true); set_nav_open.set(false); }>"Gallery"</Button>
-                </div>
+                <Panel class="absolute left-[8px] top-[64px] z-50 gap-1 w-[224px] p-2">
+                    <MenuItem on:click=move |_| { set_notes.set(true); set_table.set(false); set_settings.set(false); set_gallery.set(false); set_nav_open.set(false); }>"Notes"</MenuItem>
+                    <MenuItem on:click=move |_| { set_notes.set(false); set_table.set(true); set_settings.set(false); set_gallery.set(false); set_nav_open.set(false); }>"Table"</MenuItem>
+                    <MenuItem on:click=move |_| { set_notes.set(false); set_table.set(false); set_settings.set(true); set_gallery.set(false); set_nav_open.set(false); }>"Settings"</MenuItem>
+                    <MenuItem on:click=move |_| { set_notes.set(false); set_table.set(false); set_settings.set(false); set_gallery.set(true); set_nav_open.set(false); }>"Gallery"</MenuItem>
+                </Panel>
             </Show>
             <Portal>
                 <Show when=move || sheet.get()>
                     <div class="absolute inset-0">
                         <div class="absolute inset-0 z-40 bg-scrim dark:bg-scrim"></div>
                         <div class="absolute inset-0 z-50 flex flex-col items-center justify-center p-6">
-                            <div class="flex flex-col gap-4 w-[480px] max-w-full p-6 rounded-lg bg-surface border border-divider shadow-lg dark:bg-surface dark:border-divider">
+                            <Panel class="gap-4 w-[480px] max-w-full p-6">
                                 <span class="text-section text-primary dark:text-primary">"New note"</span>
                                 <div class="flex flex-col gap-2 w-full max-h-[240px] overflow-y-auto">
                                     <span class="text-body text-secondary w-full dark:text-secondary">"Saved on this Mac. You can find it in the library after it lands."</span>
@@ -644,7 +638,7 @@ fn Showcase() -> impl IntoView {
                                     <Button on:click=move |_| { set_sheet.set(false); set_toast_msg.set("Note saved".to_string()); set_toast.set(true); }>"Save"</Button>
                                     <Button variant="secondary" on:click=move |_| { set_sheet.set(false); }>"Cancel"</Button>
                                 </div>
-                            </div>
+                            </Panel>
                         </div>
                     </div>
                 </Show>
@@ -652,14 +646,14 @@ fn Showcase() -> impl IntoView {
                     <div class="absolute inset-0">
                         <div class="absolute inset-0 z-40 bg-scrim dark:bg-scrim"></div>
                         <div class="absolute inset-0 z-50 flex flex-col items-center justify-center p-6">
-                            <div class="flex flex-col gap-4 w-[400px] max-w-full p-6 rounded-lg bg-surface border border-divider shadow-lg dark:bg-surface dark:border-divider">
+                            <Panel class="gap-4 w-[400px] max-w-full p-6">
                                 <span class="text-section text-primary dark:text-primary">"Delete this note?"</span>
                                 <span class="text-body text-secondary w-full dark:text-secondary">"The note moves to Recently Deleted. You can recover it for 30 days."</span>
                                 <div class="flex flex-row gap-2">
                                     <Button variant="danger" on:click=move |_| { set_alert.set(false); set_toast_msg.set("Moved to Recently Deleted".to_string()); set_toast.set(true); }>"Delete"</Button>
                                     <Button variant="secondary" on:click=move |_| { set_alert.set(false); }>"Cancel"</Button>
                                 </div>
-                            </div>
+                            </Panel>
                         </div>
                     </div>
                 </Show>

@@ -176,11 +176,70 @@ fn InfoRow(
     }
 }
 
+/// Places its child in the top end corner, 16 from the edges, at most 360
+/// wide.
 #[component]
 fn Overlay(children: Children) -> impl IntoView {
     view! {
-        <div class="absolute right-[16px] top-[64px] z-50 flex flex-col gap-2 w-[360px] max-w-full p-4 rounded-lg bg-surface border border-divider shadow-lg dark:bg-surface dark:border-divider">
+        <div class="absolute right-[16px] top-[64px] z-50 flex flex-col w-[360px] max-w-full">
             {children()}
         </div>
+    }
+}
+
+/// A raised surface: the `QPanel` template. The class sizes, places, and
+/// spaces it.
+#[component]
+fn Panel(children: Children) -> impl IntoView {
+    view! {
+        <div widget="QPanel" class="flex flex-col">
+            {children()}
+        </div>
+    }
+}
+
+/// A confirmation: check, message, and Dismiss on a panel. `on:click` is the
+/// Dismiss action.
+#[component]
+fn Toast(#[prop(into)] message: String) -> impl IntoView {
+    view! {
+        <div widget="QPanel" class="flex flex-row items-center w-full gap-3 p-4">
+            <Icon name="check" class="w-[16px] text-success dark:text-success" />
+            <span class="text-body text-primary flex-1 min-w-0 dark:text-primary">{message}</span>
+            <Button variant="ghost">"Dismiss"</Button>
+        </div>
+    }
+}
+
+/// A menu under the control before it: the `QMenuPanel` template.
+#[component]
+fn Menu(children: Children) -> impl IntoView {
+    view! {
+        <div widget="QMenuPanel" class="flex flex-col w-[220px] p-1" data-popover="below">
+            {children()}
+        </div>
+    }
+}
+
+/// One menu item: the `QMenuItem` template.
+#[component]
+fn MenuItem(
+    #[prop(optional, default = false)] selected: bool,
+    children: Children,
+) -> impl IntoView {
+    view! {
+        <button widget="QMenuItem" class="w-full h-[32px]">
+            {children()}
+        </button>
+    }
+}
+
+/// A column header that sorts on click: the `QHeader` template.
+#[component]
+fn SortHeader(children: Children) -> impl IntoView {
+    view! {
+        <button widget="QHeader">
+            {children()}
+        </button>
     }
 }

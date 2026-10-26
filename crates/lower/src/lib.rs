@@ -581,8 +581,12 @@ mod tests {
             ("examples/async-dashboard/view.rs", "state.quinn_dark == 1"),
             ("examples/tailwind-gallery/view.rs", "state.quinn_width >= 768."),
             ("examples/showcase/view.rs", "state.quinn_dark == 1"),
-            // rounded-sheet (12) is a radius of 6 to Makepad's `Sdf2d.box`.
-            ("examples/showcase/view.rs", "draw_bg.border_radius: 6."),
+            // rounded-control (6) is a radius of 3 to Makepad's `Sdf2d.box`.
+            ("examples/showcase/view.rs", "draw_bg.border_radius: 3."),
+            ("examples/showcase/view.rs", "QPanel {"),
+            ("examples/showcase/view.rs", "QMenuPanel {"),
+            ("examples/showcase/view.rs", "QMenuItem {"),
+            ("examples/showcase/view.rs", "QHeader {"),
             ("examples/showcase/view.rs", "QButtonSecondary {"),
             ("examples/showcase/view.rs", "draw_bg.selected: if state.density_std"),
             ("examples/showcase/view.rs", "step: state.step\n"),

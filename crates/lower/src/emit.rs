@@ -2131,7 +2131,7 @@ fn emit_el(
     let pad = " ".repeat(indent * 4);
     // A library widget may carry an icon of its own (`QNavItem`), so it is
     // matched before the `<Icon>` element.
-    if let Some(template) = &el.widget {
+    if let Some(template) = el.widget.as_ref().filter(|_| el.tag != "div") {
         return emit_library(el, template, row, &pad, named, parent);
     }
     if let Some(glyph) = &el.icon {
@@ -2142,7 +2142,7 @@ fn emit_el(
     }
     let tag = tag_of(&el.tag);
     let style = prepared_style(el, tag, parent, stretch);
-    let widget = widget_for(&el.tag, &style);
+    let widget = el.widget.clone().unwrap_or_else(|| widget_for(&el.tag, &style));
     let mut lines = Vec::new();
     if el.bind.is_none() && el.tag != "div" && (el.value.is_some() || !el.parts.is_empty() || el.tag == "button") {
         lines.push(format!("text: {}", text_expr(el, row)));
@@ -2158,6 +2158,15 @@ fn emit_el(
         lines.push(format!("empty_text: \"{}\"", escape_script(placeholder)));
     }
     lines.extend(style_lines(el, tag, parent, stretch, row));
+    // A library container (`<div widget="QPanel">`) keeps its layout and
+    // children; the template paints it.
+    // A surface takes the pointer, as an element does in CSS, so a click on
+    // a toast's or a dialog's empty space does not reach the page under it.
+    if el.widget.is_some() {
+        lines.retain(|line| !line.starts_with("draw_bg.") && !line.starts_with("show_bg"));
+        lines.push("draw_bg.dark: if state.quinn_dark == 1 { 1. } else { 0. }".into());
+        lines.push("cursor: MouseCursor.Arrow".into());
+    }
     // CSS does not clip unless `overflow-*` asks; Makepad views do. A
     // library widget's focus ring draws past its face and has to show
     // through every container whose edge it sits on.
@@ -2663,6 +2672,9 @@ fn library_toggle_lines(
     // `Div` always gets a flow; drop it unless the class asked for one.
     if !class_sets(&el.class, |style| style.flow.is_some()) {
         layout.retain(|line| !line.starts_with("flow:"));
+    }
+    if !class_sets(&el.class, |style| style.width.is_some()) {
+        layout.retain(|line| !line.starts_with("width:"));
     }
     if !class_sets(&el.class, |style| style.height.is_some() || style.min_control) {
         layout.retain(|line| !line.starts_with("height:"));

@@ -334,18 +334,11 @@ script_mod! {
         }
     }
 
-    // A navigation row: icon and label on a row face. The face is clear,
-    // tinted under the pointer, and the selection fill when selected; the
-    // label follows. The lowerer sets the icon, its ink, and the responsive
-    // layout from the component's class.
-    mod.widgets.QNavItem = mod.widgets.QToggle{
-        width: Fill
-        icon_walk: Walk{width: 16 height: 16}
+    // A row face shared by navigation rows, menu items, and header cells:
+    // clear at rest, tinted under the pointer, the selection fill when
+    // selected. Focus is a 2-unit ring on the row's own edge.
+    mod.widgets.QRow = mod.widgets.QToggle{
         draw_text +: {
-            // A long name ends in an ellipsis, as a sidebar row does. Text
-            // wraps only in a wrapping flow, and there the label would drop
-            // below the icon instead of beside it.
-            text_overflow: Ellipsis
             color_selected: #x1e3a8a
             color_selected_dark: #xeff6ff
         }
@@ -353,11 +346,14 @@ script_mod! {
             corner: uniform(6.0)
             face_hover: uniform(#xe2e8f0)
             face_hover_dark: uniform(#x334155)
+            face_down: uniform(#xcbd5e1)
+            face_down_dark: uniform(#x475569)
             face_selected: uniform(#xdbeafe)
             face_selected_dark: uniform(#x1e3a8a)
             pixel: fn() {
                 let sdf = Sdf2d.viewport(self.pos * self.rect_size)
                 let hover = mix(self.face_hover, self.face_hover_dark, self.dark)
+                    .mix(mix(self.face_down, self.face_down_dark, self.dark), self.down)
                 let selected = mix(self.face_selected, self.face_selected_dark, self.dark)
                 let face = mix(vec4(hover.rgb, 0.0), hover, self.hover * (1.0 - self.selected))
                     .mix(selected, self.selected)
@@ -370,6 +366,86 @@ script_mod! {
                 }
                 return sdf.result
             }
+        }
+    }
+
+    // A navigation row: icon and label. The lowerer sets the icon, its ink,
+    // and the responsive layout from the component's class.
+    mod.widgets.QNavItem = mod.widgets.QRow{
+        width: Fill
+        icon_walk: Walk{width: 16 height: 16}
+        draw_text +: {
+            // A long name ends in an ellipsis, as a sidebar row does. Text
+            // wraps only in a wrapping flow, and there the label would drop
+            // below the icon instead of beside it.
+            text_overflow: Ellipsis
+        }
+    }
+
+    // A menu item on a panel: a full-width row, body text.
+    mod.widgets.QMenuItem = mod.widgets.QRow{
+        width: Fill
+        padding: Inset{left: 12 right: 12}
+        draw_bg +: {
+            face_hover: #xf1f5f9
+            face_hover_dark: #x1e293b
+            face_down: #xe2e8f0
+            face_down_dark: #x334155
+        }
+    }
+
+    // A column header that sorts: caption type in the secondary ink.
+    mod.widgets.QHeader = mod.widgets.QRow{
+        padding: Inset{left: 12 right: 12}
+        draw_text +: {
+            color: #x475569
+            color_hover: #x475569
+            color_dark: #xcbd5e1
+            text_style: TextStyle{font_size: 9. font_family: FontFamily{latin := FontMember{res: crate_resource("makepad_widgets:resources/Inter.ttf") asc: 0.0 desc: 0.0 weight: 400.0}}}
+        }
+    }
+
+    // A raised surface: face, hairline, and shadow, light and dark. Menus,
+    // toasts, dialogs, and drawers sit on it. `corner` is the visible radius.
+    mod.widgets.QPanel = mod.widgets.RoundedShadowView{
+        draw_bg +: {
+            dark: uniform(0.0)
+            corner: uniform(12.0)
+            face: uniform(#xffffff)
+            face_dark: uniform(#x111827)
+            edge: uniform(#xcbd5e1)
+            edge_dark: uniform(#x334155)
+            shade: uniform(#x0f172a24)
+            shade_dark: uniform(#x00000099)
+            border_size: 1.0
+            shadow_radius: 16.0
+            shadow_offset: vec2(0., 6.)
+            pixel: fn() {
+                let sdf = Sdf2d.viewport(self.pos * self.rect_size3)
+                sdf.box(
+                    self.sdf_rect_pos.x
+                    self.sdf_rect_pos.y
+                    self.sdf_rect_size.x
+                    self.sdf_rect_size.y
+                    self.corner * 0.5
+                )
+                if sdf.shape > -1.0 {
+                    let m = self.shadow_radius
+                    let o = self.shadow_offset + self.rect_shift
+                    let v = GaussShadow.rounded_box_shadow(vec2(m) + o self.rect_size2+o self.pos * (self.rect_size3+vec2(m)) self.shadow_radius*0.5 self.corner)
+                    sdf.clear(mix(self.shade, self.shade_dark, self.dark) * v)
+                }
+                sdf.fill_keep(mix(self.face, self.face_dark, self.dark))
+                sdf.stroke(mix(self.edge, self.edge_dark, self.dark), self.border_size)
+                return sdf.result
+            }
+        }
+    }
+
+    // A menu's panel: the same surface with a tighter corner.
+    mod.widgets.QMenuPanel = mod.widgets.QPanel{
+        draw_bg +: {
+            corner: 8.0
         }
     }
 

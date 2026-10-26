@@ -302,6 +302,31 @@ pub struct Shadow {
 }
 
 impl Style {
+    /// Whether the style sets anything a library template owns: fills, inks,
+    /// borders, radii, shadows, gradients, type, or state colors. Size,
+    /// position, spacing, and flow are layout and stay with the call site.
+    pub fn paints(&self) -> bool {
+        self.color.is_some()
+            || self.background.is_some()
+            || self.hover_bg.is_some()
+            || self.active_bg.is_some()
+            || self.disabled_bg.is_some()
+            || self.focus_bg.is_some()
+            || self.hover_fg.is_some()
+            || self.active_fg.is_some()
+            || self.disabled_fg.is_some()
+            || self.focus_fg.is_some()
+            || self.border_width.is_some()
+            || self.border_color.is_some()
+            || self.radius.is_some()
+            || self.gradient.is_some()
+            || self.shadow.is_some()
+            || self.vibrancy
+            || self.font_size.is_some()
+            || self.font_weight.is_some()
+            || self.line_height.is_some()
+    }
+
     pub fn merge_from(&mut self, over: &Style) {
         if over.flow.is_some() {
             self.flow = over.flow;

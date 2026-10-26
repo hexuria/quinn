@@ -1377,7 +1377,7 @@ impl Build {
                 }
                 "item" => {}
                 "data-popover" => popover = true,
-                "widget" if tag == "button" || tag == "input" => {
+                "widget" if tag == "button" || tag == "input" || tag == "div" => {
                     let name = lit_string(expr).ok_or("widget must be a string literal")?;
                     if !LIBRARY_WIDGETS.contains(&name.as_str()) {
                         return Err(format!(
@@ -1743,6 +1743,10 @@ const LIBRARY_WIDGETS: &[&str] = &[
     "QSwitch",
     "QCheckbox",
     "QNavItem",
+    "QMenuItem",
+    "QHeader",
+    "QPanel",
+    "QMenuPanel",
 ];
 
 /// A library widget takes its look from its template. The call site picks the
@@ -1768,22 +1772,9 @@ fn touch_library(el: &mut El, touch: &Touch) -> Result<(), String> {
             when.token, when.signal
         ));
     }
-    let mut paint = quinn_styles::parse_classes(&touch.class);
-    paint.width = None;
-    paint.height = None;
-    paint.width_explicit = false;
-    paint.height_explicit = false;
-    paint.min_width = None;
-    paint.max_width = None;
-    paint.min_height = None;
-    paint.max_height = None;
-    paint.margin = quinn_styles::Edges::default();
-    paint.flex = quinn_styles::FlexSpec::default();
-    paint.align_self = None;
-    paint.col_span = None;
-    if paint != quinn_styles::Style::default() {
+    if quinn_styles::parse_classes(&touch.class).paints() {
         return Err(format!(
-            "class=\"{}\" on <{base}> paints over its template; a class may only size and place it (w-*, h-*, min-*, max-*, m-*, flex-*)",
+            "class=\"{}\" on <{base}> paints over its template; a class may size, place, and space it, not color it",
             touch.class
         ));
     }

@@ -134,13 +134,40 @@ Props: `step` (`move || signal.get()`, default 1). `bind:value` is forwarded.
 
 The value moves by `step` (Shift and an arrow for ten steps) and snaps to its multiples. The showcase passes the Copies stepper: with Copies at 5, the right arrow moved Level from 50 to 55 to 60.
 
-## Overlay
+## Panel
 
-Anatomy: surface, 1px divider, radius 12, padding 16, shadow, width 360, `max-w-full`. Placed `right-[16px] top-[64px]`, so it clears the toolbar. Children are the message and the action.
+Anatomy: the `QPanel` template, a raised surface: face, 1-unit hairline, radius 12, and a soft shadow, light and dark. A class sizes, places, and spaces it (`gap-4 w-[480px] p-6`); it does not color it. A panel takes the pointer, so a click on its empty space does not reach what is under it.
 
-A toast uses it. It does not queue, does not cap at three, and does not flip when it would leave the window. Edge flip is unsupported. The gallery pins four small surfaces 8px from the corners of a frame instead.
+Dialogs, the navigation drawer, and toasts sit on it. Dialogs are centered over a scrim that also takes the pointer; Tab stays inside and Escape closes the top one.
 
-Dialogs in the showcase are not this component. They are a scrim plus a `rounded-lg` surface (radius 12) with a scrolling body (`max-h-[240px]`) and actions outside that scroll. Preferred widths 400 and 480. Focus is not trapped. Escape does not close them. Both are unsupported.
+## Overlay and Toast
+
+`Overlay` only places its child: `right-[16px] top-[64px]`, width 360, `max-w-full`, so it clears the toolbar. `Toast` is the panel inside it: a check, the message, and Dismiss. `on:click` on `Toast` is the Dismiss action.
+
+It does not queue, does not cap at three, and does not flip when it would leave the window.
+
+```rust
+<Overlay>
+    <Toast message=toast_msg on:click=move |_| { set_toast.set(false); } />
+</Overlay>
+```
+
+## Menu and MenuItem
+
+`Menu` is a `QMenuPanel` (the panel with radius 8) placed under the control before it, flipping above it near the bottom edge. Each `MenuItem` is a `QMenuItem` row: clear, tinted under the pointer, a keyboard ring on its edge. While a menu is open it gets every event before the page, so an item over a field takes the click.
+
+```rust
+<Button variant="secondary" on:click=move |_| { set_menu.update(|value| *value = !*value); }>{choice}</Button>
+<Show when=move || menu.get()>
+    <Menu>
+        <MenuItem on:click=move |_| { set_choice.set("iCloud".to_string()); set_menu.set(false); }>"iCloud"</MenuItem>
+    </Menu>
+</Show>
+```
+
+## SortHeader
+
+A column header that acts on click: the `QHeader` template, caption type in the secondary ink, tinted under the pointer. It does not show a sort direction.
 
 ## Segmented control
 

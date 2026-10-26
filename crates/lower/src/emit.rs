@@ -9,12 +9,39 @@ use quinn_styles::{parse_classes, parse_classes_in, shell_variants, AlignSpec, F
 use crate::model::*;
 use crate::Shell;
 
+#[derive(Clone, Copy)]
+struct SlotFrame {
+    flow: FlowSpec,
+    gap: f64,
+    cross: Option<quinn_styles::CrossAlign>,
+}
+
 thread_local! {
     static DEFER_PORTALS: RefCell<Vec<Vec<ViewNode>>> = const { RefCell::new(Vec::new()) };
     /// Immediate children of an `md:flex-row items-stretch` parent fill the
     /// cross axis once the window is wide enough. The static parent flow is
     /// still a column, so height would otherwise stay Fit.
     static ROW_AT: Cell<Option<f64>> = const { Cell::new(None) };
+    /// `{children()}` is one returned widget, so several children share a
+    /// wrapper. That wrapper has to follow the parent row, or an icon and a
+    /// label stack and the label is clipped by the control height.
+    static SLOT_FRAME: Cell<SlotFrame> = const {
+        Cell::new(SlotFrame {
+            flow: FlowSpec::Column,
+            gap: 0.0,
+            cross: None,
+        })
+    };
+}
+
+fn bind_slot_frame(flow: FlowSpec, style: &Style) -> SlotFrame {
+    SLOT_FRAME.with(|cell| {
+        cell.replace(SlotFrame {
+            flow,
+            gap: style.gap.unwrap_or(0.0),
+            cross: style.cross_align,
+        })
+    })
 }
 
 fn clear_portals() {
@@ -1552,7 +1579,14 @@ fn emit_node(
                 }
                 return out;
             }
-            let body = slot_body(nodes, shows, slots, routes, pass_root);
+            let body = slot_body(
+                nodes,
+                SLOT_FRAME.with(Cell::get),
+                shows,
+                slots,
+                routes,
+                pass_root,
+            );
             let call = script_call(fn_name, pass_root, arg.as_deref());
             slots.push_str(&format!(
                 "        {} {{\n{body}        }}\n",
@@ -1569,7 +1603,7 @@ fn emit_node(
                     "quinn_route_{}",
                     routes.matches("if state.route ==").count() + 1
                 );
-                let body = slot_body(nodes, shows, slots, routes, pass_root);
+                let body = slot_body(nodes, SlotFrame::column(), shows, slots, routes, pass_root);
                 let path = escape_script(path);
                 let on = script_call(&format!("{name}_on"), pass_root, None);
                 let off = format!("{name}_off()");
@@ -1694,7 +1728,7 @@ fn function_body(
     routes: &mut String,
     pass_root: bool,
 ) -> String {
-    slot_body(nodes, shows, slots, routes, pass_root)
+    slot_body(nodes, SlotFrame::column(), shows, slots, routes, pass_root)
 }
 
 fn phase_any(jobs: &[String], phase: &str) -> String {
@@ -1734,9 +1768,21 @@ fn script_call(name: &str, pass_root: bool, arg: Option<&str>) -> String {
     format!("{name}({})", params.join(", "))
 }
 
-/// One script function returns one widget. Several children share a fit column.
+impl SlotFrame {
+    const fn column() -> Self {
+        Self {
+            flow: FlowSpec::Column,
+            gap: 0.0,
+            cross: None,
+        }
+    }
+}
+
+/// One script function returns one widget. Several children share a fit
+/// wrapper that uses the parent's flow, gap, and cross alignment.
 fn slot_body(
     nodes: &[ViewNode],
+    frame: SlotFrame,
     shows: &mut ShowCursor<'_>,
     slots: &mut String,
     routes: &mut String,
@@ -1758,7 +1804,7 @@ fn slot_body(
             node,
             4,
             None,
-            FlowSpec::Column,
+            frame.flow,
             false,
             shows,
             slots,
@@ -1766,7 +1812,29 @@ fn slot_body(
             pass_root,
         ));
     }
-    format!("            RoundedView {{\n                width: Fit\n                height: Fit\n                flow: Down\n{inner}            }}\n")
+    let flow = match frame.flow {
+        FlowSpec::Column => "Down".to_string(),
+        FlowSpec::Row => {
+            let align = match frame.cross {
+                Some(quinn_styles::CrossAlign::Center) => "Center",
+                Some(quinn_styles::CrossAlign::End) => "Bottom",
+                Some(quinn_styles::CrossAlign::Start)
+                | Some(quinn_styles::CrossAlign::Stretch)
+                | None => "Top",
+            };
+            if align == "Top" {
+                "Right".to_string()
+            } else {
+                format!("Flow.Right{{wrap: false row_align: RowAlign.{align}}}")
+            }
+        }
+    };
+    let spacing = if frame.gap > 0.0 {
+        format!("                spacing: {}\n", script_num(frame.gap))
+    } else {
+        String::new()
+    };
+    format!("            RoundedView {{\n                width: Fit\n                height: Fit\n                flow: {flow}\n{spacing}{inner}            }}\n")
 }
 
 /// The widget a slot or route function returns. Named bindings stay inside it.
@@ -1779,7 +1847,14 @@ fn emit_returned(
 ) -> String {
     match node {
         ViewNode::Slot { fn_name, nodes, .. } if fn_name.is_empty() => {
-            slot_body(nodes, shows, slots, routes, pass_root)
+            slot_body(
+                nodes,
+                SLOT_FRAME.with(Cell::get),
+                shows,
+                slots,
+                routes,
+                pass_root,
+            )
         }
         ViewNode::El(el) => emit_el(
             el,
@@ -2012,6 +2087,7 @@ fn emit_el(
             let flow_pad = " ".repeat((indent + 1) * 4);
             let mut flow_body = String::new();
             let prev_row = ROW_AT.with(|cell| cell.replace(row_stretch_at(&el.class)));
+            let prev_frame = bind_slot_frame(child_flow, &child_style);
             for child in &flow_nodes {
                 flow_body.push_str(&emit_node(
                     child,
@@ -2026,6 +2102,7 @@ fn emit_el(
                 ));
             }
             ROW_AT.with(|cell| cell.set(prev_row));
+            SLOT_FRAME.with(|cell| cell.set(prev_frame));
             let flow_props = if flow_lines.is_empty() {
                 format!("{flow_pad}    flow: Down\n")
             } else {
@@ -2075,6 +2152,7 @@ fn emit_el(
             .collect::<String>();
         let mut children = String::new();
         let prev_row = ROW_AT.with(|cell| cell.replace(row_stretch_at(&el.class)));
+        let prev_frame = bind_slot_frame(child_flow, &child_style);
         for child in &el.children {
             children.push_str(&emit_node(
                 child,
@@ -2089,6 +2167,7 @@ fn emit_el(
             ));
         }
         ROW_AT.with(|cell| cell.set(prev_row));
+        SLOT_FRAME.with(|cell| cell.set(prev_frame));
         let head = if named {
             format!("{pad}{} := {widget} {{\n", el.name)
         } else {

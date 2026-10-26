@@ -9,7 +9,7 @@ script_mod! {
     use mod.prelude.widgets_internal.*
     use mod.widgets.*
 
-    // The ring is 2 units of focus color on the button's own edge, so focus
+    // The ring is 1 unit of focus color on the button's own edge, so focus
     // never changes the outer geometry. A click does not take key focus: the
     // ring is for the keyboard.
     mod.widgets.QuinnButton = mod.widgets.Button{
@@ -28,8 +28,8 @@ script_mod! {
                 sdf.fill_keep(self.face_fill())
                 sdf.stroke(self.face_stroke(), self.border_size)
                 if self.focus > 0.0 {
-                    sdf.box(1., 1., self.rect_size.x - 2., self.rect_size.y - 2., self.border_radius)
-                    sdf.stroke(vec4(self.ring_color.rgb, self.ring_color.a * self.focus), 2.)
+                    sdf.box(0.5, 0.5, self.rect_size.x - 1., self.rect_size.y - 1., self.border_radius)
+                    sdf.stroke(vec4(self.ring_color.rgb, self.ring_color.a * self.focus), 1.)
                 }
                 return sdf.result
             }
@@ -42,9 +42,12 @@ script_mod! {
     // (disabled at creation; the animator's disabled track starts at off) are
     // set per instance from state; hover, down, and focus are the animator's.
     // A click does not take key focus, so the ring is a keyboard ring. It is
-    // drawn outside the face: the rect carries a `halo` of 4 on every side
-    // (2 of gap, 2 of ring) and a margin of -4 takes it back out of layout,
-    // so the face is the size the lowerer asked for. `corner` is the
+    // one unit wide and eases in and out. `ring_offset` is how far its outer
+    // edge sits from the face: 0 recolors the face's own edge (bordered and
+    // clear faces), 3 leaves a 2-unit gap (filled faces, where an edge in the
+    // accent would vanish into the fill). The rect carries a `halo` of 4 on
+    // every side for that ring and a margin of -4 takes it back out of
+    // layout, so the face is the size the lowerer asked for. `corner` is the
     // visible radius of the face in pixels.
     mod.widgets.QButton = mod.widgets.Button{
         width: Fit
@@ -53,6 +56,20 @@ script_mod! {
         padding: Inset{left: 16 right: 16}
         align: Center
         grab_key_focus: false
+        animator +: {
+            focus: {
+                off: AnimatorState{
+                    from: {all: Forward {duration: 0.18}}
+                    ease: InOutQuad
+                    apply: {draw_bg: {focus: 0.0} draw_text: {focus: 0.0}}
+                }
+                on: AnimatorState{
+                    from: {all: Forward {duration: 0.18}}
+                    ease: InOutQuad
+                    apply: {draw_bg: {focus: 1.0} draw_text: {focus: 1.0}}
+                }
+            }
+        }
         draw_text +: {
             dark: uniform(0.0)
             selected: uniform(0.0)
@@ -81,6 +98,7 @@ script_mod! {
             selected: uniform(0.0)
             inactive: uniform(0.0)
             halo: uniform(4.0)
+            ring_offset: uniform(3.0)
             corner: uniform(6.0)
             border_size: uniform(0.0)
             color: uniform(#x1d4ed8)
@@ -122,8 +140,15 @@ script_mod! {
                 sdf.stroke(stroke, self.border_size)
                 if self.focus > 0.0 {
                     let ring = mix(self.ring_color, self.ring_color_dark, self.dark)
-                    sdf.box(1., 1., self.rect_size.x - 2., self.rect_size.y - 2., (self.corner + self.halo - 1.) * 0.5)
-                    sdf.stroke(vec4(ring.rgb, ring.a * self.focus), 2.)
+                    let at = self.halo - self.ring_offset + 0.5
+                    sdf.box(
+                        at,
+                        at,
+                        self.rect_size.x - at * 2.,
+                        self.rect_size.y - at * 2.,
+                        (self.corner + self.ring_offset - 0.5) * 0.5
+                    )
+                    sdf.stroke(vec4(ring.rgb, ring.a * self.focus), 1.)
                 }
                 return sdf.result
             }
@@ -141,6 +166,7 @@ script_mod! {
         }
         draw_bg +: {
             border_size: 1.0
+            ring_offset: 0.0
             color: #xffffff
             color_hover: #xf1f5f9
             color_down: #xe2e8f0
@@ -165,6 +191,7 @@ script_mod! {
             color_down_dark: #xf8fafc
         }
         draw_bg +: {
+            ring_offset: 0.0
             // Clear faces carry the hover hue so the fade in does not pass
             // through grey.
             color: #xf1f5f900
@@ -203,6 +230,7 @@ script_mod! {
         }
         draw_bg +: {
             border_size: 1.0
+            ring_offset: 0.0
             color: #xf1f5f900
             color_hover: #xe2e8f0
             color_down: #xcbd5e1
@@ -225,6 +253,20 @@ script_mod! {
         margin: 0.
         align: Align{x: 0. y: 0.5}
         grab_key_focus: false
+        animator +: {
+            focus: {
+                off: AnimatorState{
+                    from: {all: Forward {duration: 0.18}}
+                    ease: InOutQuad
+                    apply: {draw_bg: {focus: 0.0} draw_text: {focus: 0.0}}
+                }
+                on: AnimatorState{
+                    from: {all: Forward {duration: 0.18}}
+                    ease: InOutQuad
+                    apply: {draw_bg: {focus: 1.0} draw_text: {focus: 1.0}}
+                }
+            }
+        }
         draw_text +: {
             dark: uniform(0.0)
             selected: uniform(0.0)
@@ -267,7 +309,7 @@ script_mod! {
     }
 
     // 40 by 24 track, 16 thumb, 4 from the ends; 2 units of room on the
-    // start edge for the focus ring around the track.
+    // start edge for the 1-unit focus ring a unit off the track.
     mod.widgets.QSwitch = mod.widgets.QToggle{
         padding: Inset{left: 52}
         draw_bg +: {
@@ -290,8 +332,8 @@ script_mod! {
                 sdf.stroke(vec4(edge.rgb, edge.a * (1.0 - self.selected)), 1.)
                 if self.focus > 0.0 {
                     let ring = mix(self.ring_color, self.ring_color_dark, self.dark)
-                    sdf.box(1., cy - 13., 42., 26., 7.)
-                    sdf.stroke(vec4(ring.rgb, ring.a * self.focus), 2.)
+                    sdf.box(0.5, cy - 13.5, 43., 27., 7.)
+                    sdf.stroke(vec4(ring.rgb, ring.a * self.focus), 1.)
                 }
                 return sdf.result
             }
@@ -299,7 +341,7 @@ script_mod! {
     }
 
     // 18-unit box, radius 4, a drawn check; 2 units of room on the start
-    // edge for the focus ring around the box.
+    // edge for the 1-unit focus ring a unit off the box.
     mod.widgets.QCheckbox = mod.widgets.QToggle{
         padding: Inset{left: 30}
         draw_bg +: {
@@ -326,8 +368,8 @@ script_mod! {
                 }
                 if self.focus > 0.0 {
                     let ring = mix(self.ring_color, self.ring_color_dark, self.dark)
-                    sdf.box(1., cy - 10., 20., 20., 3.)
-                    sdf.stroke(vec4(ring.rgb, ring.a * self.focus), 2.)
+                    sdf.box(0.5, cy - 10.5, 21., 21., 3.)
+                    sdf.stroke(vec4(ring.rgb, ring.a * self.focus), 1.)
                 }
                 return sdf.result
             }
@@ -336,7 +378,7 @@ script_mod! {
 
     // A row face shared by navigation rows, menu items, and header cells:
     // clear at rest, tinted under the pointer, the selection fill when
-    // selected. Focus is a 2-unit ring on the row's own edge.
+    // selected. Focus recolors the row's own edge, 1 unit wide.
     mod.widgets.QRow = mod.widgets.QToggle{
         draw_text +: {
             color_selected: #x1e3a8a
@@ -361,8 +403,8 @@ script_mod! {
                 sdf.fill_keep(face)
                 if self.focus > 0.0 {
                     let ring = mix(self.ring_color, self.ring_color_dark, self.dark)
-                    sdf.box(1., 1., self.rect_size.x - 2., self.rect_size.y - 2., self.corner * 0.5)
-                    sdf.stroke(vec4(ring.rgb, ring.a * self.focus), 2.)
+                    sdf.box(0.5, 0.5, self.rect_size.x - 1., self.rect_size.y - 1., self.corner * 0.5)
+                    sdf.stroke(vec4(ring.rgb, ring.a * self.focus), 1.)
                 }
                 return sdf.result
             }
@@ -490,9 +532,8 @@ script_mod! {
         }
     }
 
-    // Flat face and boundary from the lowered tokens. Focus recolors and
-    // thickens that one boundary; a ring drawn over it left the old border
-    // showing inside the new one.
+    // Flat face and boundary from the lowered tokens. Focus recolors that one
+    // boundary; a ring drawn over it left the old border showing inside.
     mod.widgets.QuinnTextInputBase = #(QuinnTextInput::register_widget(vm))
     mod.widgets.QuinnTextInput = set_type_default() do mod.widgets.QuinnTextInputBase{
         ..mod.widgets.TextInput,
@@ -502,7 +543,7 @@ script_mod! {
                 let sdf = Sdf2d.viewport(self.pos * self.rect_size)
                 let rest = mix(self.border_color, self.border_color_disabled, self.disabled)
                 let edge = mix(rest, self.ring_color, self.focus)
-                let width = mix(self.border_size, max(self.border_size, 2.0), self.focus)
+                let width = self.border_size
                 let inset = width * 0.5
                 sdf.box(
                     inset,
@@ -521,7 +562,7 @@ script_mod! {
     // The library text field. As with QButton, the template owns every face,
     // border, ink, and state, light and dark; the lowerer sets text, the
     // handler, size, and the `dark`, `invalid`, and `inactive` flags. Focus
-    // turns the border to the accent (danger when invalid) and 2 units wide.
+    // turns the border to the accent (danger when invalid); its width stays.
     // `corner` is the visible radius in pixels.
     mod.widgets.QInput = mod.widgets.QuinnTextInput{
         width: Fill
@@ -581,10 +622,10 @@ script_mod! {
                     .mix(danger, self.invalid)
                 let ring = mix(self.ring_color, self.ring_color_dark, self.dark)
                     .mix(danger, self.invalid)
-                // Focus recolors and thickens the one border, inside the
-                // edge; there is no second line over it.
+                // Focus recolors the one border; it does not thicken it and
+                // there is no second line over it.
                 let edge = mix(rest, ring, self.focus)
-                let width = mix(self.border_size, 2.0, self.focus)
+                let width = self.border_size
                 let inset = width * 0.5
                 sdf.box(
                     inset,
@@ -708,8 +749,8 @@ script_mod! {
                 sdf.fill(self.track_color)
                 sdf.box(0., cy - 2., cx, 4., 2.)
                 sdf.fill(self.fill_color)
-                sdf.circle(cx, cy, 11.)
-                sdf.stroke(vec4(self.ring_color.rgb, self.ring_color.a * self.focus), 2.)
+                sdf.circle(cx, cy, 10.)
+                sdf.stroke(vec4(self.ring_color.rgb, self.ring_color.a * self.focus), 1.)
                 sdf.circle(cx, cy, 8.)
                 sdf.fill_keep(self.thumb_color)
                 sdf.stroke(self.thumb_border, 1.)
@@ -756,6 +797,35 @@ impl ScriptHook for QuinnTextInput {
         if text != self.before {
             vm.with_cx_mut(|cx| self.input.set_text(cx, &text));
         }
+        // A render reapplies the animator at rest. A field that still holds
+        // the key focus (a theme switch while typing) takes its focus look
+        // back.
+        let area = self.input.area();
+        vm.with_cx_mut(|cx| {
+            if cx.has_key_focus(area) {
+                self.input.animator_cut(cx, ids!(focus.on));
+            }
+        });
+    }
+}
+
+impl QuinnTextInput {
+    /// Makepad tells a field it lost the key focus only while the field is
+    /// drawn. A click that blurs the field and hides it in the same render (a
+    /// nav row switching pages) left the focus look on, still showing when
+    /// the page came back. The look follows the real focus here instead.
+    /// `cut` jumps to rest for a field coming back into view.
+    fn settle_focus_look(&mut self, cx: &mut Cx, cut: bool) {
+        if cx.has_key_focus(self.input.area())
+            || !self.input.animator_in_state(cx, ids!(focus.on))
+        {
+            return;
+        }
+        if cut {
+            self.input.animator_cut(cx, ids!(focus.off));
+        } else {
+            self.input.animator_play(cx, ids!(focus.off));
+        }
     }
 }
 
@@ -771,9 +841,13 @@ impl Widget for QuinnTextInput {
 
     fn handle_event(&mut self, cx: &mut Cx, event: &Event, scope: &mut Scope) {
         self.input.handle_event(cx, event, scope);
+        if let Event::KeyFocus(_) = event {
+            self.settle_focus_look(cx, false);
+        }
     }
 
     fn draw_walk(&mut self, cx: &mut Cx2d, scope: &mut Scope, walk: Walk) -> DrawStep {
+        self.settle_focus_look(cx, true);
         self.input.draw_walk(cx, scope, walk)
     }
 

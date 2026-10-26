@@ -904,6 +904,16 @@ pub fn drive_shell(cx: &mut Cx, event: &Event) {
     if let Event::KeyDown(ke) = event {
         forward_key(cx, ke);
     }
+    // A press outside the focused widget blurs it, as it does in a browser.
+    // Rows, segments, and toggles do not take key focus when clicked, so a
+    // field focused before a click on one kept its focus look. A field that
+    // was just clicked has already taken the focus, so it keeps it.
+    if let Event::MouseDown(down) = event {
+        let focus = cx.key_focus();
+        if !focus.is_empty() && !focus.clipped_rect(cx).contains(down.abs) {
+            cx.set_key_focus(Area::Empty);
+        }
+    }
     let poll = matches!(
         event,
         Event::Startup

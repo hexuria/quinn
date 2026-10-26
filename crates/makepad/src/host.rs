@@ -374,7 +374,7 @@ fn apply_label(widget: &WidgetRef, style: &Style) {
             label.set_text_color(cx(), vec4(r, g, b, a));
         }
         if let Some(size) = style.font_size {
-            label.draw_text.text_style.font_size = size as f32;
+            label.draw_text.text_style.font_size = quinn_styles::font_size_pts(size) as f32;
         }
         apply_walk(&mut label.walk, style);
     }
@@ -542,7 +542,10 @@ fn label_script(style: &Style) -> String {
         parts.push(format!("draw_text.color: {hex}"));
     }
     if let Some(size) = style.font_size {
-        parts.push(format!("draw_text.text_style.font_size: {size}"));
+        parts.push(format!(
+            "draw_text.text_style.font_size: {}",
+            quinn_styles::font_size_pts(size)
+        ));
     }
     parts.join(" ")
 }
@@ -559,7 +562,10 @@ fn chrome_script(style: &Style) -> String {
         parts.push(format!("draw_bg.border_color: {}", color.hex_script()));
     }
     if let Some(radius) = style.radius {
-        parts.push(format!("draw_bg.border_radius: {radius}"));
+        parts.push(format!(
+            "draw_bg.border_radius: {}",
+            quinn_styles::sdf_radius(radius)
+        ));
     }
     parts.join(" ")
 }
@@ -599,10 +605,16 @@ fn control_script(style: &Style) -> String {
         parts.push("margin: 0.".into());
     }
     if let Some(size) = style.font_size {
-        parts.push(format!("draw_text.text_style.font_size: {size}"));
+        parts.push(format!(
+            "draw_text.text_style.font_size: {}",
+            quinn_styles::font_size_pts(size)
+        ));
     }
     if let Some(radius) = style.radius {
-        parts.push(format!("draw_bg.border_radius: {radius}"));
+        parts.push(format!(
+            "draw_bg.border_radius: {}",
+            quinn_styles::sdf_radius(radius)
+        ));
     }
     if let Some(width) = style.border_width {
         parts.push(format!("draw_bg.border_size: {width}"));

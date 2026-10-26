@@ -318,7 +318,8 @@ pub fn emit_rust(model: &Model, shell: &Shell) -> String {
         "                                app := RoundedView {{\n{app_fields}{app_body}                                }}\n"
     ));
     children.push_str(&root_abs);
-    if !portal_body.is_empty() {
+    // The layer also hands events to open popovers before the page.
+    if !portal_body.is_empty() || has_popover(&model.nodes) {
         children.push_str(&format!(
             "                                quinn_portal := QuinnLayer {{\n{portal_body}                                }}\n"
         ));
@@ -364,6 +365,27 @@ script_mod! {{
 fn has_input(nodes: &[ViewNode]) -> bool {
     fn el(el: &El) -> bool {
         el.input.is_some() || el.children.iter().any(walk)
+    }
+    fn walk(node: &ViewNode) -> bool {
+        match node {
+            ViewNode::El(item) => el(item),
+            ViewNode::Show { child, .. } => walk(child),
+            ViewNode::For { child, .. } => el(child),
+            ViewNode::Slot { nodes, .. } => nodes.iter().any(walk),
+            ViewNode::Routes { routes } => routes.iter().any(|(_, nodes)| nodes.iter().any(walk)),
+            ViewNode::Suspense { fallback, child, .. }
+            | ViewNode::Boundary { fallback, child, .. } => {
+                fallback.iter().any(walk) || walk(child)
+            }
+            ViewNode::Portal { nodes } => nodes.iter().any(walk),
+        }
+    }
+    nodes.iter().any(walk)
+}
+
+fn has_popover(nodes: &[ViewNode]) -> bool {
+    fn el(el: &El) -> bool {
+        el.popover || el.children.iter().any(walk)
     }
     fn walk(node: &ViewNode) -> bool {
         match node {
@@ -1279,6 +1301,52 @@ fn emit_show_fns(
     out
 }
 
+/// The off branch of a `<Show>` or route: the on branch's root widget, hidden.
+///
+/// Makepad's `View` keeps its old children when a render hands it an empty
+/// child list (it reads that as a parse still streaming in), so returning
+/// nothing left the last face on screen at its old size. A hidden widget of
+/// the same type keeps the list non-empty and the slot's index stable, and
+/// an invisible view takes no space or spacing.
+fn off_body(body: &str) -> String {
+    match branch_root(body) {
+        Some((_, widget)) => {
+            format!("            {widget} {{\n                visible: false\n            }}\n")
+        }
+        None => "            0\n".into(),
+    }
+}
+
+/// The on branch of a `<Show>` or route. Makepad updates the widget already
+/// in the slot, so after the hidden placeholder the root has to turn itself
+/// back on.
+fn on_body(body: &str) -> String {
+    let Some((index, _)) = branch_root(body) else {
+        return body.to_string();
+    };
+    let mut out = String::new();
+    for (at, line) in body.lines().enumerate() {
+        out.push_str(line);
+        out.push('\n');
+        if at == index {
+            let pad = &line[..line.len() - line.trim_start().len()];
+            out.push_str(&format!("{pad}    visible: true\n"));
+        }
+    }
+    out
+}
+
+/// The first line of a branch body that opens a widget: its index and type.
+fn branch_root(body: &str) -> Option<(usize, String)> {
+    body.lines().enumerate().find_map(|(index, line)| {
+        let head = line.trim().strip_suffix(" {")?;
+        let head = head.rsplit(":= ").next()?;
+        let widget = head.starts_with(|ch: char| ch.is_ascii_uppercase())
+            && head.chars().all(|ch| ch.is_ascii_alphanumeric() || ch == '_' || ch == '.');
+        widget.then(|| (index, head.to_string()))
+    })
+}
+
 fn emit_show_fn(
     node: &ViewNode,
     cursor: &mut ShowCursor<'_>,
@@ -1352,7 +1420,9 @@ fn emit_show_fn(
             let on_call = script_call(&format!("{name}_on"), pass_root, None);
             let show_fn = script_fn(&name, pass_root, false);
             out.push_str(&format!(
-                "        {on_fn} {{\n{body}        }}\n        fn {name}_off() {{\n            0\n        }}\n        {show_fn} {{\n{resets}            if state.{signal} {{\n                {on_call}\n            }} else {{\n                {name}_off()\n            }}\n        }}\n"
+                "        {on_fn} {{\n{on}        }}\n        fn {name}_off() {{\n{off}        }}\n        {show_fn} {{\n{resets}            if state.{signal} {{\n                {on_call}\n            }} else {{\n                {name}_off()\n            }}\n        }}\n",
+                on = on_body(&body),
+                off = off_body(&body),
             ));
         }
         ViewNode::For { .. } => {}
@@ -1496,7 +1566,9 @@ fn emit_row_show_fns(
                 }
             }
             out.push_str(&format!(
-                "        fn {name}_on({args}) {{\n            let key = \"k\" + id\n{body}        }}\n        fn {name}_off() {{\n            0\n        }}\n        fn {name}({args}) {{\n{resets}            if on {{\n                {name}_on({args})\n            }} else {{\n                {name}_off()\n            }}\n        }}\n"
+                "        fn {name}_on({args}) {{\n            let key = \"k\" + id\n{on}        }}\n        fn {name}_off() {{\n{off}        }}\n        fn {name}({args}) {{\n{resets}            if on {{\n                {name}_on({args})\n            }} else {{\n                {name}_off()\n            }}\n        }}\n",
+                on = on_body(&body),
+                off = off_body(&body),
             ));
         }
         ViewNode::For { .. } => {}
@@ -1659,8 +1731,10 @@ fn emit_node(
                 let on = script_call(&format!("{name}_on"), pass_root, None);
                 let off = format!("{name}_off()");
                 routes.push_str(&format!(
-                    "        {} {{\n{body}        }}\n        fn {name}_off() {{\n            0\n        }}\n        {} {{\n            if state.route == \"{path}\" {{\n                {on}\n            }} else {{\n                {off}\n            }}\n        }}\n",
+                    "        {} {{\n{}        }}\n        fn {name}_off() {{\n{}        }}\n        {} {{\n            if state.route == \"{path}\" {{\n                {on}\n            }} else {{\n                {off}\n            }}\n        }}\n",
                     script_fn(&format!("{name}_on"), pass_root, false),
+                    on_body(&body),
+                    off_body(&body),
                     script_fn(&name, pass_root, false),
                 ));
                 calls.push_str(&format!("{pad}{}\n", script_call(&name, pass_root, None)));
@@ -1895,7 +1969,9 @@ fn slot_body(
     } else {
         "Fit"
     };
-    format!("            RoundedView {{\n                width: {width}\n                height: Fit\n                flow: {flow}\n{spacing}{align}{inner}            }}\n")
+    // A slot wrapper is layout only. It does not clip, so a library
+    // widget's focus ring can draw past the face.
+    format!("            RoundedView {{\n                width: {width}\n                height: Fit\n                flow: {flow}\n                clip_x: false\n                clip_y: false\n{spacing}{align}{inner}            }}\n")
 }
 
 fn fills_width(node: &ViewNode) -> bool {
@@ -1969,7 +2045,7 @@ fn emit_returned(
                 routes,
                 pass_root,
             );
-            format!("            RoundedView {{\n                width: Fill\n                height: Fit\n                flow: Down\n{inner}            }}\n")
+            format!("            RoundedView {{\n                width: Fill\n                height: Fit\n                flow: Down\n                clip_x: false\n                clip_y: false\n{inner}            }}\n")
         }
         other => emit_node(
             other,
@@ -2037,7 +2113,7 @@ fn emit_self_wrap(
             )
         }
     };
-    format!("{pad}RoundedView {{\n{pad}    width: {width}\n{pad}    height: {height}\n{pad}    flow: {flow}\n{align_line}{inner}{pad}}}\n")
+    format!("{pad}RoundedView {{\n{pad}    width: {width}\n{pad}    height: {height}\n{pad}    flow: {flow}\n{pad}    clip_x: false\n{pad}    clip_y: false\n{align_line}{inner}{pad}}}\n")
 }
 
 fn emit_el(
@@ -2059,19 +2135,39 @@ fn emit_el(
     if let Some(bounds) = el.range {
         return emit_range(el, bounds, row, &pad, named, parent, stretch);
     }
+    if let Some(template) = &el.widget {
+        return emit_library(el, template, row, &pad, named);
+    }
     let tag = tag_of(&el.tag);
     let style = prepared_style(el, tag, parent, stretch);
     let widget = widget_for(&el.tag, &style);
     let mut lines = Vec::new();
-    // `bind:value` omits `text:` so a reload does not assign the field and
-    // move the caret. The sibling that reads the signal still updates.
     if el.bind.is_none() && el.tag != "div" && (el.value.is_some() || !el.parts.is_empty() || el.tag == "button") {
         lines.push(format!("text: {}", text_expr(el, row)));
+    }
+    // `bind:value` is a controlled field. A render reapplies the input and
+    // resets every field the script does not set, so leaving `text:` out
+    // emptied it on each keystroke. The caret is not a script field and
+    // stays put when the text it sees is the text it already has.
+    if let Some(signal) = el.bind.as_ref().filter(|_| el.tag == "input") {
+        lines.push(format!("text: state.{signal}"));
     }
     if let Some(placeholder) = &el.placeholder {
         lines.push(format!("empty_text: \"{}\"", escape_script(placeholder)));
     }
     lines.extend(style_lines(el, tag, parent, stretch, row));
+    // CSS does not clip unless `overflow-*` asks; Makepad views do. A
+    // library widget's focus ring draws past its face and has to show
+    // through every container whose edge it sits on.
+    if matches!(tag, Tag::Div)
+        && !style.clip
+        && !style.scroll_x
+        && !style.scroll_y
+        && !lines.iter().any(|line| line.starts_with("clip_"))
+    {
+        lines.push("clip_x: false".into());
+        lines.push("clip_y: false".into());
+    }
     // Stock `Label` pads every side by `theme.mspace_1`; text boxes here are
     // the line box only, so text lines up with control and divider edges.
     if widget == "Label" && !lines.iter().any(|line| line.starts_with("padding")) {
@@ -2079,7 +2175,11 @@ fn emit_el(
     }
     if matches!(tag, Tag::Button | Tag::Input) {
         lines.push(format!("draw_bg.ring_color: {}", themed_fill("bg-focus")));
-        lines.push(format!("draw_bg.ring_gap: {}", themed_fill("bg-surface")));
+    }
+    if matches!(tag, Tag::Input) {
+        // The theme caret is white in light and dark; on a light field it
+        // was invisible.
+        lines.push(format!("draw_cursor.color: {}", themed_ink("text-primary")));
     }
     if style.grid_cols.is_some() {
         // Grid's implicit rows are 0px unless we set a size, and it rejects
@@ -2226,7 +2326,7 @@ fn emit_el(
                 "Fill"
             };
             body.push_str(&format!(
-                "{flow_pad}quinn_flow := RoundedView {{\n{flow_pad}    width: {flow_width}\n{flow_pad}    height: {flow_height}\n{flow_props}{flow_body}{flow_pad}}}\n"
+                "{flow_pad}quinn_flow := RoundedView {{\n{flow_pad}    width: {flow_width}\n{flow_pad}    height: {flow_height}\n{flow_pad}    clip_x: false\n{flow_pad}    clip_y: false\n{flow_props}{flow_body}{flow_pad}}}\n"
             ));
         }
         for child in abs_nodes.iter().copied().filter(|node| node_z(node) >= 0) {
@@ -2288,6 +2388,22 @@ fn emit_el(
     wrap_provides(&el.provides, &pad, named, widget_text)
 }
 
+/// A semantic `text-*` token as a light/dark script value.
+fn themed_ink(class: &str) -> String {
+    let pick = |dark| {
+        parse_classes_in(class, dark)
+            .color
+            .map(|color| color.hex_script())
+            .unwrap_or_else(|| "#x000000".into())
+    };
+    let (light, dark) = (pick(false), pick(true));
+    if light == dark {
+        light
+    } else {
+        format!("if state.quinn_dark == 1 {{ {dark} }} else {{ {light} }}")
+    }
+}
+
 /// A semantic `bg-*` token as a light/dark script value.
 fn themed_fill(class: &str) -> String {
     let pick = |dark| {
@@ -2324,8 +2440,16 @@ fn emit_range(
     }
     lines.push(format!("min: {}", script_num(min)));
     lines.push(format!("max: {}", script_num(max)));
-    lines.push(format!("step: {}", script_num(step)));
-    lines.push(format!("big_step: {}", script_num(step * 10.0)));
+    match &el.range_step {
+        Some(signal) => {
+            lines.push(format!("step: state.{signal}"));
+            lines.push(format!("big_step: state.{signal} * 10"));
+        }
+        None => {
+            lines.push(format!("step: {}", script_num(step)));
+            lines.push(format!("big_step: {}", script_num(step * 10.0)));
+        }
+    }
     if let Some(signal) = el.bind.as_ref().or(el.input.as_ref()) {
         lines.push(format!("value: state.{signal}"));
         lines.push(format!(
@@ -2388,6 +2512,148 @@ fn emit_icon(
         format!("{pad}Icon {{\n")
     };
     format!("{head}{inner}{pad}}}\n")
+}
+
+/// The focus-ring band around a library widget's face: `halo` in
+/// `quinn-makepad/src/widgets.rs`.
+const LIBRARY_HALO: f64 = 4.0;
+
+/// A library widget. Its template paints every state, so the element carries
+/// only text, the click handler, size, and the theme and state flags.
+fn emit_library(
+    el: &El,
+    template: &str,
+    row: Option<&RowEnv<'_>>,
+    pad: &str,
+    named: bool,
+) -> String {
+    let style = parse_classes(&el.class);
+    let lines = if el.tag == "input" {
+        library_field_lines(el, &style, row, pad)
+    } else {
+        library_button_lines(el, &style, row, pad)
+    };
+    let inner: String = lines.iter().map(|line| format!("{pad}    {line}\n")).collect();
+    let head = if named {
+        format!("{pad}{} := {template} {{\n", el.name)
+    } else {
+        format!("{pad}{template} {{\n")
+    };
+    wrap_provides(&el.provides, pad, named, format!("{head}{inner}{pad}}}\n"))
+}
+
+/// A library field: its text is the bound signal, so a render hands the
+/// field back what it holds. Height follows density; the class sizes it and
+/// may move the text inset (`pl-[36px]` clears a leading icon).
+fn library_field_lines(
+    el: &El,
+    style: &Style,
+    row: Option<&RowEnv<'_>>,
+    pad: &str,
+) -> Vec<String> {
+    let mut lines = Vec::new();
+    if let Some(signal) = &el.bind {
+        lines.push(format!("text: state.{signal}"));
+    } else if el.value.is_some() {
+        lines.push(format!("text: {}", text_expr(el, row)));
+    }
+    if let Some(placeholder) = &el.placeholder {
+        lines.push(format!("empty_text: \"{}\"", escape_script(placeholder)));
+    }
+    if let Some(signal) = &el.input {
+        lines.push(format!(
+            "on_change: |text| {{\n{pad}    state.{signal} = text\n{pad}    root.render()\n{pad}}}"
+        ));
+    }
+    let mut walk: std::collections::BTreeMap<String, String> = walk_pairs(style).into_iter().collect();
+    walk.entry("height".into())
+        .or_insert_with(|| density_height(28.0, 36.0, 48.0));
+    lines.extend(walk.into_iter().map(|(key, value)| format!("{key}: {value}")));
+    // `TextInput` centers its line in the height the padding leaves; the
+    // template's 2.5 top inset moves the capitals onto the center. A class
+    // only moves the side insets (`pl-[36px]` clears a leading icon).
+    if style.padding.left.is_some() || style.padding.right.is_some() {
+        let left = script_num(style.padding.left.unwrap_or(12.0));
+        let right = script_num(style.padding.right.unwrap_or(12.0));
+        lines.push(format!("padding: Inset{{left: {left} top: 2.5 right: {right}}}"));
+    }
+    let dark = "if state.quinn_dark == 1 { 1. } else { 0. }";
+    for part in ["draw_bg", "draw_text", "draw_cursor", "draw_selection"] {
+        lines.push(format!("{part}.dark: {dark}"));
+    }
+    if el.invalid {
+        lines.push("draw_bg.invalid: 1.".into());
+    }
+    if style.disabled {
+        lines.push("is_read_only: true".into());
+        lines.push("draw_bg.inactive: 1.".into());
+        lines.push("draw_text.inactive: 1.".into());
+    }
+    lines
+}
+
+fn library_button_lines(
+    el: &El,
+    style: &Style,
+    row: Option<&RowEnv<'_>>,
+    pad: &str,
+) -> Vec<String> {
+    let mut lines = vec![format!("text: {}", text_expr(el, row))];
+    if let Some(act) = &el.click {
+        let body = emit_act(act, row, pad);
+        lines.push(format!("on_click: || {{\n{body}{pad}}}"));
+    }
+    // The template's rect is the face plus a focus-ring halo on every side
+    // (`LIBRARY_HALO`), taken back out of layout by its negative margin.
+    // Sizes and paddings here are the face's, so each one carries the halo.
+    let halo = |value: String| match value.as_str() {
+        "Fit" | "Fill" => value,
+        _ => format!("({value}) + {}", script_num(2.0 * LIBRARY_HALO)),
+    };
+    let edge = |value: String| format!("({value}) + {}", script_num(LIBRARY_HALO));
+    let mut walk: std::collections::BTreeMap<String, String> = walk_pairs(style)
+        .into_iter()
+        .filter(|(key, _)| key != "margin")
+        .map(|(key, value)| {
+            let value = if key.ends_with("width") || key.ends_with("height") {
+                halo(value)
+            } else {
+                value
+            };
+            (key, value)
+        })
+        .collect();
+    let x = edge(density_height(8.0, 12.0, 16.0));
+    if matches!(style.width, Some(SizeSpec::Px(_))) && style.height.is_none() {
+        // A fixed width wraps a long label onto more rows and grows the
+        // button instead of clipping it.
+        walk.insert("height".into(), "Fit".into());
+        walk.insert("min_height".into(), halo(density_height(28.0, 36.0, 48.0)));
+        // `DrawText` wraps only inside a wrapping right flow.
+        lines.push("flow: Flow.Right{wrap: true}".into());
+        lines.push("label_walk: Walk{width: Fill height: Fit}".into());
+        let y = script_num(8.0 + LIBRARY_HALO);
+        lines.push(format!("padding: Inset{{left: {x} top: {y} right: {x} bottom: {y}}}"));
+    } else {
+        walk.entry("height".into())
+            .or_insert_with(|| halo(density_height(28.0, 36.0, 48.0)));
+        lines.push(format!("padding: Inset{{left: {x} right: {x}}}"));
+    }
+    lines.extend(walk.into_iter().map(|(key, value)| format!("{key}: {value}")));
+    let dark = "if state.quinn_dark == 1 { 1. } else { 0. }";
+    lines.push(format!("draw_bg.dark: {dark}"));
+    lines.push(format!("draw_text.dark: {dark}"));
+    if let Some(signal) = &el.selected {
+        let flag = format!("if {} {{ 1. }} else {{ 0. }}", class_cond(signal, row));
+        lines.push(format!("draw_bg.selected: {flag}"));
+        lines.push(format!("draw_text.selected: {flag}"));
+    }
+    if style.disabled {
+        lines.push("enabled: false".into());
+        lines.push("draw_bg.inactive: 1.".into());
+        lines.push("draw_text.inactive: 1.".into());
+    }
+    lines
 }
 
 fn div_hover_animator(style: &Style) -> Option<String> {
@@ -2502,6 +2768,20 @@ fn emit_abs_frame(
         routes,
         pass_root,
     );
+    // A painted overlay takes the pointer, as the top element does in CSS. A
+    // Makepad view claims presses only when it has a cursor, so without one
+    // a modal's scrim let clicks through to the page under it.
+    let inner = if matches!(tag, Tag::Div) && style.background.is_some() {
+        let mut lines: Vec<&str> = inner.lines().collect();
+        let pad = " ".repeat((indent + 1) * 4 + 4);
+        let cursor = format!("{pad}cursor: MouseCursor.Arrow");
+        lines.insert(1.min(lines.len()), &cursor);
+        let mut out = lines.join("\n");
+        out.push('\n');
+        out
+    } else {
+        inner
+    };
     abs_shell(&style, indent, inner)
 }
 
@@ -2562,7 +2842,7 @@ fn abs_shell(style: &Style, indent: usize, inner: String) -> String {
     };
     // `show_bg: false` so the positioning shell does not paint over the page.
     // The shell is the full window; the child is aligned inside the padding.
-    format!("{pad}RoundedView {{\n{pad}    width: Fill\n{pad}    height: Fill\n{pad}    flow: Overlay\n{pad}    show_bg: false\n{align}{padding}{inner}{pad}}}\n")
+    format!("{pad}RoundedView {{\n{pad}    width: Fill\n{pad}    height: Fill\n{pad}    flow: Overlay\n{pad}    show_bg: false\n{pad}    clip_x: false\n{pad}    clip_y: false\n{align}{padding}{inner}{pad}}}\n")
 }
 
 fn has_size_class(class: &str, axis: &str) -> bool {
@@ -3434,6 +3714,26 @@ fn implicit_row_px(el: &El) -> f64 {
 }
 
 fn layout_pairs(style: &Style, container: bool) -> Vec<(String, String)> {
+    // CSS puts a border outside the padding box, so children never paint
+    // over it. Makepad strokes the border inside the rect and lays children
+    // out from the rect's edge: a striped row covered the table's sides.
+    let bordered;
+    let style = match style.border_width.filter(|width| container && *width > 0.0) {
+        Some(width) => {
+            let mut inset = style.clone();
+            for edge in [
+                &mut inset.padding.left,
+                &mut inset.padding.top,
+                &mut inset.padding.right,
+                &mut inset.padding.bottom,
+            ] {
+                *edge = Some(edge.unwrap_or(0.0) + width);
+            }
+            bordered = inset;
+            &bordered
+        }
+        None => style,
+    };
     let mut lines = Vec::new();
     if let Some(cols) = style.grid_cols {
         let tracks = (0..cols).map(|_| "\"1fr\"").collect::<Vec<_>>().join(", ");
@@ -3688,7 +3988,7 @@ fn paint_pairs(style: &Style, tag: Tag) -> Vec<(String, String)> {
             lines.push(("draw_bg.color_disabled".into(), color.hex_script()));
         }
         if let Some(radius) = style.radius {
-            lines.push(("draw_bg.border_radius".into(), script_num(radius)));
+            lines.push(("draw_bg.border_radius".into(), script_num(quinn_styles::sdf_radius(radius))));
         }
     }
     if let Some(color) = style.color {
@@ -3810,7 +4110,7 @@ fn paint_pairs(style: &Style, tag: Tag) -> Vec<(String, String)> {
             "draw_text.text_style".into(),
             format!(
                 "TextStyle{{font_size: {} line_spacing: {} font_family: FontFamily{{latin := FontMember{{res: crate_resource(\"makepad_widgets:resources/Inter.ttf\") asc: 0.0 desc: 0.0 weight: {}}}}}}}",
-                script_num(size),
+                script_num(quinn_styles::font_size_pts(size)),
                 script_num(leading),
                 script_num(weight)
             ),
@@ -3840,7 +4140,11 @@ fn flow_script(style: &Style) -> String {
                 | Some(quinn_styles::CrossAlign::Stretch)
                 | None => "Top",
             };
-            if !style.wrap && align == "Top" {
+            // A row that does not wrap is centered by `align.y` alone
+            // (`align_script`). Makepad applies `align.y` and `RowAlign` to
+            // each item, so a label beside a taller control was centered
+            // twice and sat low. A wrapping row keeps `RowAlign` and `y: 0`.
+            if !style.wrap {
                 "Right".into()
             } else {
                 format!(
@@ -3956,11 +4260,11 @@ fn style_when_prop(prop: &str, yes: &str, no: &str) -> Option<(String, String, S
             "height" => style.height.map(size_script),
             "color" => style.color.map(|color| color.hex_script()),
             "background" | "background-color" => style.background.map(|color| color.hex_script()),
-            "font-size" => style.font_size.map(script_num),
+            "font-size" => style.font_size.map(|px| script_num(quinn_styles::font_size_pts(px))),
             "padding" => inset_script(style.padding),
             "margin" => inset_script(style.margin),
             "gap" => style.gap.map(script_num),
-            "radius" | "border-radius" => style.radius.map(script_num),
+            "radius" | "border-radius" => style.radius.map(|px| script_num(quinn_styles::sdf_radius(px))),
             _ => None,
         }
     };

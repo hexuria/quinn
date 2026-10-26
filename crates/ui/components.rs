@@ -1,28 +1,34 @@
 // Quinn components. This file is not a Rust module. The lowerer merges it
 // with an app view.rs that contains `use quinn_ui::components::*;`.
 
+/// The look is the `QButton` templates in `quinn-makepad/src/widgets.rs`.
+/// `variant` picks one; `selected` is the segmented-control state.
 #[component]
 fn Button(
     #[prop(default = "primary")] variant: String,
     #[prop(optional, default = false)] disabled: bool,
+    #[prop(optional, default = false)] selected: bool,
     children: Children,
 ) -> impl IntoView {
     view! {
-        <button class="h-fit min-h-control px-control py-1 rounded-control border border-accent bg-accent text-on-accent text-control hover:bg-accent-hover active:bg-accent-pressed disabled:bg-disabled-bg disabled:text-disabled-fg dark:border-accent dark:bg-accent dark:text-on-accent dark:hover:bg-accent-hover dark:active:bg-accent-pressed dark:disabled:bg-disabled-bg dark:disabled:text-disabled-fg">
+        <button widget="QButton">
             {children()}
         </button>
     }
 }
 
+/// The field's look is the `QInput` template in `quinn-makepad/src/widgets.rs`.
+/// `invalid=true` gives it the danger border and ring.
 #[component]
 fn Field(
     #[prop(into)] label: String,
     #[prop(optional, into, default = "")] placeholder: String,
+    #[prop(optional, default = false)] invalid: bool,
 ) -> impl IntoView {
     view! {
         <div class="flex flex-col w-full gap-2">
             <span class="text-control text-primary dark:text-primary">{label}</span>
-            <input class="w-full h-control px-3 rounded-control bg-surface text-body text-primary border border-control dark:bg-surface dark:text-primary dark:border-control" />
+            <input widget="QInput" class="w-full" />
         </div>
     }
 }
@@ -33,7 +39,7 @@ fn Search(
 ) -> impl IntoView {
     view! {
         <div class="w-[240px] max-w-full h-control">
-            <input class="w-full h-control pl-[36px] pr-3 rounded-control bg-subtle text-body text-primary border border-control dark:bg-subtle dark:text-primary dark:border-control" />
+            <input widget="QInputSubtle" class="w-full pl-[36px]" />
             <div class="absolute inset-0 flex flex-row items-center pl-3">
                 <Icon name="search" class="w-[16px] text-muted dark:text-muted" />
             </div>
@@ -44,7 +50,7 @@ fn Search(
 #[component]
 fn NavRow(children: Children) -> impl IntoView {
     view! {
-        <div class="flex flex-col items-center justify-center w-full h-[56px] gap-1 rounded-control bp1120:flex-row bp1120:justify-start bp1120:h-control bp1120:px-3 bp1120:gap-2">
+        <div class="flex flex-col items-center justify-center w-full h-[56px] gap-1 rounded-control bp1120:flex-row bp1120:justify-start bp1120:h-fit bp1120:min-h-control bp1120:py-2 bp1120:px-3 bp1120:gap-2">
             {children()}
             <button class="absolute inset-0 border-0 bg-transparent">" "</button>
         </div>
@@ -120,8 +126,10 @@ fn Stepper(children: Children) -> impl IntoView {
     }
 }
 
+/// `step=move || signal.get()` makes a drag or an arrow key move by the
+/// signal's value.
 #[component]
-fn Slider() -> impl IntoView {
+fn Slider(#[prop(optional, default = 1)] step: i64) -> impl IntoView {
     view! {
         <input type="range" min="0" max="100" step="1" class="w-full" />
     }

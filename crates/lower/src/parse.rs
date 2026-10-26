@@ -1110,6 +1110,19 @@ impl Build {
                 _ => None,
             },
             variant_class: variant_class(given.get("variant")),
+            variant: match given.get("variant") {
+                Some(PropVal::Lit(name)) => Some(name.clone()),
+                _ => None,
+            },
+            range_step: match given.get("step") {
+                Some(PropVal::Sig(name)) => Some(name.clone()),
+                _ => None,
+            },
+            selected: match given.get("selected") {
+                Some(PropVal::Sig(name)) => Some(name.clone()),
+                _ => None,
+            },
+            invalid: matches!(given.get("invalid"), Some(PropVal::Bool(true))),
             disabled: matches!(given.get("disabled"), Some(PropVal::Bool(true))),
             slider: match given.get("signal") {
                 Some(PropVal::Lit(name)) if !name.is_empty() => Some(name.clone()),
@@ -1163,6 +1176,11 @@ impl Build {
         if let ViewNode::El(el) = &mut node {
             if el.name.starts_with("div") || el.name == "div" {
                 el.name = self.fresh(&prefix);
+            }
+        }
+        if let ViewNode::El(el) = &mut node {
+            if el.widget.is_some() {
+                touch_library(el, &touch)?;
             }
         }
         retouch(&mut node, &touch);
@@ -1277,6 +1295,7 @@ impl Build {
         let mut keydown = None;
         let mut range: Option<[f64; 3]> = None;
         let mut popover = false;
+        let mut widget = None;
         let mut bounds = [0.0, 100.0, 1.0];
         for attr in element.attributes() {
             let NodeAttribute::Attribute(attr) = attr else {
@@ -1353,6 +1372,16 @@ impl Build {
                 }
                 "item" => {}
                 "data-popover" => popover = true,
+                "widget" if tag == "button" || tag == "input" => {
+                    let name = lit_string(expr).ok_or("widget must be a string literal")?;
+                    if !LIBRARY_WIDGETS.contains(&name.as_str()) {
+                        return Err(format!(
+                            "unknown widget `{name}`; known: {}",
+                            LIBRARY_WIDGETS.join(", ")
+                        ));
+                    }
+                    widget = Some(name);
+                }
                 "type" if tag == "input" => {
                     match lit_string(expr).as_deref() {
                         Some("range") => range = Some(bounds),
@@ -1504,7 +1533,11 @@ impl Build {
             icon,
             keydown,
             range,
+            range_step: None,
             popover,
+            widget,
+            selected: None,
+            invalid: false,
             children,
         }))
     }
@@ -1557,6 +1590,10 @@ struct Touch {
     bind: Option<String>,
     placeholder: Option<String>,
     variant_class: Option<&'static str>,
+    variant: Option<String>,
+    selected: Option<String>,
+    range_step: Option<String>,
+    invalid: bool,
     disabled: bool,
     slider: Option<String>,
 }
@@ -1688,10 +1725,67 @@ fn splice_label(node: &mut ViewNode, parts: &[Part]) -> bool {
     }
 }
 
+/// Templates in `quinn-makepad/src/widgets.rs` that `widget="..."` may name.
+const LIBRARY_WIDGETS: &[&str] = &[
+    "QButton",
+    "QButtonSecondary",
+    "QButtonGhost",
+    "QButtonDanger",
+    "QInput",
+    "QInputSubtle",
+];
+
+/// A library widget takes its look from its template. The call site picks the
+/// variant and sets state; a class may size and place it, not paint it.
+fn touch_library(el: &mut El, touch: &Touch) -> Result<(), String> {
+    let base = el.widget.clone().unwrap_or_default();
+    if let Some(variant) = &touch.variant {
+        let name = match variant.as_str() {
+            "primary" => base.clone(),
+            "secondary" => format!("{base}Secondary"),
+            "ghost" => format!("{base}Ghost"),
+            "danger" | "destructive" => format!("{base}Danger"),
+            other => return Err(format!("unknown variant `{other}`; known: primary, secondary, ghost, danger")),
+        };
+        if !LIBRARY_WIDGETS.contains(&name.as_str()) {
+            return Err(format!("`{base}` has no `{variant}` variant"));
+        }
+        el.widget = Some(name);
+    }
+    if let Some(when) = touch.when.first() {
+        return Err(format!(
+            "class:{} on <{base}> paints over its template; pass selected=move || {}.get()",
+            when.token, when.signal
+        ));
+    }
+    let mut paint = quinn_styles::parse_classes(&touch.class);
+    paint.width = None;
+    paint.height = None;
+    paint.width_explicit = false;
+    paint.height_explicit = false;
+    paint.min_width = None;
+    paint.max_width = None;
+    paint.min_height = None;
+    paint.max_height = None;
+    paint.margin = quinn_styles::Edges::default();
+    paint.flex = quinn_styles::FlexSpec::default();
+    paint.align_self = None;
+    paint.col_span = None;
+    if paint != quinn_styles::Style::default() {
+        return Err(format!(
+            "class=\"{}\" on <{base}> paints over its template; a class may only size and place it (w-*, h-*, min-*, max-*, m-*, flex-*)",
+            touch.class
+        ));
+    }
+    el.selected = touch.selected.clone();
+    Ok(())
+}
+
 fn retouch(node: &mut ViewNode, touch: &Touch) {
     if let ViewNode::El(el) = node {
+        let library = el.widget.is_some();
         let mut extra = String::new();
-        if let Some(variant) = touch.variant_class {
+        if let Some(variant) = touch.variant_class.filter(|_| !library) {
             extra.push(' ');
             extra.push_str(variant);
         }
@@ -1700,8 +1794,10 @@ fn retouch(node: &mut ViewNode, touch: &Touch) {
             extra.push_str(&touch.class);
         }
         if touch.disabled {
-            extra.push(' ');
-            extra.push_str(DISABLED_FACE);
+            if !library {
+                extra.push(' ');
+                extra.push_str(DISABLED_FACE);
+            }
             extra.push_str(" disabled");
         }
         if !extra.is_empty() {
@@ -1713,6 +1809,50 @@ fn retouch(node: &mut ViewNode, touch: &Touch) {
     stamp_input(node, touch.placeholder.clone(), touch.bind.clone());
     if let Some(name) = &touch.slider {
         rename_slider(node, name);
+    }
+    if let Some(signal) = &touch.range_step {
+        stamp_range_step(node, signal);
+    }
+    if touch.invalid {
+        stamp_invalid(node);
+    }
+}
+
+/// `invalid=true` on a component reaches the library field inside it.
+fn stamp_invalid(node: &mut ViewNode) -> bool {
+    match node {
+        ViewNode::El(el) => {
+            if el.widget.is_some() && el.tag == "input" {
+                el.invalid = true;
+                return true;
+            }
+            el.children.iter_mut().any(stamp_invalid)
+        }
+        ViewNode::Show { child, .. } => stamp_invalid(child),
+        ViewNode::Slot { nodes, .. } | ViewNode::Portal { nodes } => {
+            nodes.iter_mut().any(stamp_invalid)
+        }
+        _ => false,
+    }
+}
+
+fn stamp_range_step(node: &mut ViewNode, signal: &str) {
+    match node {
+        ViewNode::El(el) => {
+            if el.range.is_some() {
+                el.range_step = Some(signal.to_string());
+            }
+            for child in &mut el.children {
+                stamp_range_step(child, signal);
+            }
+        }
+        ViewNode::Show { child, .. } => stamp_range_step(child, signal),
+        ViewNode::Slot { nodes, .. } | ViewNode::Portal { nodes } => {
+            for child in nodes {
+                stamp_range_step(child, signal);
+            }
+        }
+        _ => {}
     }
 }
 

@@ -58,7 +58,7 @@ These are absent on purpose, not partially implemented:
 - A second layout engine
 - Gradient, shadow, or scroll bars on a `Grid` div. `Grid` draws a `DrawQuad`. Put those classes on a child view.
 
-`bind:value` omits `text:` on the `TextInput`. A sibling that reads the signal still updates, and the caret stays. `value=` with `on:input` still writes `text:` on each `root.render()`, so that path can still move the caret. The string survives either way. The headless surface still skips `set_text` when the string is already equal; the running examples do not use that surface.
+`bind:value` writes `text: state.<signal>` on the `QuinnTextInput`. `Apply::Reload` resets every field the script leaves out, so an input without `text:` was emptied on each render. Giving the field its own text back leaves the caret where it is, and a render that shortens the text (clearing a focused field) clamps the caret instead of panicking. A sibling that reads the signal still updates. `value=` with `on:input` still writes `text:` on each `root.render()`, so that path can still move the caret. The string survives either way. The headless surface still skips `set_text` when the string is already equal; the running examples do not use that surface.
 
 ## Public API versus Makepad internals
 

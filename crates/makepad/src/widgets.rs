@@ -9,13 +9,13 @@ script_mod! {
     use mod.prelude.widgets_internal.*
     use mod.widgets.*
 
-    // The ring sits inside the button's own rect: 2 units of focus color at
-    // the edge, 2 units of separation, then the face. Focus never changes
-    // the outer geometry.
+    // The ring is 2 units of focus color on the button's own edge, so focus
+    // never changes the outer geometry. A click does not take key focus: the
+    // ring is for the keyboard.
     mod.widgets.QuinnButton = mod.widgets.Button{
+        grab_key_focus: false
         draw_bg +: {
             ring_color: uniform(#x1d4ed8)
-            ring_gap: uniform(#xffffff)
             pixel: fn() {
                 let sdf = Sdf2d.viewport(self.pos * self.rect_size)
                 sdf.box(
@@ -30,20 +30,166 @@ script_mod! {
                 if self.focus > 0.0 {
                     sdf.box(1., 1., self.rect_size.x - 2., self.rect_size.y - 2., self.border_radius)
                     sdf.stroke(vec4(self.ring_color.rgb, self.ring_color.a * self.focus), 2.)
-                    sdf.box(3., 3., self.rect_size.x - 6., self.rect_size.y - 6., max(self.border_radius - 2., 0.))
-                    sdf.stroke(vec4(self.ring_gap.rgb, self.ring_gap.a * self.focus), 2.)
                 }
                 return sdf.result
             }
         }
     }
 
-    // Flat face and boundary from the lowered tokens; focus adds the same
-    // separated ring as QuinnButton instead of recoloring the boundary.
-    mod.widgets.QuinnTextInput = mod.widgets.TextInput{
+    // The library Button. Each variant is a template: its faces, labels, and
+    // borders for every state are written here once, light and dark, and the
+    // lowerer only names the template. `dark`, `selected`, and `inactive`
+    // (disabled at creation; the animator's disabled track starts at off) are
+    // set per instance from state; hover, down, and focus are the animator's.
+    // A click does not take key focus, so the ring is a keyboard ring. It is
+    // drawn outside the face: the rect carries a `halo` of 4 on every side
+    // (2 of gap, 2 of ring) and a margin of -4 takes it back out of layout,
+    // so the face is the size the lowerer asked for. `corner` is the
+    // visible radius of the face in pixels.
+    mod.widgets.QButton = mod.widgets.Button{
+        width: Fit
+        height: 44
+        margin: Inset{left: -4 top: -4 right: -4 bottom: -4}
+        padding: Inset{left: 16 right: 16}
+        align: Center
+        grab_key_focus: false
+        draw_text +: {
+            dark: uniform(0.0)
+            selected: uniform(0.0)
+            inactive: uniform(0.0)
+            color: #xffffff
+            color_hover: #xffffff
+            color_down: uniform(#xffffff)
+            color_disabled: uniform(#x475569)
+            color_selected: uniform(#x1e3a8a)
+            color_dark: uniform(#x0f172a)
+            color_hover_dark: uniform(#x0f172a)
+            color_down_dark: uniform(#x0f172a)
+            color_disabled_dark: uniform(#x94a3b8)
+            color_selected_dark: uniform(#xeff6ff)
+            text_style: TextStyle{font_size: 10.5 font_family: FontFamily{latin := FontMember{res: crate_resource("makepad_widgets:resources/Inter.ttf") asc: 0.0 desc: 0.0 weight: 500.0}}}
+            get_color: fn() {
+                return mix(self.color, self.color_dark, self.dark)
+                    .mix(mix(self.color_selected, self.color_selected_dark, self.dark), self.selected)
+                    .mix(mix(self.color_hover, self.color_hover_dark, self.dark), self.hover)
+                    .mix(mix(self.color_down, self.color_down_dark, self.dark), self.down)
+                    .mix(mix(self.color_disabled, self.color_disabled_dark, self.dark), max(self.disabled, self.inactive))
+            }
+        }
+        draw_bg +: {
+            dark: uniform(0.0)
+            selected: uniform(0.0)
+            inactive: uniform(0.0)
+            halo: uniform(4.0)
+            corner: uniform(6.0)
+            border_size: uniform(0.0)
+            color: uniform(#x1d4ed8)
+            color_hover: uniform(#x1e40af)
+            color_down: uniform(#x1e3a8a)
+            color_disabled: uniform(#xe2e8f0)
+            color_selected: uniform(#xdbeafe)
+            color_dark: uniform(#x93c5fd)
+            color_hover_dark: uniform(#xbfdbfe)
+            color_down_dark: uniform(#xdbeafe)
+            color_disabled_dark: uniform(#x1e293b)
+            color_selected_dark: uniform(#x1e3a8a)
+            border_color: uniform(#x00000000)
+            border_color_dark: uniform(#x00000000)
+            border_color_disabled: uniform(#x00000000)
+            ring_color: uniform(#x1d4ed8)
+            ring_color_dark: uniform(#x93c5fd)
+            pixel: fn() {
+                let sdf = Sdf2d.viewport(self.pos * self.rect_size)
+                let fill = mix(self.color, self.color_dark, self.dark)
+                    .mix(mix(self.color_selected, self.color_selected_dark, self.dark), self.selected)
+                    .mix(mix(self.color_hover, self.color_hover_dark, self.dark), self.hover)
+                    .mix(mix(self.color_down, self.color_down_dark, self.dark), self.down)
+                    .mix(mix(self.color_disabled, self.color_disabled_dark, self.dark), max(self.disabled, self.inactive))
+                let stroke = mix(self.border_color, self.border_color_dark, self.dark)
+                    .mix(self.border_color_disabled, max(self.disabled, self.inactive))
+                let inset = self.halo + self.border_size * 0.5
+                sdf.box(
+                    inset,
+                    inset,
+                    self.rect_size.x - inset * 2.,
+                    self.rect_size.y - inset * 2.,
+                    self.corner * 0.5
+                )
+                sdf.fill_keep(fill)
+                sdf.stroke(stroke, self.border_size)
+                if self.focus > 0.0 {
+                    let ring = mix(self.ring_color, self.ring_color_dark, self.dark)
+                    sdf.box(1., 1., self.rect_size.x - 2., self.rect_size.y - 2., (self.corner + self.halo - 1.) * 0.5)
+                    sdf.stroke(vec4(ring.rgb, ring.a * self.focus), 2.)
+                }
+                return sdf.result
+            }
+        }
+    }
+
+    mod.widgets.QButtonSecondary = mod.widgets.QButton{
+        draw_text +: {
+            color: #x0f172a
+            color_hover: #x0f172a
+            color_down: #x0f172a
+            color_dark: #xf8fafc
+            color_hover_dark: #xf8fafc
+            color_down_dark: #xf8fafc
+        }
+        draw_bg +: {
+            border_size: 1.0
+            color: #xffffff
+            color_hover: #xf1f5f9
+            color_down: #xe2e8f0
+            color_dark: #x111827
+            color_hover_dark: #x1e293b
+            color_down_dark: #x334155
+            border_color: #x64748b
+            border_color_dark: #x94a3b8
+            border_color_disabled: #xe2e8f0
+        }
+    }
+
+    mod.widgets.QButtonGhost = mod.widgets.QButton{
+        draw_text +: {
+            color: #x0f172a
+            color_hover: #x0f172a
+            color_down: #x0f172a
+            color_dark: #xf8fafc
+            color_hover_dark: #xf8fafc
+            color_down_dark: #xf8fafc
+        }
+        draw_bg +: {
+            // Clear faces carry the hover hue so the fade in does not pass
+            // through grey.
+            color: #xf1f5f900
+            color_hover: #xf1f5f9
+            color_down: #xe2e8f0
+            color_dark: #x1e293b00
+            color_hover_dark: #x1e293b
+            color_down_dark: #x334155
+        }
+    }
+
+    mod.widgets.QButtonDanger = mod.widgets.QButton{
+        draw_bg +: {
+            color: #xb91c1c
+            color_hover: #x991b1b
+            color_down: #x7f1d1d
+            color_dark: #xfca5a5
+            color_hover_dark: #xfecaca
+            color_down_dark: #xfee2e2
+        }
+    }
+
+    // Flat face and boundary from the lowered tokens. Focus is a 2-unit ring
+    // on the field's own edge, over the boundary; a gap inside it read as a
+    // white band on a tinted field.
+    mod.widgets.QuinnTextInputBase = #(QuinnTextInput::register_widget(vm))
+    mod.widgets.QuinnTextInput = set_type_default() do mod.widgets.QuinnTextInputBase{
+        ..mod.widgets.TextInput,
         draw_bg +: {
             ring_color: uniform(#x1d4ed8)
-            ring_gap: uniform(#xffffff)
             pixel: fn() {
                 let sdf = Sdf2d.viewport(self.pos * self.rect_size)
                 sdf.box(
@@ -58,11 +204,135 @@ script_mod! {
                 if self.focus > 0.0 {
                     sdf.box(1., 1., self.rect_size.x - 2., self.rect_size.y - 2., self.border_radius)
                     sdf.stroke(vec4(self.ring_color.rgb, self.ring_color.a * self.focus), 2.)
-                    sdf.box(3., 3., self.rect_size.x - 6., self.rect_size.y - 6., max(self.border_radius - 2., 0.))
-                    sdf.stroke(vec4(self.ring_gap.rgb, self.ring_gap.a * self.focus), 2.)
                 }
                 return sdf.result
             }
+        }
+    }
+
+    // The library text field. As with QButton, the template owns every face,
+    // border, ink, and state, light and dark; the lowerer sets text, the
+    // handler, size, and the `dark`, `invalid`, and `inactive` flags. Focus is
+    // a 2-unit ring on the field's own edge, in the danger color when the
+    // field is invalid. `corner` is the visible radius in pixels.
+    mod.widgets.QInput = mod.widgets.QuinnTextInput{
+        width: Fill
+        height: 36
+        margin: 0.
+        // TextInput centers its line in the height left after padding, which
+        // puts the capitals 1.25 high; 2.5 on top halves into that.
+        padding: Inset{left: 12 top: 2.5 right: 12}
+        draw_bg +: {
+            dark: uniform(0.0)
+            invalid: uniform(0.0)
+            inactive: uniform(0.0)
+            corner: uniform(6.0)
+            border_size: uniform(1.0)
+            color: #xffffff
+            color_dark: uniform(#x111827)
+            color_disabled: uniform(#xe2e8f0)
+            color_disabled_dark: uniform(#x1e293b)
+            border_color: uniform(#x64748b)
+            border_color_dark: uniform(#x94a3b8)
+            danger: uniform(#xb91c1c)
+            danger_dark: uniform(#xfca5a5)
+            ring_color: uniform(#x1d4ed8)
+            ring_color_dark: uniform(#x93c5fd)
+            pixel: fn() {
+                let sdf = Sdf2d.viewport(self.pos * self.rect_size)
+                let off = max(self.disabled, self.inactive)
+                let danger = mix(self.danger, self.danger_dark, self.dark)
+                let fill = mix(self.color, self.color_dark, self.dark)
+                    .mix(mix(self.color_disabled, self.color_disabled_dark, self.dark), off)
+                let stroke = mix(self.border_color, self.border_color_dark, self.dark)
+                    .mix(danger, self.invalid)
+                let inset = self.border_size * 0.5
+                sdf.box(
+                    inset,
+                    inset,
+                    self.rect_size.x - inset * 2.,
+                    self.rect_size.y - inset * 2.,
+                    self.corner * 0.5
+                )
+                sdf.fill_keep(fill)
+                sdf.stroke(stroke, self.border_size)
+                if self.focus > 0.0 {
+                    let ring = mix(self.ring_color, self.ring_color_dark, self.dark).mix(danger, self.invalid)
+                    sdf.box(1., 1., self.rect_size.x - 2., self.rect_size.y - 2., self.corner * 0.5)
+                    sdf.stroke(vec4(ring.rgb, ring.a * self.focus), 2.)
+                }
+                return sdf.result
+            }
+        }
+        // Below the spread of TextInput, a drawer's own fields are not
+        // visible to a shader written here, so the ones the animator drives
+        // are declared again.
+        draw_text +: {
+            hover: instance(0.0)
+            focus: instance(0.0)
+            down: instance(0.0)
+            empty: instance(0.0)
+            disabled: instance(0.0)
+            dark: uniform(0.0)
+            inactive: uniform(0.0)
+            color: #x0f172a
+            color_dark: uniform(#xf8fafc)
+            color_empty: uniform(#x5f6f85)
+            color_empty_dark: uniform(#x94a3b8)
+            color_disabled: uniform(#x475569)
+            color_disabled_dark: uniform(#x94a3b8)
+            text_style: TextStyle{font_size: 10.5 font_family: FontFamily{latin := FontMember{res: crate_resource("makepad_widgets:resources/Inter.ttf") asc: 0.0 desc: 0.0 weight: 400.0}}}
+            get_color: fn() {
+                return mix(self.color, self.color_dark, self.dark)
+                    .mix(mix(self.color_empty, self.color_empty_dark, self.dark), self.empty)
+                    .mix(mix(self.color_disabled, self.color_disabled_dark, self.dark), max(self.disabled, self.inactive))
+            }
+        }
+        draw_cursor +: {
+            focus: instance(0.0)
+            down: instance(0.0)
+            empty: instance(0.0)
+            disabled: instance(0.0)
+            blink: instance(0.0)
+            border_radius: uniform(0.5)
+            dark: uniform(0.0)
+            color: uniform(#x0f172a)
+            color_dark: uniform(#xf8fafc)
+            pixel: fn() {
+                let sdf = Sdf2d.viewport(self.pos * self.rect_size)
+                sdf.box(0.0, 0.0, self.rect_size.x, self.rect_size.y, self.border_radius)
+                let ink = mix(self.color, self.color_dark, self.dark)
+                sdf.fill(vec4(ink.rgb, ink.a * (1.0 - self.blink) * self.focus))
+                return sdf.result
+            }
+        }
+        draw_selection +: {
+            hover: instance(0.0)
+            focus: instance(0.0)
+            down: instance(0.0)
+            empty: instance(0.0)
+            disabled: instance(0.0)
+            border_radius: uniform(2.0)
+            dark: uniform(0.0)
+            // The selection is painted over the text, so it is a tint, and
+            // it goes with the focus.
+            color: uniform(#x1d4ed840)
+            color_dark: uniform(#x93c5fd59)
+            pixel: fn() {
+                let sdf = Sdf2d.viewport(self.pos * self.rect_size)
+                sdf.box(0.0, 0.0, self.rect_size.x, self.rect_size.y, self.border_radius)
+                let tint = mix(self.color, self.color_dark, self.dark)
+                sdf.fill(vec4(tint.rgb, tint.a * self.focus))
+                return sdf.result
+            }
+        }
+    }
+
+    // A field on a tinted bar: the search box.
+    mod.widgets.QInputSubtle = mod.widgets.QInput{
+        draw_bg +: {
+            color: #xf1f5f9
+            color_dark: #x1e293b
         }
     }
 
@@ -115,6 +385,81 @@ script_mod! {
     }
 }
 
+/// `<input>`: Makepad's `TextInput`, whose text the script sets on every
+/// render. A plain field assignment keeps the caret where it was, so text
+/// shorter than the caret (a bound field cleared while focused) made the next
+/// IME update slice past the end and panic each frame. Text a render changes
+/// goes through `set_text`, which clamps the caret.
+#[derive(Script, Widget)]
+pub struct QuinnTextInput {
+    #[source]
+    source: ScriptObjectRef,
+    #[deref]
+    input: TextInput,
+    #[rust]
+    before: String,
+}
+
+impl ScriptHook for QuinnTextInput {
+    fn on_before_apply(
+        &mut self,
+        _vm: &mut ScriptVm,
+        _apply: &Apply,
+        _scope: &mut Scope,
+        _value: ScriptValue,
+    ) {
+        self.before = self.input.text();
+    }
+
+    fn on_after_apply(
+        &mut self,
+        vm: &mut ScriptVm,
+        _apply: &Apply,
+        _scope: &mut Scope,
+        _value: ScriptValue,
+    ) {
+        let text = self.input.text();
+        if text != self.before {
+            vm.with_cx_mut(|cx| self.input.set_text(cx, &text));
+        }
+    }
+}
+
+impl Widget for QuinnTextInput {
+    fn script_call(
+        &mut self,
+        vm: &mut ScriptVm,
+        method: LiveId,
+        args: ScriptValue,
+    ) -> ScriptAsyncResult {
+        self.input.script_call(vm, method, args)
+    }
+
+    fn handle_event(&mut self, cx: &mut Cx, event: &Event, scope: &mut Scope) {
+        self.input.handle_event(cx, event, scope);
+    }
+
+    fn draw_walk(&mut self, cx: &mut Cx2d, scope: &mut Scope, walk: Walk) -> DrawStep {
+        self.input.draw_walk(cx, scope, walk)
+    }
+
+    fn text(&self) -> String {
+        self.input.text()
+    }
+
+    fn set_text(&mut self, cx: &mut Cx, text: &str) {
+        self.input.set_text(cx, text);
+    }
+
+    fn set_disabled(&mut self, cx: &mut Cx, disabled: bool) {
+        self.input.set_disabled(cx, disabled);
+    }
+
+    fn disabled(&self, cx: &Cx) -> bool {
+        self.input.disabled(cx)
+    }
+}
+
 /// Hosts `<Portal>` content in its own overlay draw list. While anything
 /// inside registers a tab stop (an open dialog), Tab stays inside.
 #[derive(Script, Widget)]
@@ -133,8 +478,32 @@ impl ScriptHook for QuinnLayer {
     }
 }
 
+std::thread_local! {
+    /// Popups that drew visible on the last frame.
+    static OPEN_POPUPS: std::cell::RefCell<Vec<WidgetUid>> = const { std::cell::RefCell::new(Vec::new()) };
+    /// Popups the layer already gave the current event; their turn in the
+    /// tree is skipped.
+    static GIVEN: std::cell::RefCell<Vec<WidgetUid>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
 impl Widget for QuinnLayer {
     fn handle_event(&mut self, cx: &mut Cx, event: &Event, scope: &mut Scope) {
+        // A view hands events to its children last-first, and the first
+        // widget to claim a press keeps it. A popup draws above the page but
+        // sits earlier in the tree than the controls under it, so a field
+        // below an open menu took the click. The layer is the host's last
+        // child and sees every event first: it hands the event to each open
+        // popup before the page gets it.
+        GIVEN.with(|given| given.borrow_mut().clear());
+        let open = OPEN_POPUPS.with(|open| open.borrow().clone());
+        for uid in open {
+            let popup = cx.widget_tree().widget(uid);
+            if popup.is_empty() {
+                continue;
+            }
+            popup.handle_event(cx, event, scope);
+            GIVEN.with(|given| given.borrow_mut().push(uid));
+        }
         self.view.handle_event(cx, event, scope);
     }
 
@@ -196,10 +565,31 @@ impl QuinnPopup {
 
 impl Widget for QuinnPopup {
     fn handle_event(&mut self, cx: &mut Cx, event: &Event, scope: &mut Scope) {
-        self.view.handle_event(cx, event, scope);
+        let uid = self.view.widget_uid();
+        let given = GIVEN.with(|given| {
+            let mut given = given.borrow_mut();
+            match given.iter().position(|have| *have == uid) {
+                Some(at) => {
+                    given.remove(at);
+                    true
+                }
+                None => false,
+            }
+        });
+        if !given {
+            self.view.handle_event(cx, event, scope);
+        }
     }
 
     fn draw_walk(&mut self, cx: &mut Cx2d, scope: &mut Scope, walk: Walk) -> DrawStep {
+        let uid = self.view.widget_uid();
+        OPEN_POPUPS.with(|open| {
+            let mut open = open.borrow_mut();
+            open.retain(|have| *have != uid);
+            if self.view.visible {
+                open.push(uid);
+            }
+        });
         let slot = cx.walk_turtle(Walk::new(Size::Fixed(0.0), Size::Fixed(0.0))).pos;
         let pass = cx.current_pass_size();
         let pos = self.place(slot, pass);

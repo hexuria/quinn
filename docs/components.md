@@ -9,7 +9,7 @@ use quinn_ui::components::*;
 
 `components.rs` is authoring source. Cargo does not compile it. The host passes `quinn_ui::SOURCE` into the lowerer (`load_hot_view_with`). A `view.rs` save reloads in the same process and still resolves these components.
 
-Call-site `on:click`, `class`, `class:`, `bind:value`, and `placeholder` are forwarded. `variant` and `disabled` are props. A text child becomes the button label. Element children fill `{children()}`. Several element children share the parent's row, gap, and alignment. A child that is only an absolute overlay is placed on the absolute layer, which is how the slider's hit targets cover the track.
+Call-site `on:click`, `class`, `class:`, `bind:value`, and `placeholder` are forwarded. `variant`, `disabled`, `selected`, `invalid`, and `step` are props where a component declares them. `Button` and `Field` draw from templates in `crates/makepad/src/widgets.rs` (`QButton*`, `QInput*`): the template owns every face and state, light and dark, and editing it under `--hot` restyles every instance in the running window. A class on them may size and place them, not paint them; `class="bg-red-500"` on a `Button` is a lowering error. A text child becomes the button label. Element children fill `{children()}`. Several element children share the parent's row, gap, and alignment. A child that is only an absolute overlay is placed on the absolute layer, which is how the slider's hit targets cover the track.
 
 Every color utility on these components has a `dark:` pair. A light-only face under `dark:text-*` made the toast title disappear.
 
@@ -19,15 +19,15 @@ Keyboard behavior below is the behavior this desktop host can stand behind. Anyt
 
 Anatomy: one label, optional nothing else. Icons are a child only when you pass elements; a text child is the label.
 
-Props: `variant` (`primary`, `secondary`, `ghost`, `danger` or `destructive`, default `primary`), `disabled` (bool, default false), children.
+Props: `variant` (`primary`, `secondary`, `ghost`, `danger` or `destructive`, default `primary`), `disabled` (bool, default false), `selected` (`move || signal.get()`, the segmented-control face), children.
 
-Sizing: `min-h-control` and `h-fit`, so the floor is 28 / 36 / 48 and a taller label can grow. `px-control` is 8 / 12 / 16. Radius 6. Pass `class="w-control h-control"` for a square target.
+Sizing: height is the control height, 28 / 36 / 48. Side padding is 8 / 12 / 16. Radius 6. Pass `class="w-control h-control"` for a square target. A fixed width (`w-[180px]`) wraps a long label and grows the button. The template's rect carries a 4-unit focus band on every side and a margin of -4, so layout sees only the face.
 
 Spacing: the parent sets the gap between buttons. Use `gap-2` (8).
 
-States: default, hover (`hover:bg-accent-hover` or the surface equivalents), pressed (`active:`), disabled (solid `disabled-bg` / `disabled-fg`, not a fade). Focus is the accent border stroke. Loading is unsupported.
+States: default, hover, pressed (darker than hover; hover holds while pressed), selected, disabled (solid `disabled-bg` / `disabled-fg`, no hover). A click does not take key focus. Loading is unsupported.
 
-Keyboard: the control is a button. Tab order and a visible keyboard focus ring were not observed on this host. Unsupported until a key test shows the ring.
+Keyboard: Tab moves a 2-unit focus ring, 2 units outside the face, from button to button.
 
 Accessibility: the label is the visible text. No role or name API. Unsupported for screen readers.
 
@@ -44,13 +44,13 @@ Responsive: the button does not change variant with width. Touch density raises 
 
 Anatomy: label, then the input. Gap 8 (`gap-2`). The label is required. Placeholder is extra.
 
-Props: `label` (string), `placeholder` (string, default empty). `bind:value` is forwarded onto the input.
+Props: `label` (string), `placeholder` (string, default empty), `invalid` (bool, default false: the danger border and focus ring). `bind:value` is forwarded onto the input.
 
-Sizing: the input is `h-control` and `w-full`. Border width 1, color `border-control`, drawn on a 36px (or density) box that is not nested in a shorter clip. Radius 6. Horizontal padding 12.
+Sizing: the input is the control height and fills its parent. Border 1, `border-control`. Radius 6. Side padding 12. The text is centered at every density.
 
-States: empty placeholder uses muted text (`#5F6F85` / `#94A3B8`). Focus uses the accent stroke. Error is a sibling caption, `text-caption text-danger`, 4px under the field (`gap-1`), plus `border-danger` on an input when you need the error face. Disabled and read-only are unsupported on Field. IME composition is unsupported.
+States: empty placeholder uses muted text (`#5F6F85` / `#94A3B8`). Focus is a 2-unit ring on the field's edge, accent or, when invalid, danger. Selection is an accent tint that fades with focus. Error text is a sibling caption, `text-caption text-danger`, under the field. Disabled is read-only with the disabled face. IME composition was not verified.
 
-Keyboard: the input accepts pointer text. Caret, selection, and IME were not verified.
+Keyboard: typing, arrows, and select-all were checked with real keystrokes. `bind:value` is controlled: each render hands the field its own text, and a shorter text (a cleared field) clamps the caret.
 
 Accessibility: the visible label is the name. The placeholder does not replace it. No programmatic label association. Unsupported for screen readers.
 
@@ -62,7 +62,7 @@ Overflow: the field fills its parent width. A long value scrolls inside the inpu
 
 ## Search
 
-Anatomy: magnifier glyph drawn as geometry, then the input. Same height and border as Field. Placeholder defaults to `Search`.
+Anatomy: magnifier icon over the start of a `QInputSubtle` field (the tinted face), with 36 units of start padding. Same height, border, and states as Field. Placeholder defaults to `Search`.
 
 Props: `placeholder`. `bind:value` forwarded.
 
@@ -116,9 +116,9 @@ At the limit, `clamp` keeps the value. The button does not draw a disabled-at-li
 
 Anatomy: 240px wide, `h-control` tall. Track is 4px, `bg-divider`, with an accent fill. Thumb is 16px, surface with `border-control`. Children sit on top of the track; the showcase uses eight click segments. Minus and plus buttons beside the slider repeat the value for keyboard.
 
-Props: `signal` (default `"level"`). The fill and the thumb spacer bind that signal. The parent declares `let (level, set_level) = signal(50i64)`.
+Props: `step` (`move || signal.get()`, default 1). `bind:value` is forwarded.
 
-Live dragging is unsupported. The handler language has no pointer-move. Clicking a segment sets the value. Arrow keys do not move the thumb. The minus and plus buttons step by 5 and clamp to 0…100.
+The value moves by `step` (Shift and an arrow for ten steps) and snaps to its multiples. The showcase passes the Copies stepper: with Copies at 5, the right arrow moved Level from 50 to 55 to 60.
 
 ## Overlay
 

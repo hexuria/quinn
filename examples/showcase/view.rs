@@ -335,7 +335,7 @@ fn Showcase() -> impl IntoView {
                                         <div class="flex-1"></div>
                                         <span class="text-body text-secondary dark:text-secondary">{level}</span>
                                     </div>
-                                    <Slider bind:value=level />
+                                    <Slider bind:value=level step=move || step.get() />
                                     <span class="text-caption text-secondary w-full dark:text-secondary">"Drag, or focus and use the arrow keys. Shift steps by 10."</span>
                                 </div>
                                 <div class="flex flex-col gap-2">
@@ -375,9 +375,9 @@ fn Showcase() -> impl IntoView {
                                 <span class="text-body text-secondary dark:text-secondary w-full max-w-[640px]">"Every control this build ships, with the states it can actually show. Switch theme and density here; the whole app follows."</span>
                             </div>
                             <div class="flex flex-row flex-wrap items-center gap-2">
-                                <Button variant="secondary" class:bg-selection=move || density_compact.get() on:click=move |_| { set_density(0); set_density_compact.set(true); set_density_std.set(false); set_density_touch.set(false); }>"Compact"</Button>
-                                <Button variant="secondary" class:bg-selection=move || density_std.get() on:click=move |_| { set_density(1); set_density_compact.set(false); set_density_std.set(true); set_density_touch.set(false); }>"Standard"</Button>
-                                <Button variant="secondary" class:bg-selection=move || density_touch.get() on:click=move |_| { set_density(2); set_density_compact.set(false); set_density_std.set(false); set_density_touch.set(true); }>"Touch"</Button>
+                                <Button variant="secondary" selected=move || density_compact.get() on:click=move |_| { set_density(0); set_density_compact.set(true); set_density_std.set(false); set_density_touch.set(false); }>"Compact"</Button>
+                                <Button variant="secondary" selected=move || density_std.get() on:click=move |_| { set_density(1); set_density_compact.set(false); set_density_std.set(true); set_density_touch.set(false); }>"Standard"</Button>
+                                <Button variant="secondary" selected=move || density_touch.get() on:click=move |_| { set_density(2); set_density_compact.set(false); set_density_std.set(false); set_density_touch.set(true); }>"Touch"</Button>
                                 <div class="w-[8px] h-[1px]"></div>
                                 <Show when=move || light_on.get()>
                                     <Button variant="ghost" on:click=move |_| { toggle_theme(); set_dark_on.set(true); set_light_on.set(false); }>"Dark theme"</Button>
@@ -493,8 +493,7 @@ fn Showcase() -> impl IntoView {
                                 <div class="flex flex-col w-full max-w-[320px] gap-6">
                                     <Field label="Folder" placeholder="Folder name" bind:value=draft />
                                     <div class="flex flex-col w-full gap-2">
-                                        <span class="text-control text-primary dark:text-primary">"Folder name"</span>
-                                        <input class="w-full h-control px-3 rounded-control bg-surface text-body text-primary border border-danger dark:bg-surface dark:text-primary dark:border-danger" placeholder="Required" />
+                                        <Field label="Folder name" placeholder="Required" invalid=true />
                                         <span class="text-caption text-danger w-full dark:text-danger">"A folder name is required and must stay under 40 characters."</span>
                                     </div>
                                     <Search placeholder="Search notes" bind:value=query />
@@ -519,7 +518,7 @@ fn Showcase() -> impl IntoView {
                                         <div class="flex-1"></div>
                                         <span class="text-body text-secondary dark:text-secondary">{level}</span>
                                     </div>
-                                    <Slider bind:value=level />
+                                    <Slider bind:value=level step=move || step.get() />
                                     <Stepper>
                                         <Button variant="secondary" class="w-control h-control" on:click=move |_| { set_step.set(clamp(step.get() - 1, 1, 8)); }>"−"</Button>
                                         <div class="flex flex-row justify-center w-[32px]">
@@ -582,7 +581,7 @@ fn Showcase() -> impl IntoView {
                                 <div class="flex flex-col w-full gap-1 p-4 rounded-control bg-subtle dark:bg-subtle">
                                     <span class="text-caption text-primary dark:text-primary w-full">"<Button variant=\"secondary\" on:click=move |_| { set_sheet.set(true); }>\"Open a dialog\"</Button>"</span>
                                     <span class="text-caption text-primary dark:text-primary w-full">"<Field label=\"Folder\" placeholder=\"Folder name\" bind:value=draft />"</span>
-                                    <span class="text-caption text-primary dark:text-primary w-full">"<Slider bind:value=level />"</span>
+                                    <span class="text-caption text-primary dark:text-primary w-full">"<Slider bind:value=level step=move || step.get() />"</span>
                                 </div>
                             </Specimen>
                         </div>
@@ -694,17 +693,19 @@ fn Showcase() -> impl IntoView {
                 <Show when=move || sheet.get()>
                     <div class="absolute inset-0">
                         <div class="absolute inset-0 z-40 bg-scrim dark:bg-scrim"></div>
-                        <div class="absolute left-[24px] top-[48px] z-50 flex flex-col gap-4 w-[480px] max-w-full p-6 rounded-lg bg-surface border border-divider shadow-lg dark:bg-surface dark:border-divider">
-                            <span class="text-section text-primary dark:text-primary">"New note"</span>
-                            <div class="flex flex-col gap-2 w-full max-h-[240px] overflow-y-auto">
-                                <span class="text-body text-secondary w-full dark:text-secondary">"Saved on this Mac. You can find it in the library after it lands."</span>
-                                <span class="text-body text-secondary w-full dark:text-secondary">"The cabinet paint is still the sample from last week. Leave a note for the joiner and keep the island where it is."</span>
-                                <span class="text-body text-secondary w-full dark:text-secondary">"If this dialog is taller than the window, this body scrolls and the actions stay put."</span>
-                            </div>
-                            <input class="w-full h-control px-3 rounded-control bg-surface text-body text-primary border border-control dark:bg-surface dark:text-primary dark:border-control" placeholder="Title" />
-                            <div class="flex flex-row gap-2">
-                                <Button on:click=move |_| { set_sheet.set(false); set_toast_msg.set("Note saved".to_string()); set_toast.set(true); }>"Save"</Button>
-                                <Button variant="secondary" on:click=move |_| { set_sheet.set(false); }>"Cancel"</Button>
+                        <div class="absolute inset-0 z-50 flex flex-col items-center justify-center p-6">
+                            <div class="flex flex-col gap-4 w-[480px] max-w-full p-6 rounded-lg bg-surface border border-divider shadow-lg dark:bg-surface dark:border-divider">
+                                <span class="text-section text-primary dark:text-primary">"New note"</span>
+                                <div class="flex flex-col gap-2 w-full max-h-[240px] overflow-y-auto">
+                                    <span class="text-body text-secondary w-full dark:text-secondary">"Saved on this Mac. You can find it in the library after it lands."</span>
+                                    <span class="text-body text-secondary w-full dark:text-secondary">"The cabinet paint is still the sample from last week. Leave a note for the joiner and keep the island where it is."</span>
+                                    <span class="text-body text-secondary w-full dark:text-secondary">"If this dialog is taller than the window, this body scrolls and the actions stay put."</span>
+                                </div>
+                                <input widget="QInput" class="w-full" placeholder="Title" />
+                                <div class="flex flex-row gap-2">
+                                    <Button on:click=move |_| { set_sheet.set(false); set_toast_msg.set("Note saved".to_string()); set_toast.set(true); }>"Save"</Button>
+                                    <Button variant="secondary" on:click=move |_| { set_sheet.set(false); }>"Cancel"</Button>
+                                </div>
                             </div>
                         </div>
                     </div>
@@ -712,12 +713,14 @@ fn Showcase() -> impl IntoView {
                 <Show when=move || alert.get()>
                     <div class="absolute inset-0">
                         <div class="absolute inset-0 z-40 bg-scrim dark:bg-scrim"></div>
-                        <div class="absolute left-[24px] top-[80px] z-50 flex flex-col gap-4 w-[400px] max-w-full p-6 rounded-lg bg-surface border border-divider shadow-lg dark:bg-surface dark:border-divider">
-                            <span class="text-section text-primary dark:text-primary">"Delete this note?"</span>
-                            <span class="text-body text-secondary w-full dark:text-secondary">"The note moves to Recently Deleted. You can recover it for 30 days."</span>
-                            <div class="flex flex-row gap-2">
-                                <Button variant="danger" on:click=move |_| { set_alert.set(false); set_toast_msg.set("Moved to Recently Deleted".to_string()); set_toast.set(true); }>"Delete"</Button>
-                                <Button variant="secondary" on:click=move |_| { set_alert.set(false); }>"Cancel"</Button>
+                        <div class="absolute inset-0 z-50 flex flex-col items-center justify-center p-6">
+                            <div class="flex flex-col gap-4 w-[400px] max-w-full p-6 rounded-lg bg-surface border border-divider shadow-lg dark:bg-surface dark:border-divider">
+                                <span class="text-section text-primary dark:text-primary">"Delete this note?"</span>
+                                <span class="text-body text-secondary w-full dark:text-secondary">"The note moves to Recently Deleted. You can recover it for 30 days."</span>
+                                <div class="flex flex-row gap-2">
+                                    <Button variant="danger" on:click=move |_| { set_alert.set(false); set_toast_msg.set("Moved to Recently Deleted".to_string()); set_toast.set(true); }>"Delete"</Button>
+                                    <Button variant="secondary" on:click=move |_| { set_alert.set(false); }>"Cancel"</Button>
+                                </div>
                             </div>
                         </div>
                     </div>

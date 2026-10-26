@@ -216,9 +216,21 @@ pub struct El {
     pub keydown: Option<Act>,
     /// `<input type="range">`: min, max, step.
     pub range: Option<[f64; 3]>,
+    /// `<Slider step=move || signal.get()>`: the step follows a number
+    /// signal instead of the literal in `range`.
+    pub range_step: Option<String>,
     /// `data-popover`: drawn in an overlay under the control before it,
     /// flipped above it near the bottom edge.
     pub popover: bool,
+    /// `<button widget="QButton">`: a library template from
+    /// `quinn-makepad/src/widgets.rs`, instantiated as it is. The template
+    /// owns every face, label, border, and state; the element only sets
+    /// text, handlers, size, and the dark / selected / disabled flags.
+    pub widget: Option<String>,
+    /// `selected=move || signal.get()` on a library widget.
+    pub selected: Option<String>,
+    /// `invalid=true` on a library field: the danger border and ring.
+    pub invalid: bool,
     pub children: Vec<ViewNode>,
 }
 

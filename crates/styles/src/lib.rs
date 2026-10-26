@@ -7,6 +7,18 @@
 
 mod palette_data;
 
+/// Makepad `TextStyle.font_size` is in points, 96/72 logical pixels each.
+/// Type tokens are logical pixels, so `text-body` (14) is 10.5 points.
+pub fn font_size_pts(px: f64) -> f64 {
+    px * 0.75
+}
+
+/// Makepad's `Sdf2d.box` draws a corner of twice the radius it is given.
+/// Radius tokens are the visible radius.
+pub fn sdf_radius(px: f64) -> f64 {
+    px * 0.5
+}
+
 /// sRGB color. Alpha is kept for script patches; Makepad hex form is `#xRRGGBB`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Rgba {

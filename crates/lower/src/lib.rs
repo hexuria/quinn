@@ -581,7 +581,15 @@ mod tests {
             ("examples/async-dashboard/view.rs", "state.quinn_dark == 1"),
             ("examples/tailwind-gallery/view.rs", "state.quinn_width >= 768."),
             ("examples/showcase/view.rs", "state.quinn_dark == 1"),
-            ("examples/showcase/view.rs", "draw_bg.border_radius: 12."),
+            // rounded-sheet (12) is a radius of 6 to Makepad's `Sdf2d.box`.
+            ("examples/showcase/view.rs", "draw_bg.border_radius: 6."),
+            ("examples/showcase/view.rs", "QButtonSecondary {"),
+            ("examples/showcase/view.rs", "draw_bg.selected: if state.density_std"),
+            ("examples/showcase/view.rs", "step: state.step\n"),
+            ("examples/showcase/view.rs", "quinn_portal := QuinnLayer"),
+            ("examples/showcase/view.rs", "QInput {"),
+            ("examples/showcase/view.rs", "QInputSubtle {"),
+            ("examples/showcase/view.rs", "draw_bg.invalid: 1."),
         ];
         for (rel, needle) in cases {
             let source = std::fs::read_to_string(root.join(rel))
@@ -980,11 +988,11 @@ mod tests {
         }
         let field = file.split("field := QuinnTextInput").nth(1).expect("input");
         let field = field.split("on_change").next().unwrap();
+        // A render resets every field the script leaves out, so a bound
+        // input is controlled: it is given its own text back.
         assert!(
-            !field
-                .lines()
-                .any(|line| line.trim_start().starts_with("text:")),
-            "bind:value must not rewrite the input text:\n{field}"
+            field.lines().any(|line| line.trim() == "text: state.name"),
+            "bind:value must hand the input its text:\n{field}"
         );
         assert!(file.contains("state.name = text"));
         assert!(file.contains("root.render()"));
@@ -1030,7 +1038,7 @@ mod tests {
             "\"race_place\"",
             "\"fetch_cities\"",
             "for city in state.cities_value",
-            "RoundedView {\n                width: Fill\n                height: Fit\n                flow: Down\n                for city in state.cities_value",
+            "RoundedView {\n                width: Fill\n                height: Fit\n                flow: Down\n                clip_x: false\n                clip_y: false\n                for city in state.cities_value",
             "state.note_phase = \"loading\"",
             "state.note_gen = state.note_gen + 1",
             "fn quinn_sync_jobs()",
@@ -1346,4 +1354,72 @@ mod tests {
         assert!(err.contains("unknown class:"), "{err}");
         assert!(err.contains("bg-not-a-color"), "{err}");
     }
+    /// Makepad fits an SVG to its geometry, not its viewBox. A full-viewBox
+    /// rect in every icon makes the two the same, so a 24-unit icon scales
+    /// as it does in a browser and its strokes stay inside the box.
+    #[test]
+    fn every_icon_spans_its_view_box() {
+        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../makepad/resources/icons");
+        for name in crate::parse::ICONS {
+            let path = dir.join(format!("{name}.svg"));
+            let svg = std::fs::read_to_string(&path)
+                .unwrap_or_else(|err| panic!("read {}: {err}", path.display()));
+            assert!(svg.contains("viewBox=\"0 0 24 24\""), "{name}");
+            assert!(
+                svg.contains("<rect width=\"24\" height=\"24\" fill=\"none\" stroke=\"none\"/>"),
+                "{name}.svg needs the full-viewBox rect"
+            );
+        }
+    }
+
+    /// Makepad keeps a view's old children when a render hands it none, so
+    /// an off `<Show>` has to leave a hidden widget in its slot, and the on
+    /// branch has to turn that slot back on.
+    #[test]
+    fn show_off_branch_hides_its_slot() {
+        let src = r#"
+            #[component]
+            fn Counter() -> impl IntoView {
+                let (open, set_open) = signal(false);
+                view! {
+                    <div class="flex flex-col">
+                        <div class="w-[100px] h-[36px]">
+                            <Show when=move || open.get()>
+                                <div class="w-[100px] h-[36px] bg-white"></div>
+                            </Show>
+                        </div>
+                        <button on:click=move |_| { set_open.set(true); }>"Open"</button>
+                    </div>
+                }
+            }
+        "#;
+        let file = lower_file(src, shell()).unwrap();
+        let off = file.find("fn quinn_show_open_1_off()").expect("off fn");
+        assert!(file[off..].starts_with("fn quinn_show_open_1_off() {\n            RoundedView {\n                visible: false\n"), "{file}");
+        let on = file.find("fn quinn_show_open_1_on(").expect("on fn");
+        assert!(file[on..off].contains("visible: true"), "{file}");
+    }
+
+    /// CSS keeps children inside a border, and the top painted element takes
+    /// the pointer.
+    #[test]
+    fn borders_inset_children_and_overlays_take_the_pointer() {
+        let src = r#"
+            #[component]
+            fn Counter() -> impl IntoView {
+                view! {
+                    <div class="flex flex-col">
+                        <div class="flex flex-col p-2 border border-gray-300">
+                            <span>"Row"</span>
+                        </div>
+                        <div class="absolute inset-0 z-40 bg-black"></div>
+                    </div>
+                }
+            }
+        "#;
+        let file = lower_file(src, shell()).unwrap();
+        assert!(file.contains("padding: 9."), "{file}");
+        assert!(file.contains("cursor: MouseCursor.Arrow"), "{file}");
+    }
+
 }

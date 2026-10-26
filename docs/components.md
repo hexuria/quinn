@@ -167,7 +167,14 @@ It does not queue, does not cap at three, and does not flip when it would leave 
 
 ## SortHeader
 
-A column header that acts on click: the `QHeader` template, caption type in the secondary ink, tinted under the pointer. It does not show a sort direction.
+A column header that acts on click: the `QHeader` template, caption type in the secondary ink, tinted under the pointer. `descending=move || signal.get()` draws the direction after the label: a chevron up for A to Z, down for Z to A. The handler sorts and flips the signal.
+
+```rust
+<SortHeader descending=move || sort_desc.get() on:click=move |_| {
+    set_rows.update(|rows| { rows.reverse(); });
+    set_sort_desc.update(|value| *value = !*value);
+}>"Name"</SortHeader>
+```
 
 ## Segmented control
 

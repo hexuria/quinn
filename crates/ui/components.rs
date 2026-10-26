@@ -235,8 +235,13 @@ fn MenuItem(
 }
 
 /// A column header that sorts on click: the `QHeader` template.
+/// `descending=move || signal.get()` shows the direction: a chevron up for
+/// A to Z, down for Z to A.
 #[component]
-fn SortHeader(children: Children) -> impl IntoView {
+fn SortHeader(
+    #[prop(optional, default = false)] descending: bool,
+    children: Children,
+) -> impl IntoView {
     view! {
         <button widget="QHeader">
             {children()}

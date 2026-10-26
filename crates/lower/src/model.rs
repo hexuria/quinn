@@ -231,6 +231,9 @@ pub struct El {
     pub selected: Option<String>,
     /// `invalid=true` on a library field: the danger border and ring.
     pub invalid: bool,
+    /// `descending=move || signal.get()` on a sort header: the direction
+    /// chevron after its label points down while the signal is true.
+    pub descending: Option<String>,
     pub children: Vec<ViewNode>,
 }
 

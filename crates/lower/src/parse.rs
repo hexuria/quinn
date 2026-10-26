@@ -1123,6 +1123,10 @@ impl Build {
                 Some(PropVal::Sig(name)) => Some(name.clone()),
                 _ => None,
             },
+            descending: match given.get("descending") {
+                Some(PropVal::Sig(name)) => Some(name.clone()),
+                _ => None,
+            },
             glyph: match given.get("icon") {
                 Some(PropVal::Lit(name)) if !name.is_empty() => Some(name.clone()),
                 _ => None,
@@ -1542,6 +1546,7 @@ impl Build {
             popover,
             widget,
             selected: None,
+            descending: None,
             invalid: false,
             children,
         }))
@@ -1599,6 +1604,7 @@ struct Touch {
     selected: Option<String>,
     range_step: Option<String>,
     glyph: Option<String>,
+    descending: Option<String>,
     invalid: bool,
     disabled: bool,
     slider: Option<String>,
@@ -1779,6 +1785,7 @@ fn touch_library(el: &mut El, touch: &Touch) -> Result<(), String> {
         ));
     }
     el.selected = touch.selected.clone();
+    el.descending = touch.descending.clone();
     if let Some(glyph) = &touch.glyph {
         if !ICONS.contains(&glyph.as_str()) {
             return Err(format!("unknown icon `{glyph}`; known: {}", ICONS.join(", ")));
@@ -3871,6 +3878,7 @@ pub const ICONS: &[&str] = &[
     "check",
     "close",
     "chevron-down",
+    "chevron-up",
     "chevron-right",
     "info",
     "alert",

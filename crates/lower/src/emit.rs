@@ -2732,6 +2732,26 @@ fn library_toggle_lines(
             pick(false)
         ));
     }
+    if let Some(signal) = &el.descending {
+        let cond = class_cond(signal, row);
+        let glyph = |name: &str| format!("crate_resource(\"quinn_makepad:resources/icons/{name}.svg\")");
+        lines.push(format!(
+            "draw_icon_end.svg: if {cond} {{ {} }} else {{ {} }}",
+            glyph("chevron-down"),
+            glyph("chevron-up")
+        ));
+        let ink = |dark: bool| {
+            parse_classes_in("text-secondary", dark)
+                .color
+                .map(|color| color.hex_script())
+                .unwrap_or_default()
+        };
+        lines.push(format!(
+            "draw_icon_end.color: if state.quinn_dark == 1 {{ {} }} else {{ {} }}",
+            ink(true),
+            ink(false)
+        ));
+    }
     if style.disabled {
         lines.push("enabled: false".into());
         lines.push("draw_bg.inactive: 1.".into());

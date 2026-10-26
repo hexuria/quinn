@@ -587,6 +587,7 @@ mod tests {
             ("examples/showcase/view.rs", "QMenuPanel {"),
             ("examples/showcase/view.rs", "QMenuItem {"),
             ("examples/showcase/view.rs", "QHeader {"),
+            ("examples/showcase/view.rs", "draw_icon_end.svg: if state.sort_desc { crate_resource(\"quinn_makepad:resources/icons/chevron-down.svg\") }"),
             ("examples/showcase/view.rs", "QButtonSecondary {"),
             ("examples/showcase/view.rs", "draw_bg.selected: if state.density_std"),
             ("examples/showcase/view.rs", "step: state.step\n"),

@@ -394,9 +394,12 @@ script_mod! {
         }
     }
 
-    // A column header that sorts: caption type in the secondary ink.
+    // A column header that sorts: caption type in the secondary ink, and
+    // the direction chevron after the label when the lowerer sets one.
     mod.widgets.QHeader = mod.widgets.QRow{
         padding: Inset{left: 12 right: 12}
+        spacing: 4
+        icon_end_walk: Walk{width: 12 height: 12}
         draw_text +: {
             color: #x475569
             color_hover: #x475569

@@ -69,15 +69,17 @@ fn Showcase() -> impl IntoView {
     let (density_compact, set_density_compact) = signal(false);
     let (density_std, set_density_std) = signal(true);
     let (density_touch, set_density_touch) = signal(false);
+    let (sort_asc, set_sort_asc) = signal(true);
+    let (sort_desc, set_sort_desc) = signal(false);
     let (rows, set_rows) = signal(vec![
-        Item { id: 1, label: "Grocery list".into() },
-        Item { id: 2, label: "Kitchen remodel".into() },
-        Item { id: 3, label: "Saturday market".into() },
-        Item { id: 4, label: "Paint colors".into() },
-        Item { id: 5, label: "Joiner Thursday".into() },
-        Item { id: 6, label: "Island plan".into() },
-        Item { id: 7, label: "Linen order".into() },
         Item { id: 8, label: "Cabinet sample".into() },
+        Item { id: 1, label: "Grocery list".into() },
+        Item { id: 6, label: "Island plan".into() },
+        Item { id: 5, label: "Joiner Thursday".into() },
+        Item { id: 2, label: "Kitchen remodel".into() },
+        Item { id: 7, label: "Linen order".into() },
+        Item { id: 4, label: "Paint colors".into() },
+        Item { id: 3, label: "Saturday market".into() },
     ]);
 
     view! {
@@ -218,8 +220,10 @@ fn Showcase() -> impl IntoView {
                         <span class="text-page text-primary dark:text-primary">"All notes"</span>
                         <div class="rounded-[8px] bg-surface border border-divider overflow-y-auto dark:bg-surface dark:border-divider">
                             <div class="flex flex-row items-center h-[36px] px-3">
-                                <SortHeader on:click=move |_| {
+                                <SortHeader descending=move || sort_desc.get() on:click=move |_| {
                                     set_rows.update(|rows| { rows.reverse(); });
+                                    set_sort_asc.update(|value| *value = !*value);
+                                    set_sort_desc.update(|value| *value = !*value);
                                 }>"Name"</SortHeader>
                                 <div class="flex-1"></div>
                                 <span class="text-caption text-secondary px-3 dark:text-secondary">"Kind"</span>
@@ -535,7 +539,12 @@ fn Showcase() -> impl IntoView {
                             <span class="text-body text-primary dark:text-primary">"8"</span>
                         </InfoRow>
                         <InfoRow label="Sorted by">
-                            <span class="text-body text-primary dark:text-primary">"Name"</span>
+                            <Show when=move || sort_asc.get()>
+                                <span class="text-body text-primary dark:text-primary">"Name, A to Z"</span>
+                            </Show>
+                            <Show when=move || sort_desc.get()>
+                                <span class="text-body text-primary dark:text-primary">"Name, Z to A"</span>
+                            </Show>
                         </InfoRow>
                         <InfoRow label="Kind">
                             <span class="text-body text-primary dark:text-primary">"Note"</span>

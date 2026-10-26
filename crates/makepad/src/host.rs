@@ -744,6 +744,17 @@ pub fn eval_hot_file(
         .unwrap_or_else(|_| path.to_path_buf())
         .to_string_lossy()
         .replace('\\', "/");
+    // `crate_resource("quinn_makepad:...")` resolves through the manifests of
+    // crates that have evaluated a script body. This one registers ours.
+    vm.eval(ScriptMod {
+        cargo_manifest_path: env!("CARGO_MANIFEST_DIR").to_string(),
+        module_path: "quinn_makepad".into(),
+        file: "quinn_makepad.script".into(),
+        line: 1,
+        column: 1,
+        code: "0".into(),
+        values: Vec::new(),
+    });
     vm.eval(ScriptMod {
         cargo_manifest_path: manifest_dir.trim_start_matches(r"\\?\").to_string(),
         module_path: module_path.to_string(),

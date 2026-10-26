@@ -210,6 +210,8 @@ pub struct El {
     pub bind_width: Option<WidthBind>,
     /// `mod.ctx.key = expr` statements emitted just before this widget.
     pub provides: Vec<(String, String)>,
+    /// `<Icon name="...">`: a glyph from `quinn-makepad/resources/icons`.
+    pub icon: Option<String>,
     pub children: Vec<ViewNode>,
 }
 

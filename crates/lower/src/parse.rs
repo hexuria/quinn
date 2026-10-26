@@ -1273,6 +1273,7 @@ impl Build {
         let mut input = None;
         let mut bind = None;
         let mut bind_width = None;
+        let mut icon = None;
         for attr in element.attributes() {
             let NodeAttribute::Attribute(attr) = attr else {
                 return Err("computed attribute keys are not supported".into());
@@ -1344,6 +1345,16 @@ impl Build {
                     inline_style = lit_string(expr).ok_or("style must be a string literal")?;
                 }
                 "item" => {}
+                "name" if is_icon_tag(&tag) => {
+                    let glyph = lit_string(expr).ok_or("<Icon name> must be a string literal")?;
+                    if !ICONS.contains(&glyph.as_str()) {
+                        return Err(format!(
+                            "unknown icon `{glyph}`; known: {}",
+                            ICONS.join(", ")
+                        ));
+                    }
+                    icon = Some(glyph);
+                }
                 other => return Err(format!("unsupported attribute `{other}` on <{tag}>")),
             }
         }
@@ -1440,6 +1451,9 @@ impl Build {
                 children.push(node);
             }
         }
+        if is_icon_tag(&tag) && icon.is_none() {
+            return Err("<Icon> needs name=\"...\"".into());
+        }
         let name = self.fresh(&widget_base(&tag, &parts, click.as_ref()));
         Ok(ViewNode::El(El {
             name,
@@ -1456,6 +1470,7 @@ impl Build {
             bind,
             bind_width,
             provides: Vec::new(),
+            icon,
             children,
         }))
     }
@@ -3662,6 +3677,32 @@ fn act_reset_names(act: Option<&Act>) -> Vec<String> {
             .collect(),
         _ => Vec::new(),
     }
+}
+
+/// Glyphs shipped in `crates/makepad/resources/icons/<name>.svg`.
+pub const ICONS: &[&str] = &[
+    "notes",
+    "table",
+    "settings",
+    "gallery",
+    "search",
+    "plus",
+    "check",
+    "close",
+    "chevron-down",
+    "chevron-right",
+    "info",
+    "alert",
+    "panel-right",
+    "menu",
+    "sun",
+    "moon",
+    "trash",
+    "more",
+];
+
+pub fn is_icon_tag(tag: &str) -> bool {
+    tag == "Icon" || tag == "icon"
 }
 
 fn widget_base(tag: &str, parts: &[Part], click: Option<&Act>) -> String {

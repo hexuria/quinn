@@ -14,6 +14,16 @@ struct SlotFrame {
     flow: FlowSpec,
     gap: f64,
     cross: Option<quinn_styles::CrossAlign>,
+    /// `bp1120:flex-row bp1120:gap-2` on the parent: the flow and gap the
+    /// wrapper switches to at that window width.
+    wide: Option<SlotWide>,
+}
+
+#[derive(Clone, Copy)]
+struct SlotWide {
+    min_width: f64,
+    flow: FlowSpec,
+    gap: f64,
 }
 
 thread_local! {
@@ -30,16 +40,32 @@ thread_local! {
             flow: FlowSpec::Column,
             gap: 0.0,
             cross: None,
+            wide: None,
         })
     };
 }
 
-fn bind_slot_frame(flow: FlowSpec, style: &Style) -> SlotFrame {
+fn bind_slot_frame(flow: FlowSpec, style: &Style, class: &str) -> SlotFrame {
+    let gap = style.gap.unwrap_or(0.0);
+    let mut wide: Option<SlotWide> = None;
+    let mut merged = style.clone();
+    for when in shell_variants(class) {
+        let (false, Some(min_width)) = (when.dark, when.min_width) else {
+            continue;
+        };
+        merged.merge_from(&parse_classes(&when.token));
+        wide = Some(SlotWide {
+            min_width,
+            flow: merged.flow.unwrap_or(flow),
+            gap: merged.gap.unwrap_or(gap),
+        });
+    }
     SLOT_FRAME.with(|cell| {
         cell.replace(SlotFrame {
             flow,
-            gap: style.gap.unwrap_or(0.0),
+            gap,
             cross: style.cross_align,
+            wide,
         })
     })
 }
@@ -1777,6 +1803,7 @@ impl SlotFrame {
             flow: FlowSpec::Column,
             gap: 0.0,
             cross: None,
+            wide: None,
         }
     }
 }
@@ -1815,29 +1842,46 @@ fn slot_body(
             pass_root,
         ));
     }
-    let flow = match frame.flow {
-        FlowSpec::Column => "Down".to_string(),
-        FlowSpec::Row => {
-            let align = match frame.cross {
-                Some(quinn_styles::CrossAlign::Center) => "Center",
-                Some(quinn_styles::CrossAlign::End) => "Bottom",
-                Some(quinn_styles::CrossAlign::Start)
-                | Some(quinn_styles::CrossAlign::Stretch)
-                | None => "Top",
-            };
-            if align == "Top" {
-                "Right".to_string()
-            } else {
-                format!("Flow.Right{{wrap: false row_align: RowAlign.{align}}}")
-            }
-        }
-    };
-    let spacing = if frame.gap > 0.0 {
-        format!("                spacing: {}\n", script_num(frame.gap))
+    let mut flow = slot_flow(frame.flow, frame.cross);
+    let mut gap = script_num(frame.gap);
+    if let Some(wide) = frame.wide {
+        let at = script_num(wide.min_width);
+        flow = format!(
+            "if state.quinn_width >= {at} {{ {} }} else {{ {flow} }}",
+            slot_flow(wide.flow, frame.cross)
+        );
+        gap = format!("if state.quinn_width >= {at} {{ {} }} else {{ {gap} }}", script_num(wide.gap));
+    }
+    let spacing = if frame.gap > 0.0 || frame.wide.is_some_and(|wide| wide.gap > 0.0) {
+        format!("                spacing: {gap}\n")
     } else {
         String::new()
     };
-    format!("            RoundedView {{\n                width: Fit\n                height: Fit\n                flow: {flow}\n{spacing}{inner}            }}\n")
+    // A centered column parent centers this Fit wrapper; its own children
+    // have to center inside it too, or an icon sits left of its caption.
+    let align = if frame.flow == FlowSpec::Column
+        && frame.cross == Some(quinn_styles::CrossAlign::Center)
+    {
+        "                align: Align{x: 0.5 y: 0.}\n"
+    } else {
+        ""
+    };
+    format!("            RoundedView {{\n                width: Fit\n                height: Fit\n                flow: {flow}\n{spacing}{align}{inner}            }}\n")
+}
+
+fn slot_flow(flow: FlowSpec, cross: Option<quinn_styles::CrossAlign>) -> String {
+    match flow {
+        FlowSpec::Column => "Down".to_string(),
+        FlowSpec::Row => match cross {
+            Some(quinn_styles::CrossAlign::Center) => {
+                "Flow.Right{wrap: false row_align: RowAlign.Center}".to_string()
+            }
+            Some(quinn_styles::CrossAlign::End) => {
+                "Flow.Right{wrap: false row_align: RowAlign.Bottom}".to_string()
+            }
+            _ => "Right".to_string(),
+        },
+    }
 }
 
 /// The widget a slot or route function returns. Named bindings stay inside it.
@@ -1970,6 +2014,9 @@ fn emit_el(
     pass_root: bool,
 ) -> String {
     let pad = " ".repeat(indent * 4);
+    if let Some(glyph) = &el.icon {
+        return emit_icon(el, glyph, row, &pad, named, parent, stretch);
+    }
     let tag = tag_of(&el.tag);
     let style = prepared_style(el, tag, parent, stretch);
     let widget = widget_for(&el.tag, &style);
@@ -2090,7 +2137,7 @@ fn emit_el(
             let flow_pad = " ".repeat((indent + 1) * 4);
             let mut flow_body = String::new();
             let prev_row = ROW_AT.with(|cell| cell.replace(row_stretch_at(&el.class)));
-            let prev_frame = bind_slot_frame(child_flow, &child_style);
+            let prev_frame = bind_slot_frame(child_flow, &child_style, &el.class);
             for child in &flow_nodes {
                 flow_body.push_str(&emit_node(
                     child,
@@ -2155,7 +2202,7 @@ fn emit_el(
             .collect::<String>();
         let mut children = String::new();
         let prev_row = ROW_AT.with(|cell| cell.replace(row_stretch_at(&el.class)));
-        let prev_frame = bind_slot_frame(child_flow, &child_style);
+        let prev_frame = bind_slot_frame(child_flow, &child_style, &el.class);
         for child in &el.children {
             children.push_str(&emit_node(
                 child,
@@ -2179,6 +2226,46 @@ fn emit_el(
         format!("{head}{inner}{children}{pad}}}\n")
     };
     wrap_provides(&el.provides, &pad, named, widget_text)
+}
+
+/// `<Icon name="notes" class="w-4 text-secondary">`: a square SVG glyph.
+/// Size comes from a fixed `w-*` (16 when absent). Ink follows the text
+/// color utilities, including `dark:` and `class:` conditions.
+fn emit_icon(
+    el: &El,
+    glyph: &str,
+    row: Option<&RowEnv<'_>>,
+    pad: &str,
+    named: bool,
+    parent: FlowSpec,
+    stretch: bool,
+) -> String {
+    let size = match parse_classes(&el.class).width {
+        Some(quinn_styles::SizeSpec::Px(px)) => px,
+        _ => 16.0,
+    };
+    let size = script_num(size);
+    let mut lines = vec![
+        format!("width: {size}"),
+        format!("height: {size}"),
+        format!("size: {size}"),
+        format!("icon_walk: Walk{{width: {size} height: {size}}}"),
+        format!("draw_icon.svg: crate_resource(\"quinn_makepad:resources/icons/{glyph}.svg\")"),
+    ];
+    for line in style_lines(el, Tag::Span, parent, stretch, row) {
+        if let Some(rest) = line.strip_prefix("draw_text.color:") {
+            lines.push(format!("draw_icon.color:{rest}"));
+        } else if line.starts_with("margin:") {
+            lines.push(line);
+        }
+    }
+    let inner: String = lines.iter().map(|line| format!("{pad}    {line}\n")).collect();
+    let head = if named {
+        format!("{pad}{} := Icon {{\n", el.name)
+    } else {
+        format!("{pad}Icon {{\n")
+    };
+    format!("{head}{inner}{pad}}}\n")
 }
 
 fn div_hover_animator(style: &Style) -> Option<String> {
@@ -2821,6 +2908,68 @@ fn style_lines(
     let base = prepared_style(el, tag, parent, stretch);
     let base_map = prop_map(&base, tag);
     let mut rendered = base_map.clone();
+    // Tokens under one condition build on each other: `bp1120:py-0
+    // bp1120:px-3` is one padding, not two that each restore the base.
+    let mut under: std::collections::BTreeMap<String, Style> = std::collections::BTreeMap::new();
+    for when in shell_variants(&el.class) {
+        let cond = shell_cond(&when);
+        let acc = under.entry(cond.clone()).or_insert_with(|| base.clone());
+        acc.merge_from(&parse_classes_in(&when.token, when.dark));
+        let mut on = acc.clone();
+        tune_style(&mut on, parent, stretch && el.class.contains("self-stretch"));
+        let on_map = prop_map(&on, tag);
+        let touched = token_keys(&when.token, when.dark, tag);
+        for (key, value) in on_map {
+            // A later `dark:bg-transparent` equals the light `bg-transparent`
+            // and still has to override an earlier `dark:bg-accent`. A key
+            // this token does not set keeps whatever is rendered.
+            let same_as_base = base_map.get(&key).map(String::as_str) == Some(value.as_str());
+            let same_as_now = rendered.get(&key).map(String::as_str) == Some(value.as_str());
+            if same_as_now || (same_as_base && !touched.contains(&key)) {
+                continue;
+            }
+            let else_value = rendered
+                .get(&key)
+                .cloned()
+                .unwrap_or_else(|| resting_fill(&key, &base));
+            rendered.insert(
+                key,
+                format!("if {cond} {{ {value} }} else {{ {else_value} }}"),
+            );
+        }
+    }
+    if row.is_some_and(|row| row.striped) {
+        for (odd, token) in stripe_tokens(&el.class) {
+            let mut on = base.clone();
+            on.merge_from(&parse_classes_in(&token, false));
+            let mut dark_on = base.clone();
+            dark_on.merge_from(&parse_classes_in(&token, true));
+            let on_map = prop_map(&on, tag);
+            let dark_map = prop_map(&dark_on, tag);
+            let flag = if odd { "quinn_odd == 1" } else { "quinn_odd == 0" };
+            for (key, light_value) in on_map {
+                if base_map.get(&key).map(String::as_str) == Some(light_value.as_str()) {
+                    if dark_map.get(&key).map(String::as_str) == Some(light_value.as_str()) {
+                        continue;
+                    }
+                }
+                let dark_value = dark_map.get(&key).cloned().unwrap_or_else(|| light_value.clone());
+                let value = if light_value == dark_value {
+                    light_value
+                } else {
+                    format!("if state.quinn_dark == 1 {{ {dark_value} }} else {{ {light_value} }}")
+                };
+                let else_value = rendered
+                    .get(&key)
+                    .cloned()
+                    .unwrap_or_else(|| resting_fill(&key, &base));
+                rendered.insert(
+                    key,
+                    format!("if {flag} {{ {value} }} else {{ {else_value} }}"),
+                );
+            }
+        }
+    }
     for when in &el.class_when {
         let cond = class_cond(&when.signal, row);
         let stretch_self = stretch && el.class.contains("self-stretch");
@@ -2870,64 +3019,6 @@ fn style_lines(
             } else {
                 format!("if state.quinn_dark == 1 {{ {dark_value} }} else {{ {light_value} }}")
             };
-            let else_value = rendered
-                .get(&key)
-                .cloned()
-                .unwrap_or_else(|| resting_fill(&key, &base));
-            rendered.insert(
-                key,
-                format!("if {cond} {{ {value} }} else {{ {else_value} }}"),
-            );
-        }
-    }
-    if row.is_some_and(|row| row.striped) {
-        for (odd, token) in stripe_tokens(&el.class) {
-            let mut on = base.clone();
-            on.merge_from(&parse_classes_in(&token, false));
-            let mut dark_on = base.clone();
-            dark_on.merge_from(&parse_classes_in(&token, true));
-            let on_map = prop_map(&on, tag);
-            let dark_map = prop_map(&dark_on, tag);
-            let flag = if odd { "quinn_odd == 1" } else { "quinn_odd == 0" };
-            for (key, light_value) in on_map {
-                if base_map.get(&key).map(String::as_str) == Some(light_value.as_str()) {
-                    if dark_map.get(&key).map(String::as_str) == Some(light_value.as_str()) {
-                        continue;
-                    }
-                }
-                let dark_value = dark_map.get(&key).cloned().unwrap_or_else(|| light_value.clone());
-                let value = if light_value == dark_value {
-                    light_value
-                } else {
-                    format!("if state.quinn_dark == 1 {{ {dark_value} }} else {{ {light_value} }}")
-                };
-                let else_value = rendered
-                    .get(&key)
-                    .cloned()
-                    .unwrap_or_else(|| resting_fill(&key, &base));
-                rendered.insert(
-                    key,
-                    format!("if {flag} {{ {value} }} else {{ {else_value} }}"),
-                );
-            }
-        }
-    }
-    for when in shell_variants(&el.class) {
-        let mut on = base.clone();
-        on.merge_from(&parse_classes_in(&when.token, when.dark));
-        tune_style(&mut on, parent, stretch && el.class.contains("self-stretch"));
-        let on_map = prop_map(&on, tag);
-        let cond = shell_cond(&when);
-        let touched = token_keys(&when.token, when.dark, tag);
-        for (key, value) in on_map {
-            // A later `dark:bg-transparent` equals the light `bg-transparent`
-            // and still has to override an earlier `dark:bg-accent`. A key
-            // this token does not set keeps whatever is rendered.
-            let same_as_base = base_map.get(&key).map(String::as_str) == Some(value.as_str());
-            let same_as_now = rendered.get(&key).map(String::as_str) == Some(value.as_str());
-            if same_as_now || (same_as_base && !touched.contains(&key)) {
-                continue;
-            }
             let else_value = rendered
                 .get(&key)
                 .cloned()

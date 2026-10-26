@@ -45,7 +45,7 @@ fn Search(
 #[component]
 fn NavRow(children: Children) -> impl IntoView {
     view! {
-        <div class="flex flex-row items-center h-control w-full px-3 gap-2 rounded-control">
+        <div class="flex flex-col items-center justify-center w-full h-[56px] gap-1 rounded-control bp1120:flex-row bp1120:justify-start bp1120:h-control bp1120:px-3 bp1120:gap-2">
             {children()}
             <button class="absolute inset-0 border-0 bg-transparent">" "</button>
         </div>

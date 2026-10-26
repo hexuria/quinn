@@ -89,23 +89,23 @@ fn Showcase() -> impl IntoView {
             <div class="h-[1px] bg-divider dark:bg-divider"></div>
             <div class="flex flex-row flex-1 items-stretch">
                 <div class="flex flex-col h-full bg-subtle overflow-hidden w-[0px] bp800:w-[64px] bp1120:w-[224px] bp1120:min-w-[200px] bp1120:max-w-[280px] dark:bg-subtle">
-                    <div class="flex flex-col gap-1 px-2 py-3">
-                        <span class="text-caption text-secondary px-3 w-[0px] bp1120:w-[160px] dark:text-secondary">"Library"</span>
+                    <div class="flex flex-col gap-1 py-3 bp1120:px-2">
+                        <span class="text-caption text-secondary px-3 w-[0px] h-[0px] bp1120:w-[160px] bp1120:h-fit dark:text-secondary">"Library"</span>
                         <NavRow class:bg-selection=move || notes.get() on:click=move |_| { set_notes.set(true); set_table.set(false); set_settings.set(false); set_gallery.set(false); set_nav_open.set(false); }>
-                            <div class="w-[16px] h-[16px] rounded-[4px] bg-accent"></div>
-                            <span class="text-body text-primary w-[0px] bp1120:w-[148px] dark:text-primary" class:text-on-selection=move || notes.get()>"Notes"</span>
+                            <Icon name="notes" class="w-[16px] text-secondary dark:text-secondary" class:text-on-selection=move || notes.get() />
+                            <span class="text-caption text-primary bp1120:text-body bp1120:w-[148px] dark:text-primary" class:text-on-selection=move || notes.get()>"Notes"</span>
                         </NavRow>
                         <NavRow class:bg-selection=move || table.get() on:click=move |_| { set_notes.set(false); set_table.set(true); set_settings.set(false); set_gallery.set(false); set_nav_open.set(false); }>
-                            <div class="w-[16px] h-[16px] rounded-[4px] bg-muted"></div>
-                            <span class="text-body text-primary w-[0px] bp1120:w-[148px] dark:text-primary" class:text-on-selection=move || table.get()>"Table"</span>
+                            <Icon name="table" class="w-[16px] text-secondary dark:text-secondary" class:text-on-selection=move || table.get() />
+                            <span class="text-caption text-primary bp1120:text-body bp1120:w-[148px] dark:text-primary" class:text-on-selection=move || table.get()>"Table"</span>
                         </NavRow>
                         <NavRow class:bg-selection=move || settings.get() on:click=move |_| { set_notes.set(false); set_table.set(false); set_settings.set(true); set_gallery.set(false); set_nav_open.set(false); }>
-                            <div class="w-[16px] h-[16px] rounded-[4px] bg-muted"></div>
-                            <span class="text-body text-primary w-[0px] bp1120:w-[148px] dark:text-primary" class:text-on-selection=move || settings.get()>"Settings"</span>
+                            <Icon name="settings" class="w-[16px] text-secondary dark:text-secondary" class:text-on-selection=move || settings.get() />
+                            <span class="text-caption text-primary bp1120:text-body bp1120:w-[148px] dark:text-primary" class:text-on-selection=move || settings.get()>"Settings"</span>
                         </NavRow>
                         <NavRow class:bg-selection=move || gallery.get() on:click=move |_| { set_notes.set(false); set_table.set(false); set_settings.set(false); set_gallery.set(true); set_nav_open.set(false); }>
-                            <div class="w-[16px] h-[16px] rounded-[4px] bg-muted"></div>
-                            <span class="text-body text-primary w-[0px] bp1120:w-[148px] dark:text-primary" class:text-on-selection=move || gallery.get()>"Gallery"</span>
+                            <Icon name="gallery" class="w-[16px] text-secondary dark:text-secondary" class:text-on-selection=move || gallery.get() />
+                            <span class="text-caption text-primary bp1120:text-body bp1120:w-[148px] dark:text-primary" class:text-on-selection=move || gallery.get()>"Gallery"</span>
                         </NavRow>
                     </div>
                 </div>

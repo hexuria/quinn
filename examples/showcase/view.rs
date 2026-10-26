@@ -220,7 +220,7 @@ fn Showcase() -> impl IntoView {
                 <Show when=move || table.get()>
                     <div class="flex flex-col flex-1 h-full min-w-0 bp800:min-w-[480px] overflow-y-auto bg-canvas p-6 gap-6 dark:bg-canvas">
                         <span class="text-page text-primary dark:text-primary">"All notes"</span>
-                        <div class="rounded-[8px] bg-surface border border-divider overflow-y-auto dark:bg-surface dark:border-divider">
+                        <Table>
                             <div class="flex flex-row items-center h-[36px] px-3">
                                 <SortHeader sorted=move || sorted.get() descending=move || sort_desc.get() on:click=move |_| {
                                     if sort_asc.get() {
@@ -242,7 +242,7 @@ fn Showcase() -> impl IntoView {
                             <For each=move || rows.get() key=|item| item.id let:item let:index>
                                 <NoteRow item=item />
                             </For>
-                        </div>
+                        </Table>
                     </div>
                 </Show>
                 <Show when=move || settings.get()>

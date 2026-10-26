@@ -453,6 +453,36 @@ script_mod! {
         }
     }
 
+    // A frame over rounded content. Makepad clips a view to a rectangle, so
+    // rows reaching a rounded border would square its corners. The frame
+    // paints the page color into the corners outside the radius and strokes
+    // the border over the rows: what `overflow-hidden` gives in CSS.
+    mod.widgets.QFrame = mod.widgets.RoundedView{
+        show_bg: true
+        draw_bg +: {
+            dark: uniform(0.0)
+            corner: uniform(8.0)
+            edge: uniform(#xcbd5e1)
+            edge_dark: uniform(#x334155)
+            page: uniform(#xf8fafc)
+            page_dark: uniform(#x0f172a)
+            pixel: fn() {
+                let sdf = Sdf2d.viewport(self.pos * self.rect_size)
+                let w = self.rect_size.x
+                let h = self.rect_size.y
+                // The mask runs past the edge so its own edge is not
+                // anti-aliased: half coverage there let a row show through.
+                sdf.rect(-2., -2., w + 4., h + 4.)
+                sdf.box(0.5, 0.5, w - 1., h - 1., self.corner * 0.5)
+                sdf.subtract()
+                sdf.fill(mix(self.page, self.page_dark, self.dark))
+                sdf.box(0.5, 0.5, w - 1., h - 1., self.corner * 0.5)
+                sdf.stroke(mix(self.edge, self.edge_dark, self.dark), 1.)
+                return sdf.result
+            }
+        }
+    }
+
     // A menu's panel: the same surface with a tighter corner.
     mod.widgets.QMenuPanel = mod.widgets.QPanel{
         draw_bg +: {
@@ -460,9 +490,9 @@ script_mod! {
         }
     }
 
-    // Flat face and boundary from the lowered tokens. Focus is a 2-unit ring
-    // on the field's own edge, over the boundary; a gap inside it read as a
-    // white band on a tinted field.
+    // Flat face and boundary from the lowered tokens. Focus recolors and
+    // thickens that one boundary; a ring drawn over it left the old border
+    // showing inside the new one.
     mod.widgets.QuinnTextInputBase = #(QuinnTextInput::register_widget(vm))
     mod.widgets.QuinnTextInput = set_type_default() do mod.widgets.QuinnTextInputBase{
         ..mod.widgets.TextInput,
@@ -470,19 +500,19 @@ script_mod! {
             ring_color: uniform(#x1d4ed8)
             pixel: fn() {
                 let sdf = Sdf2d.viewport(self.pos * self.rect_size)
+                let rest = mix(self.border_color, self.border_color_disabled, self.disabled)
+                let edge = mix(rest, self.ring_color, self.focus)
+                let width = mix(self.border_size, max(self.border_size, 2.0), self.focus)
+                let inset = width * 0.5
                 sdf.box(
-                    self.border_size,
-                    self.border_size,
-                    self.rect_size.x - self.border_size * 2.,
-                    self.rect_size.y - self.border_size * 2.,
+                    inset,
+                    inset,
+                    self.rect_size.x - inset * 2.,
+                    self.rect_size.y - inset * 2.,
                     self.border_radius
                 )
                 sdf.fill_keep(mix(self.color, self.color_disabled, self.disabled))
-                sdf.stroke(mix(self.border_color, self.border_color_disabled, self.disabled), self.border_size)
-                if self.focus > 0.0 {
-                    sdf.box(1., 1., self.rect_size.x - 2., self.rect_size.y - 2., self.border_radius)
-                    sdf.stroke(vec4(self.ring_color.rgb, self.ring_color.a * self.focus), 2.)
-                }
+                sdf.stroke(edge, width)
                 return sdf.result
             }
         }
@@ -490,9 +520,9 @@ script_mod! {
 
     // The library text field. As with QButton, the template owns every face,
     // border, ink, and state, light and dark; the lowerer sets text, the
-    // handler, size, and the `dark`, `invalid`, and `inactive` flags. Focus is
-    // a 2-unit ring on the field's own edge, in the danger color when the
-    // field is invalid. `corner` is the visible radius in pixels.
+    // handler, size, and the `dark`, `invalid`, and `inactive` flags. Focus
+    // turns the border to the accent (danger when invalid) and 2 units wide.
+    // `corner` is the visible radius in pixels.
     mod.widgets.QInput = mod.widgets.QuinnTextInput{
         width: Fill
         height: 36
@@ -500,6 +530,31 @@ script_mod! {
         // TextInput centers its line in the height left after padding, which
         // puts the capitals 1.25 high; 2.5 on top halves into that.
         padding: Inset{left: 12 top: 2.5 right: 12}
+        // Focus eases in and out instead of snapping.
+        animator +: {
+            focus: {
+                off: AnimatorState{
+                    from: {all: Forward {duration: 0.18}}
+                    ease: InOutQuad
+                    apply: {
+                        draw_bg: {focus: 0.0}
+                        draw_text: {focus: 0.0}
+                        draw_cursor: {focus: 0.0}
+                        draw_selection: {focus: 0.0}
+                    }
+                }
+                on: AnimatorState{
+                    from: {all: Forward {duration: 0.18}}
+                    ease: InOutQuad
+                    apply: {
+                        draw_bg: {focus: 1.0}
+                        draw_text: {focus: 1.0}
+                        draw_cursor: {focus: 1.0}
+                        draw_selection: {focus: 1.0}
+                    }
+                }
+            }
+        }
         draw_bg +: {
             dark: uniform(0.0)
             invalid: uniform(0.0)
@@ -522,23 +577,24 @@ script_mod! {
                 let danger = mix(self.danger, self.danger_dark, self.dark)
                 let fill = mix(self.color, self.color_dark, self.dark)
                     .mix(mix(self.color_disabled, self.color_disabled_dark, self.dark), off)
-                let stroke = mix(self.border_color, self.border_color_dark, self.dark)
+                let rest = mix(self.border_color, self.border_color_dark, self.dark)
                     .mix(danger, self.invalid)
-                let inset = self.border_size * 0.5
+                let ring = mix(self.ring_color, self.ring_color_dark, self.dark)
+                    .mix(danger, self.invalid)
+                // Focus recolors and thickens the one border, inside the
+                // edge; there is no second line over it.
+                let edge = mix(rest, ring, self.focus)
+                let width = mix(self.border_size, 2.0, self.focus)
+                let inset = width * 0.5
                 sdf.box(
                     inset,
                     inset,
                     self.rect_size.x - inset * 2.,
                     self.rect_size.y - inset * 2.,
-                    self.corner * 0.5
+                    max(self.corner - inset, 0.) * 0.5
                 )
                 sdf.fill_keep(fill)
-                sdf.stroke(stroke, self.border_size)
-                if self.focus > 0.0 {
-                    let ring = mix(self.ring_color, self.ring_color_dark, self.dark).mix(danger, self.invalid)
-                    sdf.box(1., 1., self.rect_size.x - 2., self.rect_size.y - 2., self.corner * 0.5)
-                    sdf.stroke(vec4(ring.rgb, ring.a * self.focus), 2.)
-                }
+                sdf.stroke(edge, width)
                 return sdf.result
             }
         }

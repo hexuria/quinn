@@ -14,6 +14,9 @@ struct SlotFrame {
     flow: FlowSpec,
     gap: f64,
     cross: Option<quinn_styles::CrossAlign>,
+    /// The parent shrink-wraps its width (`w-fit`), so a `Fill` wrapper
+    /// would have nothing to fill.
+    fit: bool,
     /// `bp1120:flex-row bp1120:gap-2` on the parent: the flow and gap the
     /// wrapper switches to at that window width.
     wide: Option<SlotWide>,
@@ -40,6 +43,7 @@ thread_local! {
             flow: FlowSpec::Column,
             gap: 0.0,
             cross: None,
+            fit: false,
             wide: None,
         })
     };
@@ -65,6 +69,7 @@ fn bind_slot_frame(flow: FlowSpec, style: &Style, class: &str) -> SlotFrame {
             flow,
             gap,
             cross: style.cross_align,
+            fit: matches!(style.width, Some(SizeSpec::Fit)),
             wide,
         })
     })
@@ -1899,6 +1904,7 @@ impl SlotFrame {
             flow: FlowSpec::Column,
             gap: 0.0,
             cross: None,
+            fit: false,
             wide: None,
         }
     }
@@ -1963,8 +1969,14 @@ fn slot_body(
         ""
     };
     // A `w-full` child inside a `Fit` column wrapper has nothing to fill and
-    // collapses to zero, which emptied every inspector row.
-    let width = if frame.flow == FlowSpec::Column && frame.wide.is_none() && nodes.iter().any(fills_width) {
+    // collapses to zero, which emptied every inspector row. A column also
+    // stretches its children unless `items-*` says otherwise, as a CSS flex
+    // column does, so the wrapper fills unless the parent shrink-wraps.
+    let stretches = matches!(frame.cross, None | Some(quinn_styles::CrossAlign::Stretch)) && !frame.fit;
+    let width = if frame.flow == FlowSpec::Column
+        && frame.wide.is_none()
+        && (stretches || nodes.iter().any(fills_width))
+    {
         "Fill"
     } else {
         "Fit"
@@ -2165,7 +2177,10 @@ fn emit_el(
     if el.widget.is_some() {
         lines.retain(|line| !line.starts_with("draw_bg.") && !line.starts_with("show_bg"));
         lines.push("draw_bg.dark: if state.quinn_dark == 1 { 1. } else { 0. }".into());
-        lines.push("cursor: MouseCursor.Arrow".into());
+        // A frame is drawn over content and lets the pointer through.
+        if el.widget.as_deref().is_some_and(|name| name.ends_with("Panel")) {
+            lines.push("cursor: MouseCursor.Arrow".into());
+        }
     }
     // CSS does not clip unless `overflow-*` asks; Makepad views do. A
     // library widget's focus ring draws past its face and has to show

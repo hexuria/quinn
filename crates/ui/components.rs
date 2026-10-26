@@ -234,6 +234,19 @@ fn MenuItem(
     }
 }
 
+/// A list surface with a rounded border that its rows reach: the rows sit on
+/// the surface and a `QFrame` over them strokes the border and masks the
+/// corners with the page color.
+#[component]
+fn Table(children: Children) -> impl IntoView {
+    view! {
+        <div class="flex flex-col rounded-[8px] bg-surface overflow-y-auto dark:bg-surface">
+            {children()}
+            <div widget="QFrame" class="absolute inset-0"></div>
+        </div>
+    }
+}
+
 /// A column header that sorts on click: the `QHeader` template. `sorted`
 /// marks the column the list is ordered by; `descending` points its chevron
 /// up for A to Z, down for Z to A.

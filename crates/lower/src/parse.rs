@@ -1758,6 +1758,7 @@ const LIBRARY_WIDGETS: &[&str] = &[
     "QHeader",
     "QPanel",
     "QMenuPanel",
+    "QFrame",
 ];
 
 /// A library widget takes its look from its template. The call site picks the

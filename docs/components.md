@@ -48,7 +48,7 @@ Props: `label` (string), `placeholder` (string, default empty), `invalid` (bool,
 
 Sizing: the input is the control height and fills its parent. Border 1, `border-control`. Radius 6. Side padding 12. The text is centered at every density.
 
-States: empty placeholder uses muted text (`#5F6F85` / `#94A3B8`). Focus is a 2-unit ring on the field's edge, accent or, when invalid, danger. Selection is an accent tint that fades with focus. Error text is a sibling caption, `text-caption text-danger`, under the field. Disabled is read-only with the disabled face. IME composition was not verified.
+States: empty placeholder uses muted text (`#5F6F85` / `#94A3B8`). Focus turns the one border to the accent (danger when invalid) and 2 units wide, inside the edge, easing in and out over 180 ms. Selection is an accent tint that fades with focus. Error text is a sibling caption, `text-caption text-danger`, under the field. Disabled is read-only with the disabled face. IME composition was not verified.
 
 Keyboard: typing, arrows, and select-all were checked with real keystrokes. `bind:value` is controlled: each render hands the field its own text, and a shorter text (a cleared field) clamps the caret.
 

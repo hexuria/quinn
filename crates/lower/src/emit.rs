@@ -2786,7 +2786,7 @@ fn style_lines(
             let else_value = rendered
                 .get(&key)
                 .cloned()
-                .unwrap_or_else(|| prop_fallback(&key, &base));
+                .unwrap_or_else(|| resting_fill(&key, &base));
             rendered.insert(
                 key,
                 format!("if {cond} {{ {value} }} else {{ {else_value} }}"),
@@ -2814,15 +2814,10 @@ fn style_lines(
                 } else {
                     format!("if state.quinn_dark == 1 {{ {dark_value} }} else {{ {light_value} }}")
                 };
-                let else_value = rendered.get(&key).cloned().unwrap_or_else(|| {
-                    // An even row with no fill of its own must stay clear.
-                    // The generic fallback is opaque black, which hid the labels.
-                    if key == "draw_bg.color" && base.background.is_none() {
-                        "#00000000".into()
-                    } else {
-                        prop_fallback(&key, &base)
-                    }
-                });
+                let else_value = rendered
+                    .get(&key)
+                    .cloned()
+                    .unwrap_or_else(|| resting_fill(&key, &base));
                 rendered.insert(
                     key,
                     format!("if {flag} {{ {value} }} else {{ {else_value} }}"),
@@ -2843,7 +2838,7 @@ fn style_lines(
             let else_value = rendered
                 .get(&key)
                 .cloned()
-                .unwrap_or_else(|| prop_fallback(&key, &base));
+                .unwrap_or_else(|| resting_fill(&key, &base));
             rendered.insert(
                 key,
                 format!("if {cond} {{ {value} }} else {{ {else_value} }}"),
@@ -2902,7 +2897,7 @@ fn paint_conditional(
         let else_value = rendered
             .get(key)
             .cloned()
-            .unwrap_or_else(|| prop_fallback(key, base));
+            .unwrap_or_else(|| resting_fill(key, base));
         rendered.insert(
             key.clone(),
             format!("if {cond} {{ {value} }} else {{ {else_value} }}"),
@@ -3646,6 +3641,16 @@ fn style_when_prop(prop: &str, yes: &str, no: &str) -> Option<(String, String, S
         _ => return None,
     };
     Some((key.into(), one(yes)?, one(no)?))
+}
+
+/// A conditional fill with no resting color stays clear. Opaque black hid
+/// unselected navigation rows, list rows, and even zebra stripes.
+fn resting_fill(key: &str, base: &Style) -> String {
+    if key == "draw_bg.color" && base.background.is_none() {
+        "#00000000".into()
+    } else {
+        prop_fallback(key, base)
+    }
 }
 
 fn prop_fallback(key: &str, base: &Style) -> String {

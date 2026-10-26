@@ -767,7 +767,7 @@ mod tests {
             "draw_bg.disabled: 1.",
             "draw_bg.color_disabled:",
             "draw_text.color_disabled:",
-            "if state.flag { #xfef3c7 } else { #x000000 }",
+            "if state.flag { #xfef3c7 } else { #00000000 }",
             "if state.flag { 120. } else { 40. }",
             "state.count = state.count + 2",
             "state.count = state.count - 1",

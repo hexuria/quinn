@@ -10,6 +10,8 @@
 //! pos 0 40             move the window
 //! state <statements>   run script statements with `state` bound, then render
 //! key Tab shift        deliver KeyDown + KeyUp to the widget tree
+//! focus level_slider   give a named widget the key focus
+//! scroll 700 400 600   deliver a wheel scroll of 600 at window point (700, 400)
 //! ```
 //!
 //! Keys go through `WidgetRef::handle_event`, the same path a real key takes
@@ -18,6 +20,7 @@
 
 use std::cell::Cell;
 
+use makepad_widgets::makepad_platform::event::{ScrollEvent, ScrollPhase};
 use makepad_widgets::*;
 
 std::thread_local! {
@@ -117,8 +120,40 @@ fn apply(cx: &mut Cx, line: &str, ui: &WidgetRef) {
                 modifiers,
                 ..Default::default()
             };
-            ui.handle_event(cx, &Event::KeyDown(key), &mut Scope::empty());
+            ui.handle_event(cx, &Event::KeyDown(key.clone()), &mut Scope::empty());
+            crate::host::forward_key(cx, &key);
             ui.handle_event(cx, &Event::KeyUp(key), &mut Scope::empty());
+        }
+        "scroll" => {
+            let nums: Vec<f64> = rest
+                .split_whitespace()
+                .filter_map(|n| n.parse().ok())
+                .collect();
+            let window = ui.window(cx, ids!(main_window));
+            let (Some(window_id), [x, y, dy]) = (window.window_id(), nums.as_slice()) else {
+                eprintln!("quinn control: `{line}` needs x y dy");
+                return;
+            };
+            let scroll = ScrollEvent {
+                window_id,
+                scroll: dvec2(0.0, *dy),
+                abs: dvec2(*x, *y),
+                modifiers: KeyModifiers::default(),
+                handled_x: Cell::new(false),
+                handled_y: Cell::new(false),
+                is_mouse: true,
+                time: 0.0,
+                phase: ScrollPhase::None,
+            };
+            ui.handle_event(cx, &Event::Scroll(scroll), &mut Scope::empty());
+        }
+        "focus" => {
+            let id = LiveId::from_str(rest.trim());
+            let widget = ui.widget(cx, &[id]);
+            if widget.is_empty() {
+                eprintln!("quinn control: no widget named `{}`", rest.trim());
+            }
+            widget.set_key_focus(cx);
         }
         other => eprintln!("quinn control: unknown command `{other}`"),
     }

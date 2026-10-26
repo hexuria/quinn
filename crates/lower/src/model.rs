@@ -212,6 +212,13 @@ pub struct El {
     pub provides: Vec<(String, String)>,
     /// `<Icon name="...">`: a glyph from `quinn-makepad/resources/icons`.
     pub icon: Option<String>,
+    /// `on:keydown`. The host forwards Escape; `ev.key()` reads the key name.
+    pub keydown: Option<Act>,
+    /// `<input type="range">`: min, max, step.
+    pub range: Option<[f64; 3]>,
+    /// `data-popover`: drawn in an overlay under the control before it,
+    /// flipped above it near the bottom edge.
+    pub popover: bool,
     pub children: Vec<ViewNode>,
 }
 

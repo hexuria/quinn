@@ -9,6 +9,7 @@
 mod control;
 mod host;
 mod probe;
+mod widgets;
 
 pub use control::drive_control;
 pub use host::{

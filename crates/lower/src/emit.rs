@@ -112,6 +112,7 @@ pub fn emit_rust(model: &Model, shell: &Shell) -> String {
 "#,
     );
     body.push_str(&emit_shell_fns(shell));
+    body.push_str(&emit_keydown(&model.nodes));
     body.push_str(&emit_job_fns(model));
     body.push_str(&emit_ctx(model));
     if let Some(signal) = &model.frame {
@@ -317,7 +318,11 @@ pub fn emit_rust(model: &Model, shell: &Shell) -> String {
         "                                app := RoundedView {{\n{app_fields}{app_body}                                }}\n"
     ));
     children.push_str(&root_abs);
-    children.push_str(&portal_body);
+    if !portal_body.is_empty() {
+        children.push_str(&format!(
+            "                                quinn_portal := QuinnLayer {{\n{portal_body}                                }}\n"
+        ));
+    }
     body.push_str(&slots);
     body.push_str(&show_fns);
     body.push_str(&routes);
@@ -634,6 +639,23 @@ fn emit_retain(model: &Model) -> String {
         mod.quinn_retain_reset = quinn_retain_reset
 "#
     )
+}
+
+/// `mod.quinn_keydown(key)`, from the first `on:keydown` in the view. The
+/// host calls it for Escape.
+fn emit_keydown(nodes: &[ViewNode]) -> String {
+    fn find(nodes: &[ViewNode]) -> Option<&Act> {
+        nodes.iter().find_map(|node| match node {
+            ViewNode::El(el) => el.keydown.as_ref().or_else(|| find(&el.children)),
+            ViewNode::Slot { nodes, .. } => find(nodes),
+            _ => None,
+        })
+    }
+    let body = match find(nodes) {
+        Some(act) => emit_act(act, None, "        "),
+        None => "            0\n".into(),
+    };
+    format!("        fn quinn_keydown(quinn_key) {{\n{body}        }}\n        mod.quinn_keydown = quinn_keydown\n")
 }
 
 fn emit_shell_fns(shell: &Shell) -> String {
@@ -1866,7 +1888,24 @@ fn slot_body(
     } else {
         ""
     };
-    format!("            RoundedView {{\n                width: Fit\n                height: Fit\n                flow: {flow}\n{spacing}{align}{inner}            }}\n")
+    // A `w-full` child inside a `Fit` column wrapper has nothing to fill and
+    // collapses to zero, which emptied every inspector row.
+    let width = if frame.flow == FlowSpec::Column && frame.wide.is_none() && nodes.iter().any(fills_width) {
+        "Fill"
+    } else {
+        "Fit"
+    };
+    format!("            RoundedView {{\n                width: {width}\n                height: Fit\n                flow: {flow}\n{spacing}{align}{inner}            }}\n")
+}
+
+fn fills_width(node: &ViewNode) -> bool {
+    match node {
+        ViewNode::El(el) => matches!(
+            parse_classes(&el.class).width,
+            Some(quinn_styles::SizeSpec::Fill)
+        ),
+        _ => false,
+    }
 }
 
 fn slot_flow(flow: FlowSpec, cross: Option<quinn_styles::CrossAlign>) -> String {
@@ -2017,6 +2056,9 @@ fn emit_el(
     if let Some(glyph) = &el.icon {
         return emit_icon(el, glyph, row, &pad, named, parent, stretch);
     }
+    if let Some(bounds) = el.range {
+        return emit_range(el, bounds, row, &pad, named, parent, stretch);
+    }
     let tag = tag_of(&el.tag);
     let style = prepared_style(el, tag, parent, stretch);
     let widget = widget_for(&el.tag, &style);
@@ -2030,6 +2072,15 @@ fn emit_el(
         lines.push(format!("empty_text: \"{}\"", escape_script(placeholder)));
     }
     lines.extend(style_lines(el, tag, parent, stretch, row));
+    // Stock `Label` pads every side by `theme.mspace_1`; text boxes here are
+    // the line box only, so text lines up with control and divider edges.
+    if widget == "Label" && !lines.iter().any(|line| line.starts_with("padding")) {
+        lines.push("padding: 0.".into());
+    }
+    if matches!(tag, Tag::Button | Tag::Input) {
+        lines.push(format!("draw_bg.ring_color: {}", themed_fill("bg-focus")));
+        lines.push(format!("draw_bg.ring_gap: {}", themed_fill("bg-surface")));
+    }
     if style.grid_cols.is_some() {
         // Grid's implicit rows are 0px unless we set a size, and it rejects
         // `auto`. The tallest explicit child height is the row; otherwise 40.
@@ -2225,7 +2276,78 @@ fn emit_el(
         };
         format!("{head}{inner}{children}{pad}}}\n")
     };
+    let widget_text = if el.popover {
+        // The trigger is a control-height sibling in an 8-unit gap stack.
+        format!(
+            "{pad}QuinnPopup {{\n{pad}    anchor_offset: ({}) + 16\n{widget_text}{pad}}}\n",
+            density_height(28.0, 36.0, 48.0)
+        )
+    } else {
+        widget_text
+    };
     wrap_provides(&el.provides, &pad, named, widget_text)
+}
+
+/// A semantic `bg-*` token as a light/dark script value.
+fn themed_fill(class: &str) -> String {
+    let pick = |dark| {
+        parse_classes_in(class, dark)
+            .background
+            .map(|color| color.hex_script())
+            .unwrap_or_else(|| "#00000000".into())
+    };
+    let (light, dark) = (pick(false), pick(true));
+    if light == dark {
+        light
+    } else {
+        format!("if state.quinn_dark == 1 {{ {dark} }} else {{ {light} }}")
+    }
+}
+
+/// `<input type="range" min="0" max="100" step="1" bind:value=level>`.
+/// Drag, arrows (Shift for ten steps), Home/End, and Tab come from
+/// `QuinnSlider`; the value lands in the bound signal.
+fn emit_range(
+    el: &El,
+    [min, max, step]: [f64; 3],
+    row: Option<&RowEnv<'_>>,
+    pad: &str,
+    named: bool,
+    parent: FlowSpec,
+    stretch: bool,
+) -> String {
+    let mut lines = Vec::new();
+    for line in style_lines(el, Tag::Div, parent, stretch, row) {
+        if line.starts_with("width:") || line.starts_with("margin:") {
+            lines.push(line);
+        }
+    }
+    lines.push(format!("min: {}", script_num(min)));
+    lines.push(format!("max: {}", script_num(max)));
+    lines.push(format!("step: {}", script_num(step)));
+    lines.push(format!("big_step: {}", script_num(step * 10.0)));
+    if let Some(signal) = el.bind.as_ref().or(el.input.as_ref()) {
+        lines.push(format!("value: state.{signal}"));
+        lines.push(format!(
+            "on_change: |v| {{\n{pad}    state.{signal} = v\n{pad}    ui.host.render()\n{pad}}}"
+        ));
+    }
+    for (key, class) in [
+        ("track_color", "bg-divider"),
+        ("fill_color", "bg-accent"),
+        ("thumb_color", "bg-surface"),
+        ("thumb_border", "bg-control"),
+        ("ring_color", "bg-focus"),
+    ] {
+        lines.push(format!("draw_bg.{key}: {}", themed_fill(class)));
+    }
+    let inner: String = lines.iter().map(|line| format!("{pad}    {line}\n")).collect();
+    let head = if named {
+        format!("{pad}{} := QuinnSlider {{\n", el.name)
+    } else {
+        format!("{pad}QuinnSlider {{\n")
+    };
+    format!("{head}{inner}{pad}}}\n")
 }
 
 /// `<Icon name="notes" class="w-4 text-secondary">`: a square SVG glyph.
@@ -2643,7 +2765,12 @@ fn emit_hx(
         HxExpr::Bool(value) => if *value { "true" } else { "false" }.into(),
         HxExpr::Str(value) => format!("\"{}\"", escape_script(value)),
         HxExpr::Name(name) => {
-            if locals.contains(name) || name == "text" || name == "value" || name == "id" {
+            if locals.contains(name)
+                || name == "text"
+                || name == "value"
+                || name == "id"
+                || name == "quinn_key"
+            {
                 if name == "value" {
                     "text".into()
                 } else {
@@ -2804,8 +2931,8 @@ fn widget_name(tag: &str) -> &'static str {
     match tag {
         "h1" => "H1",
         "h2" => "H2",
-        "button" => "Button",
-        "input" => "TextInput",
+        "button" => "QuinnButton",
+        "input" => "QuinnTextInput",
         "div" => "RoundedView",
         _ => "Label",
     }
@@ -3735,9 +3862,16 @@ fn align_script(style: &Style) -> Option<String> {
             _ => 0.0,
         },
     };
+    // `RowAlign` centers items within the row's line; a row taller than its
+    // content (`h-control`, `inset-0`) also needs the line itself centered.
     let y = match flow {
         FlowSpec::Column => style.main_align.map(AlignSpec::fraction).unwrap_or(0.0),
-        FlowSpec::Row => 0.0,
+        FlowSpec::Row if style.wrap => 0.0,
+        FlowSpec::Row => match style.cross_align {
+            Some(quinn_styles::CrossAlign::Center) => 0.5,
+            Some(quinn_styles::CrossAlign::End) => 1.0,
+            _ => 0.0,
+        },
     };
     if x == 0.0 && y == 0.0 {
         return None;

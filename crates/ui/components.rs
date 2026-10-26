@@ -33,11 +33,10 @@ fn Search(
 ) -> impl IntoView {
     view! {
         <div class="w-[240px] max-w-full h-control">
-            <div class="absolute left-[12px] top-[13px] w-[10px] h-[10px] rounded-full border border-muted bg-transparent"></div>
-            <div class="absolute left-[20px] top-[21px] w-[2px] h-[2px] bg-muted"></div>
-            <div class="absolute left-[22px] top-[23px] w-[2px] h-[2px] bg-muted"></div>
-            <div class="absolute left-[24px] top-[25px] w-[2px] h-[2px] bg-muted"></div>
             <input class="w-full h-control pl-[36px] pr-3 rounded-control bg-subtle text-body text-primary border border-control dark:bg-subtle dark:text-primary dark:border-control" />
+            <div class="absolute inset-0 flex flex-row items-center pl-3">
+                <Icon name="search" class="w-[16px] text-muted dark:text-muted" />
+            </div>
         </div>
     }
 }
@@ -69,13 +68,8 @@ fn CheckRow(
 #[component]
 fn CheckOn() -> impl IntoView {
     view! {
-        <div class="w-[18px] h-[18px] rounded-[4px] bg-accent dark:bg-accent">
-            <div class="absolute left-[4px] top-[9px] w-[2px] h-[2px] bg-on-accent dark:bg-on-accent"></div>
-            <div class="absolute left-[6px] top-[11px] w-[2px] h-[2px] bg-on-accent dark:bg-on-accent"></div>
-            <div class="absolute left-[8px] top-[9px] w-[2px] h-[3px] bg-on-accent dark:bg-on-accent"></div>
-            <div class="absolute left-[10px] top-[7px] w-[2px] h-[3px] bg-on-accent dark:bg-on-accent"></div>
-            <div class="absolute left-[12px] top-[5px] w-[2px] h-[3px] bg-on-accent dark:bg-on-accent"></div>
-            <div class="absolute left-[14px] top-[4px] w-[2px] h-[2px] bg-on-accent dark:bg-on-accent"></div>
+        <div class="flex flex-row items-center justify-center w-[18px] h-[18px] rounded-[4px] bg-accent dark:bg-accent">
+            <Icon name="check" class="w-[14px] text-on-accent dark:text-on-accent" />
         </div>
     }
 }
@@ -127,19 +121,53 @@ fn Stepper(children: Children) -> impl IntoView {
 }
 
 #[component]
-fn Slider(
-    #[prop(default = "level")] signal: String,
+fn Slider() -> impl IntoView {
+    view! {
+        <input type="range" min="0" max="100" step="1" class="w-full" />
+    }
+}
+
+#[component]
+fn Specimen(
+    #[prop(into)] title: String,
+    #[prop(into)] note: String,
     children: Children,
 ) -> impl IntoView {
     view! {
-        <div class="w-[240px] max-w-full h-control">
-            <div class="absolute left-0 top-[16px] z-[-1] w-full h-[4px] rounded-full bg-divider dark:bg-divider"></div>
-            <div class="absolute left-0 top-[16px] z-[-1] h-[4px] rounded-full bg-accent dark:bg-accent" bind:width="__slider__*2.24+8"></div>
-            <div class="flex flex-row items-center h-control">
-                <div class="h-[16px]" bind:width="__slider__*2.24"></div>
-                <div class="w-[16px] h-[16px] rounded-full bg-surface border border-control dark:bg-surface dark:border-control"></div>
+        <div class="flex flex-col w-full gap-4 p-6 rounded-[8px] bg-surface border border-divider dark:bg-surface dark:border-divider">
+            <div class="flex flex-col w-full gap-1">
+                <span class="text-control text-primary dark:text-primary">{title}</span>
+                <span class="text-caption text-secondary w-full dark:text-secondary">{note}</span>
             </div>
             {children()}
+        </div>
+    }
+}
+
+#[component]
+fn InfoGroup(
+    #[prop(into)] title: String,
+    children: Children,
+) -> impl IntoView {
+    view! {
+        <div class="flex flex-col w-full gap-1">
+            <span class="text-control text-primary pb-1 dark:text-primary">{title}</span>
+            {children()}
+        </div>
+    }
+}
+
+#[component]
+fn InfoRow(
+    #[prop(into)] label: String,
+    children: Children,
+) -> impl IntoView {
+    view! {
+        <div class="flex flex-row items-center w-full min-h-[28px] gap-3">
+            <span class="text-caption text-secondary w-[88px] dark:text-secondary">{label}</span>
+            <div class="flex flex-row items-center flex-1 min-w-0 gap-2">
+                {children()}
+            </div>
         </div>
     }
 }

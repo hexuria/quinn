@@ -1274,6 +1274,10 @@ impl Build {
         let mut bind = None;
         let mut bind_width = None;
         let mut icon = None;
+        let mut keydown = None;
+        let mut range: Option<[f64; 3]> = None;
+        let mut popover = false;
+        let mut bounds = [0.0, 100.0, 1.0];
         for attr in element.attributes() {
             let NodeAttribute::Attribute(attr) = attr else {
                 return Err("computed attribute keys are not supported".into());
@@ -1334,6 +1338,9 @@ impl Build {
             };
             match key.as_str() {
                 "on:click" => click = Some(crate::handler::parse_handler(expr, signals, in_row)?),
+                "on:keydown" => {
+                    keydown = Some(crate::handler::parse_handler(expr, signals, false)?);
+                }
                 "on:input" | "on:change" => {
                     input = Some(crate::handler::parse_input_signal(expr, signals)?);
                 }
@@ -1345,6 +1352,27 @@ impl Build {
                     inline_style = lit_string(expr).ok_or("style must be a string literal")?;
                 }
                 "item" => {}
+                "data-popover" => popover = true,
+                "type" if tag == "input" => {
+                    match lit_string(expr).as_deref() {
+                        Some("range") => range = Some(bounds),
+                        Some("text") => {}
+                        other => return Err(format!("unsupported <input type={other:?}>")),
+                    }
+                }
+                "min" | "max" | "step" if tag == "input" => {
+                    let raw = lit_string(expr).unwrap_or_else(|| expr_snippet(expr));
+                    let num: f64 = raw
+                        .trim()
+                        .parse()
+                        .map_err(|_| format!("<input {key}> must be a number, got `{raw}`"))?;
+                    let slot = match key.as_str() {
+                        "min" => 0,
+                        "max" => 1,
+                        _ => 2,
+                    };
+                    bounds[slot] = num;
+                }
                 "name" if is_icon_tag(&tag) => {
                     let glyph = lit_string(expr).ok_or("<Icon name> must be a string literal")?;
                     if !ICONS.contains(&glyph.as_str()) {
@@ -1451,6 +1479,9 @@ impl Build {
                 children.push(node);
             }
         }
+        if range.is_some() {
+            range = Some(bounds);
+        }
         if is_icon_tag(&tag) && icon.is_none() {
             return Err("<Icon> needs name=\"...\"".into());
         }
@@ -1471,6 +1502,9 @@ impl Build {
             bind_width,
             provides: Vec::new(),
             icon,
+            keydown,
+            range,
+            popover,
             children,
         }))
     }

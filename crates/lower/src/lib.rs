@@ -270,7 +270,7 @@ mod tests {
         assert!(file.contains("ui.host.render()"));
         assert!(file.contains("fn quinn_frame()"));
         assert!(file.contains("mod.quinn_frame = quinn_frame"));
-        assert!(file.contains("increment := Button"));
+        assert!(file.contains("increment := QuinnButton"));
         assert!(file.contains("h1 := H1"));
         let extracted = extract_hot_script(&file).unwrap();
         assert!(extracted.code.contains("#(0)"));
@@ -978,7 +978,7 @@ mod tests {
         for needle in needles {
             assert!(file.contains(needle), "missing {needle}:\n{file}");
         }
-        let field = file.split("field := TextInput").nth(1).expect("input");
+        let field = file.split("field := QuinnTextInput").nth(1).expect("input");
         let field = field.split("on_change").next().unwrap();
         assert!(
             !field

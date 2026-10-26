@@ -529,6 +529,10 @@ fn lower_expr(expr: &Expr, signals: &[Signal]) -> Result<HxExpr, String> {
         Expr::MethodCall(call) if call.method == "to_string" || call.method == "into" => {
             lower_expr(&call.receiver, signals)
         }
+        // `on:keydown=move |ev| { if ev.key() == "Escape" { ... } }`
+        Expr::MethodCall(call) if call.method == "key" && call.args.is_empty() => {
+            Ok(HxExpr::Name("quinn_key".into()))
+        }
         Expr::Call(call) if path_ends(&call.func, &["String", "new"]) && call.args.is_empty() => {
             Ok(HxExpr::Str(String::new()))
         }

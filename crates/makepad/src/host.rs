@@ -744,17 +744,9 @@ pub fn eval_hot_file(
         .unwrap_or_else(|_| path.to_path_buf())
         .to_string_lossy()
         .replace('\\', "/");
-    // `crate_resource("quinn_makepad:...")` resolves through the manifests of
-    // crates that have evaluated a script body. This one registers ours.
-    vm.eval(ScriptMod {
-        cargo_manifest_path: env!("CARGO_MANIFEST_DIR").to_string(),
-        module_path: "quinn_makepad".into(),
-        file: "quinn_makepad.script".into(),
-        line: 1,
-        column: 1,
-        code: "0".into(),
-        values: Vec::new(),
-    });
+    // Also registers this crate's manifest, which is how
+    // `crate_resource("quinn_makepad:resources/icons/...")` resolves.
+    crate::widgets::script_mod(vm);
     vm.eval(ScriptMod {
         cargo_manifest_path: manifest_dir.trim_start_matches(r"\\?\").to_string(),
         module_path: module_path.to_string(),
@@ -873,6 +865,18 @@ std::thread_local! {
 ///
 /// Markup and classes hot-reload. The async fn body is compiled Rust and needs
 /// a rebuild, the same split Makepad has between script and Rust.
+/// The view's root `on:keydown` handler sees Escape as `ev.key() == "Escape"`.
+/// Other keys stay with the focused widget.
+pub(crate) fn forward_key(cx: &mut Cx, ke: &KeyEvent) {
+    if ke.key_code != KeyCode::Escape || ke.is_repeat {
+        return;
+    }
+    script_eval!(cx, {
+        if ok{mod.quinn_keydown} != nil { mod.quinn_keydown("Escape") } else { 0 }
+        true
+    });
+}
+
 pub fn drive_shell(cx: &mut Cx, event: &Event) {
     if std::env::var("QUINN_JOB_LOG").is_ok() {
         eprintln!("drive_shell");
@@ -883,6 +887,9 @@ pub fn drive_shell(cx: &mut Cx, event: &Event) {
             if ok{mod.quinn_set_width} != nil { mod.quinn_set_width(#(w)) } else { 0 }
             true
         });
+    }
+    if let Event::KeyDown(ke) = event {
+        forward_key(cx, ke);
     }
     let poll = matches!(
         event,

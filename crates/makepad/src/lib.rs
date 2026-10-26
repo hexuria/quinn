@@ -6,9 +6,11 @@
 //! `Cx` is UI-thread-only. [`with_cx`] publishes the current `&mut Cx` for the
 //! object-safe [`quinn_core::Surface`] methods, which cannot take a `Cx` argument.
 
+mod control;
 mod host;
 mod probe;
 
+pub use control::drive_control;
 pub use host::{
     boot_script, census_host, drive_shell, eval_hot_file, load_hot_view, load_hot_view_with,
     on_actions,

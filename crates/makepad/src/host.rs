@@ -314,6 +314,14 @@ pub(crate) fn bench_labels(host: &WidgetRef, n: usize) -> (u128, u128) {
     (create_us, update_us)
 }
 
+/// Run script statements with `state` bound to `mod.state`.
+pub(crate) fn eval_statements(cx: &mut Cx, statements: &str) {
+    let code = format!("let state = mod.state\n{statements}\ntrue");
+    cx.with_vm(|vm| {
+        vm.eval(script_mod(&code));
+    });
+}
+
 fn eval_widget(code: &str) -> WidgetRef {
     cx().with_vm(|vm| {
         let value = vm.eval(script_mod(code));
@@ -587,6 +595,9 @@ fn control_script(style: &Style) -> String {
     parts.push("draw_bg.color_2: vec4(-1., -1., -1., -1.)".into());
     parts.push("draw_bg.border_color_2: vec4(-1., -1., -1., -1.)".into());
     parts.push("draw_bg.border_color_focus: #x1d4ed8".into());
+    if !style.margin.any() {
+        parts.push("margin: 0.".into());
+    }
     if let Some(size) = style.font_size {
         parts.push(format!("draw_text.text_style.font_size: {size}"));
     }

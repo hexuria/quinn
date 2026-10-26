@@ -1300,8 +1300,11 @@ fn emit_show_fn(
                     "            state.{field} = if state.{signal} {{ if was != 1 {{ 0 }} else {{ state.{field} }} }} else {{ 0 }}\n"
                 ));
             }
+            let on_fn = script_fn(&format!("{name}_on"), pass_root, false);
+            let on_call = script_call(&format!("{name}_on"), pass_root, None);
+            let show_fn = script_fn(&name, pass_root, false);
             out.push_str(&format!(
-                "        fn {name}_on() {{\n{body}        }}\n        fn {name}_off() {{\n            0\n        }}\n        fn {name}() {{\n{resets}            if state.{signal} {{\n                {name}_on()\n            }} else {{\n                {name}_off()\n            }}\n        }}\n"
+                "        {on_fn} {{\n{body}        }}\n        fn {name}_off() {{\n            0\n        }}\n        {show_fn} {{\n{resets}            if state.{signal} {{\n                {on_call}\n            }} else {{\n                {name}_off()\n            }}\n        }}\n"
             ));
         }
         ViewNode::For { .. } => {}
@@ -1535,7 +1538,7 @@ fn emit_node(
             let call = if let Some(row) = row {
                 format!("{name}({})", row.args)
             } else {
-                format!("{name}()")
+                script_call(&name, pass_root, None)
             };
             format!("{pad}{call}\n")
         }
@@ -2915,8 +2918,14 @@ fn style_lines(
         tune_style(&mut on, parent, stretch && el.class.contains("self-stretch"));
         let on_map = prop_map(&on, tag);
         let cond = shell_cond(&when);
+        let touched = token_keys(&when.token, when.dark, tag);
         for (key, value) in on_map {
-            if base_map.get(&key).map(String::as_str) == Some(value.as_str()) {
+            // A later `dark:bg-transparent` equals the light `bg-transparent`
+            // and still has to override an earlier `dark:bg-accent`. A key
+            // this token does not set keeps whatever is rendered.
+            let same_as_base = base_map.get(&key).map(String::as_str) == Some(value.as_str());
+            let same_as_now = rendered.get(&key).map(String::as_str) == Some(value.as_str());
+            if same_as_now || (same_as_base && !touched.contains(&key)) {
                 continue;
             }
             let else_value = rendered
@@ -2964,6 +2973,17 @@ fn style_lines(
             let value = rendered.remove(&key).unwrap_or_default();
             format!("{key}: {value}")
         })
+        .collect()
+}
+
+/// Props one utility sets on its own: the keys whose value differs from an
+/// unstyled element of the same tag.
+fn token_keys(token: &str, dark: bool, tag: Tag) -> std::collections::BTreeSet<String> {
+    let empty = prop_map(&Style::default(), tag);
+    let only = prop_map(&parse_classes_in(token, dark), tag);
+    only.into_iter()
+        .filter(|(key, value)| empty.get(key) != Some(value))
+        .map(|(key, _)| key)
         .collect()
 }
 
@@ -3129,6 +3149,13 @@ fn prop_map(style: &Style, tag: Tag) -> std::collections::BTreeMap<String, Strin
     }
     for (key, value) in paint_pairs(style, tag) {
         map.insert(key, value);
+    }
+    // Makepad's Button and TextInput carry a theme margin. Inside a parent
+    // sized to the control, that margin pushes the box past the parent's
+    // edge and the bottom border is clipped. Siblings get their spacing
+    // from the parent's gap, so a control has no margin unless a class asks.
+    if matches!(tag, Tag::Button | Tag::Input) {
+        map.entry("margin".into()).or_insert_with(|| "0.".into());
     }
     map
 }

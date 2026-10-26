@@ -46,5 +46,6 @@ impl AppMain for App {
         self.match_event(cx, event);
         self.ui.handle_event(cx, event, &mut Scope::empty());
         quinn::drive_shell(cx, event);
+        quinn::drive_control(cx, event, &self.ui);
     }
 }

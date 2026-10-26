@@ -1571,15 +1571,21 @@ fn variant_class(value: Option<&PropVal>) -> Option<&'static str> {
         "secondary" => Some(
             "bg-surface text-primary border-control hover:bg-surface-hover active:bg-surface-pressed dark:bg-surface dark:text-primary dark:border-control dark:hover:bg-surface-hover dark:active:bg-surface-pressed",
         ),
+        // Every variant names its dark face. A variant that leaves one out
+        // inherits the primary's `dark:bg-accent`, which is how borderless
+        // buttons became pale accent blobs with light labels in dark mode.
         "ghost" => Some(
-            "bg-transparent text-primary border-0 hover:bg-subtle active:bg-surface-pressed dark:text-primary dark:hover:bg-subtle dark:active:bg-surface-pressed",
+            "bg-transparent text-primary border-0 hover:bg-surface-hover active:bg-surface-pressed dark:bg-transparent dark:text-primary dark:border-0 dark:hover:bg-surface-hover dark:active:bg-surface-pressed",
         ),
         "danger" | "destructive" => Some(
-            "bg-danger-bg text-danger border-danger hover:bg-danger-bg active:bg-surface-pressed dark:bg-danger-bg dark:text-danger dark:border-danger dark:hover:bg-danger-bg dark:active:bg-surface-pressed",
+            "bg-danger text-on-accent border-danger hover:bg-danger-hover active:bg-danger-pressed dark:bg-danger dark:text-on-accent dark:border-danger dark:hover:bg-danger-hover dark:active:bg-danger-pressed",
         ),
         _ => None,
     }
 }
+
+/// A disabled control is a solid face, not the enabled face faded.
+const DISABLED_FACE: &str = "bg-disabled-bg text-disabled-fg border-disabled-bg hover:bg-disabled-bg active:bg-disabled-bg dark:bg-disabled-bg dark:text-disabled-fg dark:border-disabled-bg dark:hover:bg-disabled-bg dark:active:bg-disabled-bg";
 
 fn splice_label(node: &mut ViewNode, parts: &[Part]) -> bool {
     match node {
@@ -1645,6 +1651,8 @@ fn retouch(node: &mut ViewNode, touch: &Touch) {
             extra.push_str(&touch.class);
         }
         if touch.disabled {
+            extra.push(' ');
+            extra.push_str(DISABLED_FACE);
             extra.push_str(" disabled");
         }
         if !extra.is_empty() {

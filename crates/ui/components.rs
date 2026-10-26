@@ -47,73 +47,69 @@ fn Search(
     }
 }
 
+/// A row in the navigation rail: an icon over a caption, or beside the label
+/// from 1120 up. The look is the `QNavItem` template; `selected` is the
+/// current page.
 #[component]
-fn NavRow(children: Children) -> impl IntoView {
-    view! {
-        <div class="flex flex-col items-center justify-center w-full h-[56px] gap-1 rounded-control bp1120:flex-row bp1120:justify-start bp1120:h-fit bp1120:min-h-control bp1120:py-2 bp1120:px-3 bp1120:gap-2">
-            {children()}
-            <button class="absolute inset-0 border-0 bg-transparent">" "</button>
-        </div>
-    }
-}
-
-#[component]
-fn CheckRow(
-    #[prop(into)] label: String,
+fn NavItem(
+    #[prop(into)] icon: String,
+    #[prop(optional, default = false)] selected: bool,
     children: Children,
 ) -> impl IntoView {
     view! {
-        <div class="flex flex-row items-center gap-2 h-control">
+        <button widget="QNavItem" class="w-full h-[56px] flex flex-col items-center justify-center gap-1 text-caption bp1120:flex-row bp1120:justify-start bp1120:h-fit bp1120:min-h-control bp1120:py-2 bp1120:px-3 bp1120:gap-2 bp1120:text-body">
             {children()}
-            <span class="text-body text-primary dark:text-primary">{label}</span>
-            <button class="absolute inset-0 border-0 bg-transparent">" "</button>
-        </div>
+        </button>
     }
 }
 
+/// A switch with its label: the `QSwitch` template. `checked` is the state;
+/// the click handler flips it.
 #[component]
-fn CheckOn() -> impl IntoView {
-    view! {
-        <div class="flex flex-row items-center justify-center w-[18px] h-[18px] rounded-[4px] bg-accent dark:bg-accent">
-            <Icon name="check" class="w-[14px] text-on-accent dark:text-on-accent" />
-        </div>
-    }
-}
-
-#[component]
-fn CheckOff() -> impl IntoView {
-    view! {
-        <div class="w-[18px] h-[18px] rounded-[4px] bg-surface border border-control dark:bg-surface dark:border-control"></div>
-    }
-}
-
-#[component]
-fn SwitchOn(
-    #[prop(into)] label: String,
+fn Switch(
+    #[prop(optional, default = false)] checked: bool,
+    children: Children,
 ) -> impl IntoView {
     view! {
-        <div class="flex flex-row items-center gap-2 h-control">
-            <div class="flex flex-row items-center justify-end w-[40px] h-[24px] rounded-full bg-accent px-1 dark:bg-accent">
-                <div class="w-[16px] h-[16px] rounded-full bg-surface dark:bg-surface"></div>
-            </div>
-            <span class="text-body text-primary dark:text-primary">{label}</span>
-            <button class="absolute inset-0 border-0 bg-transparent">" "</button>
+        <button widget="QSwitch">
+            {children()}
+        </button>
+    }
+}
+
+/// A checkbox with its label: the `QCheckbox` template.
+#[component]
+fn Checkbox(
+    #[prop(optional, default = false)] checked: bool,
+    children: Children,
+) -> impl IntoView {
+    view! {
+        <button widget="QCheckbox">
+            {children()}
+        </button>
+    }
+}
+
+/// A segmented control: a tinted track of `Segment`s.
+#[component]
+fn Segmented(children: Children) -> impl IntoView {
+    view! {
+        <div class="flex flex-row items-center p-1 rounded-control bg-subtle w-fit dark:bg-subtle">
+            {children()}
         </div>
     }
 }
 
+/// One segment: the `QSegment` template. `selected` raises its face.
 #[component]
-fn SwitchOff(
-    #[prop(into)] label: String,
+fn Segment(
+    #[prop(optional, default = false)] selected: bool,
+    children: Children,
 ) -> impl IntoView {
     view! {
-        <div class="flex flex-row items-center gap-2 h-control">
-            <div class="flex flex-row items-center w-[40px] h-[24px] rounded-full bg-subtle border border-control px-1 dark:bg-subtle dark:border-control">
-                <div class="w-[16px] h-[16px] rounded-full bg-surface border border-control dark:bg-surface dark:border-control"></div>
-            </div>
-            <span class="text-body text-primary dark:text-primary">{label}</span>
-            <button class="absolute inset-0 border-0 bg-transparent">" "</button>
-        </div>
+        <button widget="QSegment">
+            {children()}
+        </button>
     }
 }
 

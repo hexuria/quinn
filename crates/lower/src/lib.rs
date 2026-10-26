@@ -590,6 +590,12 @@ mod tests {
             ("examples/showcase/view.rs", "QInput {"),
             ("examples/showcase/view.rs", "QInputSubtle {"),
             ("examples/showcase/view.rs", "draw_bg.invalid: 1."),
+            ("examples/showcase/view.rs", "QSegment {"),
+            ("examples/showcase/view.rs", "QSwitch {"),
+            ("examples/showcase/view.rs", "QCheckbox {"),
+            ("examples/showcase/view.rs", "QNavItem {"),
+            ("examples/showcase/view.rs", "label_walk: if state.quinn_width >= 1120. { Walk{width: Fill height: Fit} }"),
+            ("examples/showcase/view.rs", "draw_icon.svg: crate_resource(\"quinn_makepad:resources/icons/notes.svg\")"),
         ];
         for (rel, needle) in cases {
             let source = std::fs::read_to_string(root.join(rel))
@@ -1420,6 +1426,29 @@ mod tests {
         let file = lower_file(src, shell()).unwrap();
         assert!(file.contains("padding: 9."), "{file}");
         assert!(file.contains("cursor: MouseCursor.Arrow"), "{file}");
+    }
+
+    /// A breakpoint that returns a row to the start has to say so: the
+    /// default alignment is otherwise left out and the base one stays.
+    #[test]
+    fn breakpoint_can_reset_alignment_to_start() {
+        let src = r#"
+            #[component]
+            fn Counter() -> impl IntoView {
+                view! {
+                    <div class="flex flex-col">
+                        <div class="flex flex-col items-center justify-center bp1120:flex-row bp1120:justify-start bp1120:items-start">
+                            <span>"Row"</span>
+                        </div>
+                    </div>
+                }
+            }
+        "#;
+        let file = lower_file(src, shell()).unwrap();
+        assert!(
+            file.contains("align: if state.quinn_width >= 1120. { Align{x: 0. y: 0.} }"),
+            "{file}"
+        );
     }
 
 }

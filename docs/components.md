@@ -68,33 +68,47 @@ Props: `placeholder`. `bind:value` forwarded.
 
 A clear button and a shortcut hint are unsupported. Empty, loading, and no-results suggestion lists are unsupported.
 
-## NavRow
+## NavItem
 
-Anatomy: a row, `h-control`, padding 12, gap 8, then whatever children you pass (icon slot, label). A transparent button covers the row and receives `on:click`.
+Anatomy: one `QNavItem` widget: a 16-unit icon and the label on a row face. Below 1120 the icon sits over a 12-unit caption in a 56-unit cell; from 1120 the icon sits beside a 14-unit label in a control-height row with 12 of side padding.
 
-Props: children. Selection is `class:bg-selection` and `class:text-on-selection` on the label. Those are different from focus.
+Props: `icon` (one of the shipped icons), `selected` (`move || signal.get()`), the label as a text child, `on:click`.
 
-Sizing: width fills the parent. The label needs a width (`w-[148px]` or similar) or it sizes to its text and can paint past the rail. Below 1120 the showcase sets the label width to 0 so the 64px rail keeps the icon.
+States: clear at rest, a tint under the pointer, the selection fill with the selection ink when selected (icon included). Focus is a 2-unit ring on the row's edge, from the keyboard only.
 
-Overflow: a 60-character label in a 160px-wide span wraps. Ellipsis is unsupported; full text stays in the row.
+Overflow: a long label ends in an ellipsis beside the icon. Makepad wraps text only in a wrapping flow, and there the label would drop below the icon.
 
-Keyboard: activation is the row button. Arrow-key roving tabindex is unsupported.
+Keyboard: Tab reaches each row. Arrow-key roving is unsupported.
 
-## CheckRow, CheckOn, CheckOff
+```rust
+<NavItem icon="notes" selected=move || notes.get() on:click=move |_| { set_notes.set(true); }>"Notes"</NavItem>
+```
 
-Anatomy: 18px glyph, gap 8, label, row height `h-control`. The row is the target, larger than the glyph.
+## Checkbox
 
-`CheckOn` is the filled accent box with a light check. `CheckOff` is a surface box with `border-control`. Mixed, disabled, and invalid checks are unsupported. The parent swaps On and Off with `<Show>`. The label is not a separate hit target; the row is.
+Anatomy: one `QCheckbox` widget: an 18-unit box (radius 4) at the start, gap 8, the label. The whole row is the target.
 
-Keyboard: the row is a button. Space to toggle was not verified.
+Props: `checked` (`move || signal.get()`), the label as a text child, `on:click` (flip the signal there).
 
-## SwitchOn, SwitchOff
+States: unchecked is a surface box with `border-control`; checked is the accent box with a drawn check in the on-accent ink; hover deepens either. Focus is a 2-unit ring around the box, from the keyboard. Mixed is unsupported.
 
-Anatomy: 40×24 track, 16px thumb, inside an `h-control` row. On parks the thumb at the end on `bg-accent`. Off parks it at the start on `bg-subtle` with `border-control`. The label is text, so the value is not color alone.
+Keyboard: Tab reaches it and Space toggles it (checked with the control hook's key events).
 
-Props: `label`. `on:click` toggles the parent signals. Disabled is unsupported.
+```rust
+<Checkbox checked=move || checked.get() on:click=move |_| { set_checked.update(|value| *value = !*value); }>"Show in menu bar"</Checkbox>
+```
 
-Keyboard: same as CheckRow. Arrow keys do not apply.
+## Switch
+
+Anatomy: one `QSwitch` widget: a 40×24 track with a 16-unit thumb, gap 8, the label. On parks the thumb at the end on the accent track; off parks it at the start on a light track with `border-control`. The label is text, so the value is not color alone.
+
+Props: `checked`, the label as a text child, `on:click`.
+
+Keyboard: Tab reaches it and draws the ring around the track.
+
+```rust
+<Switch checked=move || switched.get() on:click=move |_| { set_switched.update(|value| *value = !*value); }>"Sync notes"</Switch>
+```
 
 ## Stepper
 
@@ -130,6 +144,15 @@ Dialogs in the showcase are not this component. They are a scrim plus a `rounded
 
 ## Segmented control
 
-Not a library component yet. The settings view builds it from three `h-control` cells of equal width inside a `bg-subtle` track. The selected cell is a `bg-surface` face with a divider border. The label is a transparent button, so the selected face does not move the text.
+Anatomy: `Segmented` is the tinted track (`p-1`, `bg-subtle`); each `Segment` is a `QSegment` widget. Unselected segments are the track, tinted under the pointer; the selected one is a raised surface with a hairline. Equal widths come from the call site (`class="w-[88px]"`).
 
-Scrollable tabs and a select fallback when labels do not fit are unsupported.
+Props: `Segment` takes `selected` (`move || signal.get()`), the label, and `on:click`.
+
+Keyboard: Tab reaches each segment and draws the ring outside its face. Arrow-key movement inside the group is unsupported. Scrollable tabs and a select fallback when labels do not fit are unsupported.
+
+```rust
+<Segmented>
+    <Segment class="w-[88px]" selected=move || day.get() on:click=move |_| { set_day.set(true); set_week.set(false); }>"Day"</Segment>
+    <Segment class="w-[88px]" selected=move || week.get() on:click=move |_| { set_day.set(false); set_week.set(true); }>"Week"</Segment>
+</Segmented>
+```

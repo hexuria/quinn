@@ -96,6 +96,8 @@ script_mod! {
             border_color: uniform(#x00000000)
             border_color_dark: uniform(#x00000000)
             border_color_disabled: uniform(#x00000000)
+            border_color_selected: uniform(#x00000000)
+            border_color_selected_dark: uniform(#x00000000)
             ring_color: uniform(#x1d4ed8)
             ring_color_dark: uniform(#x93c5fd)
             pixel: fn() {
@@ -106,6 +108,7 @@ script_mod! {
                     .mix(mix(self.color_down, self.color_down_dark, self.dark), self.down)
                     .mix(mix(self.color_disabled, self.color_disabled_dark, self.dark), max(self.disabled, self.inactive))
                 let stroke = mix(self.border_color, self.border_color_dark, self.dark)
+                    .mix(mix(self.border_color_selected, self.border_color_selected_dark, self.dark), self.selected)
                     .mix(self.border_color_disabled, max(self.disabled, self.inactive))
                 let inset = self.halo + self.border_size * 0.5
                 sdf.box(
@@ -146,6 +149,8 @@ script_mod! {
             color_down_dark: #x334155
             border_color: #x64748b
             border_color_dark: #x94a3b8
+            border_color_selected: #x64748b
+            border_color_selected_dark: #x94a3b8
             border_color_disabled: #xe2e8f0
         }
     }
@@ -179,6 +184,192 @@ script_mod! {
             color_dark: #xfca5a5
             color_hover_dark: #xfecaca
             color_down_dark: #xfee2e2
+        }
+    }
+
+    // One segment of a segmented control, on the control's tinted track.
+    // Unselected segments are the track; the selected one is a raised
+    // surface with a hairline.
+    mod.widgets.QSegment = mod.widgets.QButton{
+        draw_text +: {
+            color: #x0f172a
+            color_hover: #x0f172a
+            color_down: #x0f172a
+            color_selected: #x0f172a
+            color_dark: #xf8fafc
+            color_hover_dark: #xf8fafc
+            color_down_dark: #xf8fafc
+            color_selected_dark: #xf8fafc
+        }
+        draw_bg +: {
+            border_size: 1.0
+            color: #xf1f5f900
+            color_hover: #xe2e8f0
+            color_down: #xcbd5e1
+            color_selected: #xffffff
+            color_dark: #x1e293b00
+            color_hover_dark: #x334155
+            color_down_dark: #x475569
+            color_selected_dark: #x111827
+            border_color_selected: #xcbd5e1
+            border_color_selected_dark: #x334155
+        }
+    }
+
+    // A labelled control drawn in one widget: the mark (switch track, check
+    // box) at the start, the label after it, the whole row the target.
+    // `selected` is the checked state; the lowerer sets it from `checked`.
+    mod.widgets.QToggle = mod.widgets.Button{
+        width: Fit
+        height: 36
+        margin: 0.
+        align: Align{x: 0. y: 0.5}
+        grab_key_focus: false
+        draw_text +: {
+            dark: uniform(0.0)
+            selected: uniform(0.0)
+            inactive: uniform(0.0)
+            color: #x0f172a
+            color_hover: #x0f172a
+            color_dark: uniform(#xf8fafc)
+            color_selected: uniform(#x0f172a)
+            color_selected_dark: uniform(#xf8fafc)
+            color_disabled: uniform(#x475569)
+            color_disabled_dark: uniform(#x94a3b8)
+            text_style: TextStyle{font_size: 10.5 font_family: FontFamily{latin := FontMember{res: crate_resource("makepad_widgets:resources/Inter.ttf") asc: 0.0 desc: 0.0 weight: 400.0}}}
+            get_color: fn() {
+                return mix(self.color, self.color_dark, self.dark)
+                    .mix(mix(self.color_selected, self.color_selected_dark, self.dark), self.selected)
+                    .mix(mix(self.color_disabled, self.color_disabled_dark, self.dark), max(self.disabled, self.inactive))
+            }
+        }
+        draw_bg +: {
+            dark: uniform(0.0)
+            selected: uniform(0.0)
+            inactive: uniform(0.0)
+            accent: uniform(#x1d4ed8)
+            accent_dark: uniform(#x93c5fd)
+            accent_hover: uniform(#x1e40af)
+            accent_hover_dark: uniform(#xbfdbfe)
+            well: uniform(#xffffff)
+            well_dark: uniform(#x111827)
+            well_hover: uniform(#xf1f5f9)
+            well_hover_dark: uniform(#x1e293b)
+            edge: uniform(#x64748b)
+            edge_dark: uniform(#x94a3b8)
+            mark: uniform(#xffffff)
+            mark_dark: uniform(#x0f172a)
+            muted: uniform(#xe2e8f0)
+            muted_dark: uniform(#x1e293b)
+            ring_color: uniform(#x1d4ed8)
+            ring_color_dark: uniform(#x93c5fd)
+        }
+    }
+
+    // 40 by 24 track, 16 thumb, 4 from the ends; 2 units of room on the
+    // start edge for the focus ring around the track.
+    mod.widgets.QSwitch = mod.widgets.QToggle{
+        padding: Inset{left: 52}
+        draw_bg +: {
+            pixel: fn() {
+                let sdf = Sdf2d.viewport(self.pos * self.rect_size)
+                let off = max(self.disabled, self.inactive)
+                let cy = self.rect_size.y * 0.5
+                let accent = mix(self.accent, self.accent_dark, self.dark)
+                    .mix(mix(self.accent_hover, self.accent_hover_dark, self.dark), self.hover)
+                let well = mix(self.well_hover, self.well_hover_dark, self.dark)
+                let track = mix(well, accent, self.selected)
+                    .mix(mix(self.muted, self.muted_dark, self.dark), off)
+                let edge = mix(self.edge, self.edge_dark, self.dark)
+                sdf.box(2.5, cy - 11.5, 39., 23., 6.)
+                sdf.fill_keep(track)
+                sdf.stroke(vec4(edge.rgb, edge.a * (1.0 - self.selected)), 1.)
+                let thumb_x = mix(14., 30., self.selected)
+                sdf.circle(thumb_x, cy, 8.)
+                sdf.fill_keep(mix(self.well, self.well_dark, self.dark))
+                sdf.stroke(vec4(edge.rgb, edge.a * (1.0 - self.selected)), 1.)
+                if self.focus > 0.0 {
+                    let ring = mix(self.ring_color, self.ring_color_dark, self.dark)
+                    sdf.box(1., cy - 13., 42., 26., 7.)
+                    sdf.stroke(vec4(ring.rgb, ring.a * self.focus), 2.)
+                }
+                return sdf.result
+            }
+        }
+    }
+
+    // 18-unit box, radius 4, a drawn check; 2 units of room on the start
+    // edge for the focus ring around the box.
+    mod.widgets.QCheckbox = mod.widgets.QToggle{
+        padding: Inset{left: 30}
+        draw_bg +: {
+            pixel: fn() {
+                let sdf = Sdf2d.viewport(self.pos * self.rect_size)
+                let off = max(self.disabled, self.inactive)
+                let cy = self.rect_size.y * 0.5
+                let accent = mix(self.accent, self.accent_dark, self.dark)
+                    .mix(mix(self.accent_hover, self.accent_hover_dark, self.dark), self.hover)
+                let well = mix(self.well, self.well_dark, self.dark)
+                    .mix(mix(self.well_hover, self.well_hover_dark, self.dark), self.hover)
+                let face = mix(well, accent, self.selected)
+                    .mix(mix(self.muted, self.muted_dark, self.dark), off)
+                let edge = mix(self.edge, self.edge_dark, self.dark)
+                sdf.box(2.5, cy - 8.5, 17., 17., 2.)
+                sdf.fill_keep(face)
+                sdf.stroke(vec4(edge.rgb, edge.a * (1.0 - self.selected)), 1.)
+                if self.selected > 0.0 {
+                    let mark = mix(self.mark, self.mark_dark, self.dark)
+                    sdf.move_to(6.5, cy + 0.5)
+                    sdf.line_to(9.5, cy + 3.5)
+                    sdf.line_to(15.5, cy - 3.)
+                    sdf.stroke(vec4(mark.rgb, mark.a * self.selected), 1.75)
+                }
+                if self.focus > 0.0 {
+                    let ring = mix(self.ring_color, self.ring_color_dark, self.dark)
+                    sdf.box(1., cy - 10., 20., 20., 3.)
+                    sdf.stroke(vec4(ring.rgb, ring.a * self.focus), 2.)
+                }
+                return sdf.result
+            }
+        }
+    }
+
+    // A navigation row: icon and label on a row face. The face is clear,
+    // tinted under the pointer, and the selection fill when selected; the
+    // label follows. The lowerer sets the icon, its ink, and the responsive
+    // layout from the component's class.
+    mod.widgets.QNavItem = mod.widgets.QToggle{
+        width: Fill
+        icon_walk: Walk{width: 16 height: 16}
+        draw_text +: {
+            // A long name ends in an ellipsis, as a sidebar row does. Text
+            // wraps only in a wrapping flow, and there the label would drop
+            // below the icon instead of beside it.
+            text_overflow: Ellipsis
+            color_selected: #x1e3a8a
+            color_selected_dark: #xeff6ff
+        }
+        draw_bg +: {
+            corner: uniform(6.0)
+            face_hover: uniform(#xe2e8f0)
+            face_hover_dark: uniform(#x334155)
+            face_selected: uniform(#xdbeafe)
+            face_selected_dark: uniform(#x1e3a8a)
+            pixel: fn() {
+                let sdf = Sdf2d.viewport(self.pos * self.rect_size)
+                let hover = mix(self.face_hover, self.face_hover_dark, self.dark)
+                let selected = mix(self.face_selected, self.face_selected_dark, self.dark)
+                let face = mix(vec4(hover.rgb, 0.0), hover, self.hover * (1.0 - self.selected))
+                    .mix(selected, self.selected)
+                sdf.box(0., 0., self.rect_size.x, self.rect_size.y, self.corner * 0.5)
+                sdf.fill_keep(face)
+                if self.focus > 0.0 {
+                    let ring = mix(self.ring_color, self.ring_color_dark, self.dark)
+                    sdf.box(1., 1., self.rect_size.x - 2., self.rect_size.y - 2., self.corner * 0.5)
+                    sdf.stroke(vec4(ring.rgb, ring.a * self.focus), 2.)
+                }
+                return sdf.result
+            }
         }
     }
 

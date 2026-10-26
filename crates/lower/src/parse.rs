@@ -1118,8 +1118,13 @@ impl Build {
                 Some(PropVal::Sig(name)) => Some(name.clone()),
                 _ => None,
             },
-            selected: match given.get("selected") {
+            // `checked` is the same flag on a switch or a checkbox.
+            selected: match given.get("selected").or(given.get("checked")) {
                 Some(PropVal::Sig(name)) => Some(name.clone()),
+                _ => None,
+            },
+            glyph: match given.get("icon") {
+                Some(PropVal::Lit(name)) if !name.is_empty() => Some(name.clone()),
                 _ => None,
             },
             invalid: matches!(given.get("invalid"), Some(PropVal::Bool(true))),
@@ -1593,6 +1598,7 @@ struct Touch {
     variant: Option<String>,
     selected: Option<String>,
     range_step: Option<String>,
+    glyph: Option<String>,
     invalid: bool,
     disabled: bool,
     slider: Option<String>,
@@ -1733,6 +1739,10 @@ const LIBRARY_WIDGETS: &[&str] = &[
     "QButtonDanger",
     "QInput",
     "QInputSubtle",
+    "QSegment",
+    "QSwitch",
+    "QCheckbox",
+    "QNavItem",
 ];
 
 /// A library widget takes its look from its template. The call site picks the
@@ -1778,6 +1788,12 @@ fn touch_library(el: &mut El, touch: &Touch) -> Result<(), String> {
         ));
     }
     el.selected = touch.selected.clone();
+    if let Some(glyph) = &touch.glyph {
+        if !ICONS.contains(&glyph.as_str()) {
+            return Err(format!("unknown icon `{glyph}`; known: {}", ICONS.join(", ")));
+        }
+        el.icon = Some(glyph.clone());
+    }
     Ok(())
 }
 

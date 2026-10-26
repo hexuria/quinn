@@ -36,6 +36,11 @@ fn Showcase() -> impl IntoView {
     let (check_off, set_check_off) = signal(false);
     let (switched, set_switched) = signal(true);
     let (switch_off, set_switch_off) = signal(false);
+    let (demo_check, set_demo_check) = signal(true);
+    let (demo_uncheck, set_demo_uncheck) = signal(false);
+    let (demo_on, set_demo_on) = signal(true);
+    let (demo_off, set_demo_off) = signal(false);
+    let (demo_nav, _set_demo_nav) = signal(true);
     let (menu, set_menu) = signal(false);
     let (choice, set_choice) = signal("On My Mac".to_string());
     let (query, set_query) = signal(String::new());
@@ -118,22 +123,10 @@ fn Showcase() -> impl IntoView {
                 <div class="flex flex-col h-full bg-subtle overflow-hidden w-[0px] bp800:w-[64px] bp1120:w-[224px] bp1120:min-w-[200px] bp1120:max-w-[280px] dark:bg-subtle">
                     <div class="flex flex-col gap-1 py-3 bp1120:px-2">
                         <span class="text-caption text-secondary px-3 w-[0px] h-[0px] bp1120:w-[160px] bp1120:h-fit dark:text-secondary">"Library"</span>
-                        <NavRow class:bg-selection=move || notes.get() on:click=move |_| { set_notes.set(true); set_table.set(false); set_settings.set(false); set_gallery.set(false); set_nav_open.set(false); }>
-                            <Icon name="notes" class="w-[16px] text-secondary dark:text-secondary" class:text-on-selection=move || notes.get() />
-                            <span class="text-caption text-primary bp1120:text-body bp1120:w-[148px] dark:text-primary" class:text-on-selection=move || notes.get()>"Notes"</span>
-                        </NavRow>
-                        <NavRow class:bg-selection=move || table.get() on:click=move |_| { set_notes.set(false); set_table.set(true); set_settings.set(false); set_gallery.set(false); set_nav_open.set(false); }>
-                            <Icon name="table" class="w-[16px] text-secondary dark:text-secondary" class:text-on-selection=move || table.get() />
-                            <span class="text-caption text-primary bp1120:text-body bp1120:w-[148px] dark:text-primary" class:text-on-selection=move || table.get()>"Table"</span>
-                        </NavRow>
-                        <NavRow class:bg-selection=move || settings.get() on:click=move |_| { set_notes.set(false); set_table.set(false); set_settings.set(true); set_gallery.set(false); set_nav_open.set(false); }>
-                            <Icon name="settings" class="w-[16px] text-secondary dark:text-secondary" class:text-on-selection=move || settings.get() />
-                            <span class="text-caption text-primary bp1120:text-body bp1120:w-[148px] dark:text-primary" class:text-on-selection=move || settings.get()>"Settings"</span>
-                        </NavRow>
-                        <NavRow class:bg-selection=move || gallery.get() on:click=move |_| { set_notes.set(false); set_table.set(false); set_settings.set(false); set_gallery.set(true); set_nav_open.set(false); }>
-                            <Icon name="gallery" class="w-[16px] text-secondary dark:text-secondary" class:text-on-selection=move || gallery.get() />
-                            <span class="text-caption text-primary bp1120:text-body bp1120:w-[148px] dark:text-primary" class:text-on-selection=move || gallery.get()>"Gallery"</span>
-                        </NavRow>
+                        <NavItem icon="notes" selected=move || notes.get() on:click=move |_| { set_notes.set(true); set_table.set(false); set_settings.set(false); set_gallery.set(false); set_nav_open.set(false); }>"Notes"</NavItem>
+                        <NavItem icon="table" selected=move || table.get() on:click=move |_| { set_notes.set(false); set_table.set(true); set_settings.set(false); set_gallery.set(false); set_nav_open.set(false); }>"Table"</NavItem>
+                        <NavItem icon="settings" selected=move || settings.get() on:click=move |_| { set_notes.set(false); set_table.set(false); set_settings.set(true); set_gallery.set(false); set_nav_open.set(false); }>"Settings"</NavItem>
+                        <NavItem icon="gallery" selected=move || gallery.get() on:click=move |_| { set_notes.set(false); set_table.set(false); set_settings.set(false); set_gallery.set(true); set_nav_open.set(false); }>"Gallery"</NavItem>
                     </div>
                 </div>
                 <Show when=move || notes.get()>
@@ -245,48 +238,19 @@ fn Showcase() -> impl IntoView {
                             <div class="flex flex-col gap-6 w-full bp1120:w-[280px]">
                                 <div class="flex flex-col gap-2">
                                     <span class="text-control text-primary dark:text-primary">"View"</span>
-                                    <div class="flex flex-row items-center p-1 rounded-control bg-subtle w-fit dark:bg-subtle">
-                                        <div class="w-[88px] h-control">
-                                            <Show when=move || day.get()>
-                                                <div class="w-[88px] h-control rounded-control bg-surface border border-divider dark:bg-surface dark:border-divider"></div>
-                                            </Show>
-                                            <button class="absolute inset-0 border-0 bg-transparent text-control text-primary dark:text-primary" on:click=move |_| { set_day.set(true); set_week.set(false); set_month.set(false); }>"Day"</button>
-                                        </div>
-                                        <div class="w-[88px] h-control">
-                                            <Show when=move || week.get()>
-                                                <div class="w-[88px] h-control rounded-control bg-surface border border-divider dark:bg-surface dark:border-divider"></div>
-                                            </Show>
-                                            <button class="absolute inset-0 border-0 bg-transparent text-control text-primary dark:text-primary" on:click=move |_| { set_day.set(false); set_week.set(true); set_month.set(false); }>"Week"</button>
-                                        </div>
-                                        <div class="w-[88px] h-control">
-                                            <Show when=move || month.get()>
-                                                <div class="w-[88px] h-control rounded-control bg-surface border border-divider dark:bg-surface dark:border-divider"></div>
-                                            </Show>
-                                            <button class="absolute inset-0 border-0 bg-transparent text-control text-primary dark:text-primary" on:click=move |_| { set_day.set(false); set_week.set(false); set_month.set(true); }>"Month"</button>
-                                        </div>
-                                    </div>
+                                    <Segmented>
+                                        <Segment class="w-[88px]" selected=move || day.get() on:click=move |_| { set_day.set(true); set_week.set(false); set_month.set(false); }>"Day"</Segment>
+                                        <Segment class="w-[88px]" selected=move || week.get() on:click=move |_| { set_day.set(false); set_week.set(true); set_month.set(false); }>"Week"</Segment>
+                                        <Segment class="w-[88px]" selected=move || month.get() on:click=move |_| { set_day.set(false); set_week.set(false); set_month.set(true); }>"Month"</Segment>
+                                    </Segmented>
                                 </div>
                                 <div class="flex flex-col gap-2">
                                     <span class="text-control text-primary dark:text-primary">"Sync"</span>
-                                    <Show when=move || switched.get()>
-                                        <SwitchOn label="Sync notes" on:click=move |_| { set_switched.set(false); set_switch_off.set(true); } />
-                                    </Show>
-                                    <Show when=move || switch_off.get()>
-                                        <SwitchOff label="Sync notes" on:click=move |_| { set_switched.set(true); set_switch_off.set(false); } />
-                                    </Show>
+                                    <Switch checked=move || switched.get() on:click=move |_| { set_switched.update(|value| *value = !*value); set_switch_off.update(|value| *value = !*value); }>"Sync notes"</Switch>
                                 </div>
                                 <div class="flex flex-col gap-2">
                                     <span class="text-control text-primary dark:text-primary">"Menu bar"</span>
-                                    <Show when=move || checked.get()>
-                                        <CheckRow label="Show in menu bar" on:click=move |_| { set_checked.set(false); set_check_off.set(true); }>
-                                            <CheckOn />
-                                        </CheckRow>
-                                    </Show>
-                                    <Show when=move || check_off.get()>
-                                        <CheckRow label="Show in menu bar" on:click=move |_| { set_checked.set(true); set_check_off.set(false); }>
-                                            <CheckOff />
-                                        </CheckRow>
-                                    </Show>
+                                    <Checkbox checked=move || checked.get() on:click=move |_| { set_checked.update(|value| *value = !*value); set_check_off.update(|value| *value = !*value); }>"Show in menu bar"</Checkbox>
                                 </div>
                                 <div class="flex flex-col gap-2">
                                     <span class="text-control text-primary dark:text-primary">"Account"</span>
@@ -307,26 +271,11 @@ fn Showcase() -> impl IntoView {
                             <div class="flex flex-col gap-6 w-full bp1120:w-[320px]">
                                 <div class="flex flex-col gap-2">
                                     <span class="text-control text-primary dark:text-primary">"Density"</span>
-                                    <div class="flex flex-row items-center p-1 rounded-control bg-subtle w-fit dark:bg-subtle">
-                                        <div class="w-[100px] h-control">
-                                            <Show when=move || density_compact.get()>
-                                                <div class="w-[100px] h-control rounded-control bg-surface border border-divider dark:bg-surface dark:border-divider"></div>
-                                            </Show>
-                                            <button class="absolute inset-0 px-2 border-0 bg-transparent text-control text-primary dark:text-primary" on:click=move |_| { set_density(0); set_density_compact.set(true); set_density_std.set(false); set_density_touch.set(false); }>"Compact"</button>
-                                        </div>
-                                        <div class="w-[100px] h-control">
-                                            <Show when=move || density_std.get()>
-                                                <div class="w-[100px] h-control rounded-control bg-surface border border-divider dark:bg-surface dark:border-divider"></div>
-                                            </Show>
-                                            <button class="absolute inset-0 px-2 border-0 bg-transparent text-control text-primary dark:text-primary" on:click=move |_| { set_density(1); set_density_compact.set(false); set_density_std.set(true); set_density_touch.set(false); }>"Standard"</button>
-                                        </div>
-                                        <div class="w-[100px] h-control">
-                                            <Show when=move || density_touch.get()>
-                                                <div class="w-[100px] h-control rounded-control bg-surface border border-divider dark:bg-surface dark:border-divider"></div>
-                                            </Show>
-                                            <button class="absolute inset-0 px-2 border-0 bg-transparent text-control text-primary dark:text-primary" on:click=move |_| { set_density(2); set_density_compact.set(false); set_density_std.set(false); set_density_touch.set(true); }>"Touch"</button>
-                                        </div>
-                                    </div>
+                                    <Segmented>
+                                        <Segment class="w-[100px]" selected=move || density_compact.get() on:click=move |_| { set_density(0); set_density_compact.set(true); set_density_std.set(false); set_density_touch.set(false); }>"Compact"</Segment>
+                                        <Segment class="w-[100px]" selected=move || density_std.get() on:click=move |_| { set_density(1); set_density_compact.set(false); set_density_std.set(true); set_density_touch.set(false); }>"Standard"</Segment>
+                                        <Segment class="w-[100px]" selected=move || density_touch.get() on:click=move |_| { set_density(2); set_density_compact.set(false); set_density_std.set(false); set_density_touch.set(true); }>"Touch"</Segment>
+                                    </Segmented>
                                     <span class="text-caption text-secondary w-full dark:text-secondary">"Control height 28, 36, or 48."</span>
                                 </div>
                                 <div class="flex flex-col gap-2">
@@ -375,9 +324,11 @@ fn Showcase() -> impl IntoView {
                                 <span class="text-body text-secondary dark:text-secondary w-full max-w-[640px]">"Every control this build ships, with the states it can actually show. Switch theme and density here; the whole app follows."</span>
                             </div>
                             <div class="flex flex-row flex-wrap items-center gap-2">
-                                <Button variant="secondary" selected=move || density_compact.get() on:click=move |_| { set_density(0); set_density_compact.set(true); set_density_std.set(false); set_density_touch.set(false); }>"Compact"</Button>
-                                <Button variant="secondary" selected=move || density_std.get() on:click=move |_| { set_density(1); set_density_compact.set(false); set_density_std.set(true); set_density_touch.set(false); }>"Standard"</Button>
-                                <Button variant="secondary" selected=move || density_touch.get() on:click=move |_| { set_density(2); set_density_compact.set(false); set_density_std.set(false); set_density_touch.set(true); }>"Touch"</Button>
+                                <Segmented>
+                                    <Segment class="w-[100px]" selected=move || density_compact.get() on:click=move |_| { set_density(0); set_density_compact.set(true); set_density_std.set(false); set_density_touch.set(false); }>"Compact"</Segment>
+                                    <Segment class="w-[100px]" selected=move || density_std.get() on:click=move |_| { set_density(1); set_density_compact.set(false); set_density_std.set(true); set_density_touch.set(false); }>"Standard"</Segment>
+                                    <Segment class="w-[100px]" selected=move || density_touch.get() on:click=move |_| { set_density(2); set_density_compact.set(false); set_density_std.set(false); set_density_touch.set(true); }>"Touch"</Segment>
+                                </Segmented>
                                 <div class="w-[8px] h-[1px]"></div>
                                 <Show when=move || light_on.get()>
                                     <Button variant="ghost" on:click=move |_| { toggle_theme(); set_dark_on.set(true); set_light_on.set(false); }>"Dark theme"</Button>
@@ -499,16 +450,12 @@ fn Showcase() -> impl IntoView {
                                     <Search placeholder="Search notes" bind:value=query />
                                 </div>
                             </Specimen>
-                            <Specimen title="Selection controls" note="18-unit checkbox, 40 by 24 switch. The whole row is the target.">
+                            <Specimen title="Selection controls" note="18-unit checkbox, 40 by 24 switch. The whole row is the target; each one toggles.">
                                 <div class="flex flex-row flex-wrap items-center gap-6">
-                                    <CheckRow label="Checked">
-                                        <CheckOn />
-                                    </CheckRow>
-                                    <CheckRow label="Unchecked">
-                                        <CheckOff />
-                                    </CheckRow>
-                                    <SwitchOn label="On" />
-                                    <SwitchOff label="Off" />
+                                    <Checkbox checked=move || demo_check.get() on:click=move |_| { set_demo_check.update(|value| *value = !*value); }>"Checked"</Checkbox>
+                                    <Checkbox checked=move || demo_uncheck.get() on:click=move |_| { set_demo_uncheck.update(|value| *value = !*value); }>"Unchecked"</Checkbox>
+                                    <Switch checked=move || demo_on.get() on:click=move |_| { set_demo_on.update(|value| *value = !*value); }>"On"</Switch>
+                                    <Switch checked=move || demo_off.get() on:click=move |_| { set_demo_off.update(|value| *value = !*value); }>"Off"</Switch>
                                 </div>
                             </Specimen>
                             <Specimen title="Slider, stepper, progress" note="The slider takes drag, arrow keys, Shift for steps of 10, Home and End. Same value as Settings.">
@@ -531,20 +478,11 @@ fn Showcase() -> impl IntoView {
                                     </div>
                                 </div>
                             </Specimen>
-                            <Specimen title="Navigation rows" note="Selected uses the selection fill and foreground. Long names wrap inside the row width.">
+                            <Specimen title="Navigation rows" note="Selected uses the selection fill and foreground. Long names end in an ellipsis.">
                                 <div class="flex flex-col w-[240px] gap-1 p-2 rounded-control bg-subtle dark:bg-subtle">
-                                    <NavRow class="bg-selection dark:bg-selection">
-                                        <Icon name="notes" class="w-[16px] text-on-selection dark:text-on-selection" />
-                                        <span class="text-body text-on-selection w-[160px] dark:text-on-selection">"Selected"</span>
-                                    </NavRow>
-                                    <NavRow>
-                                        <Icon name="table" class="w-[16px] text-secondary dark:text-secondary" />
-                                        <span class="text-body text-primary dark:text-primary w-[160px]">"Default"</span>
-                                    </NavRow>
-                                    <NavRow>
-                                        <Icon name="gallery" class="w-[16px] text-secondary dark:text-secondary" />
-                                        <span class="text-body text-primary dark:text-primary w-[160px]">"Weekly planning notes for the cabinet review"</span>
-                                    </NavRow>
+                                    <NavItem icon="notes" selected=move || demo_nav.get()>"Selected"</NavItem>
+                                    <NavItem icon="table">"Default"</NavItem>
+                                    <NavItem icon="gallery">"Weekly planning notes for the cabinet review"</NavItem>
                                 </div>
                             </Specimen>
                         </div>

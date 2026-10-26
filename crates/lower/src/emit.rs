@@ -2129,14 +2129,16 @@ fn emit_el(
     pass_root: bool,
 ) -> String {
     let pad = " ".repeat(indent * 4);
+    // A library widget may carry an icon of its own (`QNavItem`), so it is
+    // matched before the `<Icon>` element.
+    if let Some(template) = &el.widget {
+        return emit_library(el, template, row, &pad, named, parent);
+    }
     if let Some(glyph) = &el.icon {
         return emit_icon(el, glyph, row, &pad, named, parent, stretch);
     }
     if let Some(bounds) = el.range {
         return emit_range(el, bounds, row, &pad, named, parent, stretch);
-    }
-    if let Some(template) = &el.widget {
-        return emit_library(el, template, row, &pad, named);
     }
     let tag = tag_of(&el.tag);
     let style = prepared_style(el, tag, parent, stretch);
@@ -2526,12 +2528,17 @@ fn emit_library(
     row: Option<&RowEnv<'_>>,
     pad: &str,
     named: bool,
+    parent: FlowSpec,
 ) -> String {
     let style = parse_classes(&el.class);
     let lines = if el.tag == "input" {
         library_field_lines(el, &style, row, pad)
+    } else if template.starts_with("QButton") || template == "QSegment" {
+        // A segment's fixed width is a column of the control, not a cue to
+        // wrap its label.
+        library_button_lines(el, &style, row, pad, template != "QSegment")
     } else {
-        library_button_lines(el, &style, row, pad)
+        library_toggle_lines(el, &style, row, pad, parent)
     };
     let inner: String = lines.iter().map(|line| format!("{pad}    {line}\n")).collect();
     let head = if named {
@@ -2592,11 +2599,141 @@ fn library_field_lines(
     lines
 }
 
+/// The label walk for a flow value, conditional chains included: `Fill` in
+/// a row (`Right`, `Flow.Right{...}`), `Fit` in a column (`Down`).
+fn label_walk_for(flow: &str) -> String {
+    const ROW: &str = "Walk{width: Fill height: Fit}";
+    const COLUMN: &str = "Walk{width: Fit height: Fit}";
+    let mut out = String::new();
+    let mut rest = flow;
+    while let Some(at) = rest.find("Flow.Right{") {
+        out.push_str(&rest[..at]);
+        let tail = &rest[at..];
+        let end = tail.find('}').map_or(tail.len(), |end| end + 1);
+        out.push('\u{1}');
+        rest = &tail[end..];
+    }
+    out.push_str(rest);
+    out.split(' ')
+        .map(|word| match word {
+            "\u{1}" | "Right" => ROW,
+            "Down" => COLUMN,
+            other => other,
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// Whether the class, or any of its breakpoint or `dark:` variants, sets
+/// what `test` looks for.
+fn class_sets(class: &str, test: impl Fn(&Style) -> bool) -> bool {
+    test(&parse_classes(class))
+        || shell_variants(class)
+            .iter()
+            .any(|when| test(&parse_classes_in(&when.token, when.dark)))
+}
+
+/// A labelled control drawn in one widget (`QSwitch`, `QCheckbox`,
+/// `QNavItem`). The class lays it out, breakpoints included, and sets its
+/// type size; the template paints it.
+fn library_toggle_lines(
+    el: &El,
+    style: &Style,
+    row: Option<&RowEnv<'_>>,
+    pad: &str,
+    parent: FlowSpec,
+) -> Vec<String> {
+    let mut lines = vec![format!("text: {}", text_expr(el, row))];
+    if let Some(act) = &el.click {
+        let body = emit_act(act, row, pad);
+        lines.push(format!("on_click: || {{\n{body}{pad}}}"));
+    }
+    const LAYOUT: &[&str] = &[
+        "width", "height", "min_width", "max_width", "min_height", "max_height", "flow",
+        "spacing", "align", "padding", "margin",
+    ];
+    let mut layout: Vec<String> = style_lines(el, Tag::Div, parent, false, row)
+        .into_iter()
+        .filter(|line| {
+            let key = line.split(':').next().unwrap_or_default();
+            LAYOUT.contains(&key)
+        })
+        .collect();
+    // The template's own layout stands for what the class leaves out, but a
+    // `Div` always gets a flow; drop it unless the class asked for one.
+    if !class_sets(&el.class, |style| style.flow.is_some()) {
+        layout.retain(|line| !line.starts_with("flow:"));
+    }
+    if !class_sets(&el.class, |style| style.height.is_some() || style.min_control) {
+        layout.retain(|line| !line.starts_with("height:"));
+        layout.push(format!("height: {}", density_height(28.0, 36.0, 48.0)));
+    }
+    // In a row the label takes the rest of the row and wraps inside it;
+    // otherwise Makepad moves the whole label onto the next row. In a
+    // column it keeps its own width, centered under the icon. The label's
+    // walk follows whatever the flow is at each breakpoint.
+    if let Some(flow) = layout.iter().find_map(|line| line.strip_prefix("flow: ")) {
+        lines.push(format!("label_walk: {}", label_walk_for(flow)));
+    }
+    lines.extend(layout);
+    if class_sets(&el.class, |style| style.font_size.is_some()) {
+        lines.extend(
+            style_lines(el, Tag::Span, parent, false, row)
+                .into_iter()
+                .filter(|line| line.starts_with("draw_text.text_style:")),
+        );
+    }
+    let dark = "if state.quinn_dark == 1 { 1. } else { 0. }";
+    lines.push(format!("draw_bg.dark: {dark}"));
+    lines.push(format!("draw_text.dark: {dark}"));
+    let selected = el
+        .selected
+        .as_ref()
+        .map(|signal| class_cond(signal, row));
+    if let Some(cond) = &selected {
+        let flag = format!("if {cond} {{ 1. }} else {{ 0. }}");
+        lines.push(format!("draw_bg.selected: {flag}"));
+        lines.push(format!("draw_text.selected: {flag}"));
+    }
+    if let Some(glyph) = &el.icon {
+        lines.push(format!(
+            "draw_icon.svg: crate_resource(\"quinn_makepad:resources/icons/{glyph}.svg\")"
+        ));
+        // `DrawSvg` takes one ink, not a shader mix, so the icon's is chosen here.
+        let ink = |class: &str, dark: bool| {
+            parse_classes_in(class, dark)
+                .color
+                .map(|color| color.hex_script())
+                .unwrap_or_default()
+        };
+        let pick = |dark: bool| match &selected {
+            Some(cond) => format!(
+                "if {cond} {{ {} }} else {{ {} }}",
+                ink("text-on-selection", dark),
+                ink("text-secondary", dark)
+            ),
+            None => ink("text-secondary", dark),
+        };
+        lines.push(format!(
+            "draw_icon.color: if state.quinn_dark == 1 {{ {} }} else {{ {} }}",
+            pick(true),
+            pick(false)
+        ));
+    }
+    if style.disabled {
+        lines.push("enabled: false".into());
+        lines.push("draw_bg.inactive: 1.".into());
+        lines.push("draw_text.inactive: 1.".into());
+    }
+    lines
+}
+
 fn library_button_lines(
     el: &El,
     style: &Style,
     row: Option<&RowEnv<'_>>,
     pad: &str,
+    wraps: bool,
 ) -> Vec<String> {
     let mut lines = vec![format!("text: {}", text_expr(el, row))];
     if let Some(act) = &el.click {
@@ -2624,7 +2761,7 @@ fn library_button_lines(
         })
         .collect();
     let x = edge(density_height(8.0, 12.0, 16.0));
-    if matches!(style.width, Some(SizeSpec::Px(_))) && style.height.is_none() {
+    if wraps && matches!(style.width, Some(SizeSpec::Px(_))) && style.height.is_none() {
         // A fixed width wraps a long label onto more rows and grows the
         // button instead of clipping it.
         walk.insert("height".into(), "Fit".into());
@@ -3324,7 +3461,15 @@ fn style_lines(
         acc.merge_from(&parse_classes_in(&when.token, when.dark));
         let mut on = acc.clone();
         tune_style(&mut on, parent, stretch && el.class.contains("self-stretch"));
-        let on_map = prop_map(&on, tag);
+        let mut on_map = prop_map(&on, tag);
+        // `align_script` leaves out the default alignment. Under a condition
+        // that reads as "keep the earlier one", so `bp1120:justify-start`
+        // could not undo a base `justify-center`.
+        if rendered.contains_key("align") {
+            on_map
+                .entry("align".into())
+                .or_insert_with(|| "Align{x: 0. y: 0.}".into());
+        }
         let touched = token_keys(&when.token, when.dark, tag);
         for (key, value) in on_map {
             // A later `dark:bg-transparent` equals the light `bg-transparent`

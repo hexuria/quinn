@@ -77,7 +77,7 @@ Semantic colors, with the published alpha:
 
 ## Materials, radii, shadows, controls
 
-The sidebar and popovers use the `sidebar` fill. That is a translucent color. Makepad’s rounded shader has no backdrop blur, so this is not `NSVisualEffectView` and not a vibrancy material. What is behind the sidebar does not smear.
+The sidebar uses the `vibrancy` utility. That lowers to Makepad’s `GaussRoundedView`: a render-to-texture of the window scene, a blur pyramid (`gauss_view.rs`), and a tint. It is not `NSVisualEffectView`. The texture is the app’s own scene, not the desktop wallpaper, so a sidebar beside the content frosts the window fill. A sheet or toast drawn over the content can frost that content. `fallback_color` matches the sidebar tint, so a failed capture (software GL often looks flat) still reads as a solid sidebar. `MAKEPAD_NO_GAUSS=1` forces the opaque fallback.
 
 | Utility | Value |
 | --- | --- |
@@ -98,7 +98,7 @@ The sidebar and popovers use the `sidebar` fill. That is a translucent color. Ma
 
 ## Icons
 
-[SF Symbols](https://developer.apple.com/sf-symbols/) cannot be redistributed. Makepad’s `DrawSvg` script path drops the loaded SVG and paints a white silhouette, so a Lucide SVG set would not survive `script apply`. The showcase uses geometric marks in the system colors — an 18 pt rounded square — in the slot an SF Symbol would occupy. They are not Lucide paths and not SF Symbols.
+[SF Symbols](https://developer.apple.com/sf-symbols/) cannot be redistributed. Makepad’s `Button` `DrawSvg` path tints a whole silhouette white, so a Lucide stroke would not stay a stroke. The showcase draws small vector marks from rounded views: a page, a four-cell table, a gear, a magnifying glass, a folder, a sun, and a moon. They are not SF Symbols and not Lucide paths. Inter does not draw “✓” or “▾”; the checkbox check is a few white blocks.
 
 ## Controls
 
@@ -109,31 +109,37 @@ These are Makepad `Button`, `TextInput`, and `RoundedView` widgets wearing the u
 | Push button, default | `bg-system-blue text-white`, 6 pt radius, 28 pt |
 | Push button, bordered | `bg-control-background` and a `separator` hairline |
 | Push button, borderless | `border-0 bg-transparent text-system-blue` |
-| Segmented control | a `system-fill` track; the selected segment is `system-background` |
+| Segmented control | a `system-fill` track; the selected segment is a `system-background` pill with a hairline, and the label is a transparent button on top |
 | Toggle | a 44×26 pill, `system-fill` off and `system-green` on, with a white knob |
-| Checkbox | an 18 pt rounded square; checked is `system-blue` with a check |
+| Checkbox | a 14 pt rounded square; accent-filled with a block check when on, bordered when off |
 | Pop-up button | a bordered button that shows a shadowed menu |
-| Text field | 28 pt, `separator` stroke; focus sets `border_color_focus` to `#007AFF` |
-| Search field | the same field, `system-fill`, in the toolbar |
-| Sidebar source list | 240 pt column, `bg-sidebar`; the selected row is `system-blue` with white text |
-| Toolbar | 52 pt, title, search, trailing actions, then a separator |
+| Text field | 28 pt, `separator` stroke; focus sets `border_color_focus` to system blue (`#007AFF` light, `#0A84FF` dark) inside the view script |
+| Search field | `system-fill`, a drawn magnifying glass, placeholder in `tertiaryLabel` (`#3C3C434D` light, `#EBEBF54D` dark) |
+| Sidebar source list | full window height, 28 pt rows, icon then label, selection inset 10 pt, section header 11 pt in the secondary label color |
+| Toolbar | 52 pt, headline title on the left, icon buttons, a hairline; Theme is a sun/moon toggle in the showcase |
+| Toast | a floating rounded card with a shadow, not a full-width bar. A root-level `absolute` child is lifted onto the host overlay and shrink-wraps unless it sets a width |
 | Sheet | a portal card, 12 pt radius, over a translucent scrim |
 | Alert | a smaller sheet with a `system-red` default button |
 | Popover | the pop-up menu, `shadow-window` |
-| Table | a list with separators. Alternating row fills need a row index, and `<For>` rows only have `id` and `label`, so there are no stripes |
-| Progress | a `system-blue` bar at 25 / 50 / 75 / 100. There is no drag slider |
-| Stepper | bordered − and + that jump to the ends of that range. A handler cannot branch on the current value |
+| Table | `<For let:item let:index>` passes the enumerate index. `odd:` / `even:` paint zebra rows |
+| Slider | a track, a `system-blue` fill, and a knob. `bind:width="level*2"` and `bind:width="level*2-9"` place the fill and the knob. Clicks set the value; it does not drag |
+| Stepper | one joined vertical control. Handlers use `if` / `else` and `clamp` |
+| Progress | the same fill as the slider |
 | Tab view | the source list is the tab. Settings also has the segmented control |
 
-A click used to leave a button pale grey with a faint label. The theme’s pressed and focus fills were mixed in and could stick across `render()`. Every button state now uses the face and label already chosen, the outset gradient is turned off (`color_2` alpha is negative), and `reset_hover_on_click` cuts the hover track after the click. The focus ring is the border, in system blue. The border color does not flip to dark-mode `#0A84FF`.
+A click used to leave a button pale grey with a faint label. The theme’s pressed and focus fills were mixed in and could stick across `render()`. Every button state now uses the face and label already chosen, the outset gradient is turned off (`color_2` alpha is negative), and `reset_hover_on_click` cuts the hover track after the click. The focus ring is the border, in system blue, and the view script uses the dark accent when `quinn_dark` is on. The host `control_script` patch still uses `#007AFF`, because that patch runs outside the view script.
 
-`class:` does not take `dark:`. A selected row stays light system blue in both appearances. Put `dark:` on the class string when the resting color should flip.
+`class:` reads both palettes, so `class:bg-system-blue` is `#0A84FF` in dark mode. `class:dark:token=signal` applies only when the signal is on and `quinn_dark == 1`.
+
+Handlers can branch: `if` / `else` / `else if`, comparisons, and `min` / `max` / `clamp`. `bind:width` takes `"signal"`, `"signal*factor"`, or `"signal*factor-bias"`.
+
+A `md:flex-row items-stretch` parent gives its children a full height at that breakpoint, so a sidebar and an inspector meet the bottom of the window. The separator uses `md:h-full`.
 
 ## Layout
 
 The showcase follows the HIG window: sidebar, content, inspector, with the toolbar across the top. Content padding is 24 pt. Controls sit 8–12 pt apart. Below 768 pt (`md:`) the three columns stack. `drive_shell` writes `state.quinn_width` on resize and is what makes `md:` follow the window.
 
-Light and dark are `state.quinn_dark`, toggled by `toggle_theme()`. The switch is instant. Button hover and press still use Makepad’s 0.1 s and 0.2 s tracks.
+Light and dark are `state.quinn_dark`, toggled by `toggle_theme()`. The switch is instant. The window fill is a child of the host, because the host does not repaint its own background when `on_render` runs again. Button hover and press still use Makepad’s 0.1 s and 0.2 s tracks.
 
 ## Other limits
 
@@ -141,3 +147,8 @@ Light and dark are `state.quinn_dark`, toggled by `toggle_theme()`. The switch i
 - The first click on an unfocused window is delivered only after `patches/makepad-accepts-first-mouse.patch`. AppKit’s `acceptsFirstMouse` returned `NO` for content, which swallowed the activating click. This machine is Linux, so that path was not executed here. On a Mac, apply the patch to the Makepad checkout and run `cargo clean -p makepad-platform` before building. Cargo fingerprints the git revision, not the edited file.
 - `Action::version` (`save.version()`) is 0 until the first `dispatch`. A resource’s generation still starts at 1 so the initial load runs.
 - Gradients are two stops, linear. There is no `animate-spin`.
+- The slider does not drag. Eight transparent buttons set the value.
+- `GaussRoundedView` blurs the app scene, not the wallpaper. On this machine’s software GL the sidebar reads as a flat tint.
+- Source-list icons are built from rounded rectangles. They are not SF Symbols.
+- A `RoundedShadowView` smaller than the shadow padding can lose its face. The selected segment is a plain rounded view with a hairline, not a shadow widget.
+- The host focus ring stays `#007AFF`. Only the view script flips it to `#0A84FF`.

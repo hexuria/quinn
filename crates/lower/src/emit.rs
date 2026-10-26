@@ -1,7 +1,7 @@
 //! Makepad `script_mod!` text. The header stays a fixed height so the
 //! block the watcher keys on does not move when the view grows.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 
 use quinn_core::{Style, Tag};
 use quinn_styles::{parse_classes, parse_classes_in, shell_variants, AlignSpec, FlowSpec, SizeSpec};
@@ -11,6 +11,10 @@ use crate::Shell;
 
 thread_local! {
     static DEFER_PORTALS: RefCell<Vec<Vec<ViewNode>>> = const { RefCell::new(Vec::new()) };
+    /// Immediate children of an `md:flex-row items-stretch` parent fill the
+    /// cross axis once the window is wide enough. The static parent flow is
+    /// still a column, so height would otherwise stay Fit.
+    static ROW_AT: Cell<Option<f64>> = const { Cell::new(None) };
 }
 
 fn clear_portals() {
@@ -30,6 +34,7 @@ pub fn emit_rust(model: &Model, shell: &Shell) -> String {
     reset_gates();
     let mut body = String::new();
     body.push_str("        use mod.prelude.widgets.*\n");
+    body.push_str("        use mod.widgets.*\n");
     // A missing `mod.state` is an error, not nil. `ok{...}` turns that into nil.
     body.push_str("        if ok{mod.state} == nil {\n");
     body.push_str("            mod.state = {\n");
@@ -39,6 +44,20 @@ pub fn emit_rust(model: &Model, shell: &Shell) -> String {
     body.push_str("            }\n");
     body.push_str("        }\n");
     body.push_str("        let state = mod.state\n");
+    body.push_str(
+        r#"        fn quinn_min(a, b) {
+            if a < b { return a }
+            return b
+        }
+        fn quinn_max(a, b) {
+            if a > b { return a }
+            return b
+        }
+        fn quinn_clamp(v, lo, hi) {
+            return quinn_max(lo, quinn_min(hi, v))
+        }
+"#,
+    );
     body.push_str(&emit_shell_fns(shell));
     body.push_str(&emit_job_fns(model));
     body.push_str(&emit_ctx(model));
@@ -138,26 +157,30 @@ pub fn emit_rust(model: &Model, shell: &Shell) -> String {
     let mut routes = String::new();
     let pass_root = has_input(&model.nodes);
     let show_fns = emit_show_fns(&model.nodes, &shows, &mut slots, &mut routes, pass_root);
-    each_for(&model.nodes, &mut |fn_name, params, row_signals, child| {
-        body.push_str(&emit_row_fn(
-            fn_name,
-            params,
-            row_signals,
-            child,
-            &mut slots,
-            &mut routes,
-            pass_root,
-        ));
-    });
+    each_for(
+        &model.nodes,
+        &mut |fn_name, params, row_signals, child, index| {
+            body.push_str(&emit_row_fn(
+                fn_name,
+                params,
+                row_signals,
+                child,
+                index,
+                &mut slots,
+                &mut routes,
+                pass_root,
+            ));
+        },
+    );
     if model.retain {
         body.push_str(&emit_retain(model));
     }
-    let host = if tree_has_portal(&model.nodes) {
-        "                            flow: Overlay\n                            width: Fill\n                            height: Fill\n                            show_bg: false\n"
-            .to_string()
-    } else {
-        host_fields(&model.root_class, false)
-    };
+    // The host is the view whose `on_render` builds the tree. Makepad does not
+    // repaint that view's own `draw_bg` when the script runs again, so a theme
+    // toggle left the page fill on the first color (the counter card went dark
+    // and the window behind it stayed light). The fill lives on `app`, a child.
+    let host = "                            flow: Overlay\n                            width: Fill\n                            height: Fill\n                            show_bg: false\n"
+        .to_string();
     let mut children = String::new();
     let mut cursor = ShowCursor {
         sites: &shows,
@@ -175,16 +198,41 @@ pub fn emit_rust(model: &Model, shell: &Shell) -> String {
     let root_style = parse_classes(&model.root_class);
     let root_flow = root_style.flow.unwrap_or(FlowSpec::Column);
     let root_stretch = root_style.cross_align == Some(quinn_styles::CrossAlign::Stretch);
-    let has_portal = tree_has_portal(&model.nodes);
-    let child_indent = if has_portal { 9 } else { 8 };
-    let mut app_body = String::new();
+    // The root `<div>` is unwrapped into the app column. An `absolute` child
+    // there used to be a `Fill` sibling and stole the column, which is why the
+    // toast painted as a full-width bar over a blank page. Lift those children
+    // onto the host overlay, next to portals.
+    let mut flow_nodes = Vec::new();
+    let mut abs_nodes = Vec::new();
     for node in &model.nodes {
+        if child_is_absolute(node) {
+            abs_nodes.push(node);
+        } else {
+            flow_nodes.push(node);
+        }
+    }
+    let mut app_body = String::new();
+    for node in &flow_nodes {
         app_body.push_str(&emit_node(
             node,
-            child_indent,
+            9,
             None,
             root_flow,
             root_stretch,
+            &mut cursor,
+            &mut slots,
+            &mut routes,
+            pass_root,
+        ));
+    }
+    let mut root_abs = String::new();
+    for node in &abs_nodes {
+        root_abs.push_str(&emit_node(
+            node,
+            8,
+            None,
+            FlowSpec::Column,
+            false,
             &mut cursor,
             &mut slots,
             &mut routes,
@@ -211,15 +259,12 @@ pub fn emit_rust(model: &Model, shell: &Shell) -> String {
             ));
         }
     }
-    if has_portal {
-        let app_fields = host_fields(&model.root_class, false);
-        children.push_str(&format!(
-            "                                app := RoundedView {{\n{app_fields}{app_body}                                }}\n"
-        ));
-        children.push_str(&portal_body);
-    } else {
-        children.push_str(&app_body);
-    }
+    let app_fields = host_fields(&model.root_class, false);
+    children.push_str(&format!(
+        "                                app := RoundedView {{\n{app_fields}{app_body}                                }}\n"
+    ));
+    children.push_str(&root_abs);
+    children.push_str(&portal_body);
     body.push_str(&slots);
     body.push_str(&show_fns);
     body.push_str(&routes);
@@ -351,7 +396,10 @@ enum RowInit {
     Str,
 }
 
-fn each_for(nodes: &[ViewNode], visit: &mut dyn FnMut(&str, &[String], &[Signal], &El)) {
+fn each_for(
+    nodes: &[ViewNode],
+    visit: &mut dyn FnMut(&str, &[String], &[Signal], &El, Option<&str>),
+) {
     for node in nodes {
         match node {
             ViewNode::For {
@@ -359,8 +407,9 @@ fn each_for(nodes: &[ViewNode], visit: &mut dyn FnMut(&str, &[String], &[Signal]
                 params,
                 row_signals,
                 child,
+                index,
                 ..
-            } => visit(fn_name, params, row_signals, child),
+            } => visit(fn_name, params, row_signals, child, index.as_deref()),
             ViewNode::El(el) => each_for(&el.children, visit),
             ViewNode::Show { child, .. } => each_for(std::slice::from_ref(child), visit),
             ViewNode::Slot { nodes, .. } => each_for(nodes, visit),
@@ -381,7 +430,7 @@ fn each_for(nodes: &[ViewNode], visit: &mut dyn FnMut(&str, &[String], &[Signal]
 
 fn row_maps(model: &Model) -> Vec<(String, RowInit)> {
     let mut out = Vec::new();
-    each_for(&model.nodes, &mut |_, _, row_signals, child| {
+    each_for(&model.nodes, &mut |_, _, row_signals, child, _index| {
         let count = count_signal(row_signals);
         for signal in row_signals {
             if Some(signal.read.as_str()) == count {
@@ -973,6 +1022,7 @@ fn emit_row_fn(
     params: &[String],
     row_signals: &[Signal],
     child: &El,
+    index: Option<&str>,
     slots: &mut String,
     routes: &mut String,
     pass_root: bool,
@@ -981,6 +1031,11 @@ fn emit_row_fn(
     for param in params {
         args.push_str(", ");
         args.push_str(param);
+    }
+    if let Some(index) = index {
+        args.push_str(", ");
+        args.push_str(index);
+        args.push_str(", quinn_odd");
     }
     let sites = collect_row_shows(child);
     let mut fns = String::new();
@@ -1005,6 +1060,7 @@ fn emit_row_fn(
         args: &args,
         signals: row_signals,
         count: count_signal(row_signals),
+        striped: index.is_some(),
     };
     let mut cursor = ShowCursor {
         sites: &sites,
@@ -1030,6 +1086,7 @@ struct RowEnv<'a> {
     args: &'a str,
     signals: &'a [Signal],
     count: Option<&'a str>,
+    striped: bool,
 }
 
 fn collect_row_shows(el: &El) -> Vec<ShowSite> {
@@ -1307,6 +1364,7 @@ fn emit_row_show_fns(
                 args,
                 signals: row_signals,
                 count: count_signal(row_signals),
+                striped: args.contains("quinn_odd"),
             };
             let mut body_cursor = ShowCursor {
                 sites: cursor.sites,
@@ -1459,6 +1517,7 @@ fn emit_node(
             key_field,
             fn_name,
             params,
+            index,
             ..
         } => {
             let pad = " ".repeat(indent * 4);
@@ -1466,8 +1525,17 @@ fn emit_node(
             for param in params {
                 call.push_str(&format!(", {var}.{param}"));
             }
+            if index.is_some() {
+                call.push_str(", quinn_i, quinn_odd");
+            }
             call.push(')');
-            format!("{pad}for {var} in state.{items} {{\n{pad}    {call}\n{pad}}}\n")
+            if index.is_some() {
+                format!(
+                    "{pad}var quinn_i = 0\n{pad}var quinn_odd = 0\n{pad}for {var} in state.{items} {{\n{pad}    {call}\n{pad}    quinn_i += 1\n{pad}    if quinn_odd == 0 {{ quinn_odd = 1 }} else {{ quinn_odd = 0 }}\n{pad}}}\n"
+                )
+            } else {
+                format!("{pad}for {var} in state.{items} {{\n{pad}    {call}\n{pad}}}\n")
+            }
         }
         ViewNode::Slot {
             fn_name,
@@ -1942,6 +2010,7 @@ fn emit_el(
         if !flow_nodes.is_empty() {
             let flow_pad = " ".repeat((indent + 1) * 4);
             let mut flow_body = String::new();
+            let prev_row = ROW_AT.with(|cell| cell.replace(row_stretch_at(&el.class)));
             for child in &flow_nodes {
                 flow_body.push_str(&emit_node(
                     child,
@@ -1955,6 +2024,7 @@ fn emit_el(
                     pass_root,
                 ));
             }
+            ROW_AT.with(|cell| cell.set(prev_row));
             let flow_props = if flow_lines.is_empty() {
                 format!("{flow_pad}    flow: Down\n")
             } else {
@@ -1963,8 +2033,21 @@ fn emit_el(
                     .map(|line| format!("{flow_pad}    {line}\n"))
                     .collect()
             };
+            // A `Fit` parent shrink-wraps. A `Fill` child of that parent
+            // has nothing to fill and collapses, which is how a segmented
+            // control's labels disappeared. Pass `Fit` through on that axis.
+            let flow_width = if matches!(style.width, Some(quinn_styles::SizeSpec::Fit)) {
+                "Fit"
+            } else {
+                "Fill"
+            };
+            let flow_height = if matches!(style.height, Some(quinn_styles::SizeSpec::Fit)) {
+                "Fit"
+            } else {
+                "Fill"
+            };
             body.push_str(&format!(
-                "{flow_pad}quinn_flow := RoundedView {{\n{flow_pad}    width: Fill\n{flow_pad}    height: Fill\n{flow_props}{flow_body}{flow_pad}}}\n"
+                "{flow_pad}quinn_flow := RoundedView {{\n{flow_pad}    width: {flow_width}\n{flow_pad}    height: {flow_height}\n{flow_props}{flow_body}{flow_pad}}}\n"
             ));
         }
         for child in abs_nodes.iter().copied().filter(|node| node_z(node) >= 0) {
@@ -1990,6 +2073,7 @@ fn emit_el(
             .map(|line| format!("{pad}    {line}\n"))
             .collect::<String>();
         let mut children = String::new();
+        let prev_row = ROW_AT.with(|cell| cell.replace(row_stretch_at(&el.class)));
         for child in &el.children {
             children.push_str(&emit_node(
                 child,
@@ -2003,6 +2087,7 @@ fn emit_el(
                 pass_root,
             ));
         }
+        ROW_AT.with(|cell| cell.set(prev_row));
         let head = if named {
             format!("{pad}{} := {widget} {{\n", el.name)
         } else {
@@ -2095,11 +2180,18 @@ fn emit_abs_frame(
     let style = prepared_style(el, tag, parent, false);
     let mut stripped = el.clone();
     stripped.class = strip_position(&el.class);
-    if matches!(style.width, Some(SizeSpec::Fill)) && !stripped.class.contains("w-full") {
+    // The second emit walks the stripped class, which no longer says
+    // `absolute`, so `tune_style` would not shrink-wrap it. A toast with no
+    // width class was coming out `width: Fill` — a full-width bar.
+    if matches!(style.width, Some(SizeSpec::Fill)) && !has_size_class(&stripped.class, "w") {
         stripped.class.push_str(" w-full");
+    } else if matches!(style.width, Some(SizeSpec::Fit)) && !has_size_class(&stripped.class, "w") {
+        stripped.class.push_str(" w-fit");
     }
-    if matches!(style.height, Some(SizeSpec::Fill)) && !stripped.class.contains("h-full") {
+    if matches!(style.height, Some(SizeSpec::Fill)) && !has_size_class(&stripped.class, "h") {
         stripped.class.push_str(" h-full");
+    } else if matches!(style.height, Some(SizeSpec::Fit)) && !has_size_class(&stripped.class, "h") {
+        stripped.class.push_str(" h-fit");
     }
     let inner = emit_el(
         &stripped,
@@ -2171,25 +2263,16 @@ fn abs_shell(style: &Style, indent: usize, inner: String) -> String {
             script_num(bottom)
         )
     };
-    format!("{pad}RoundedView {{\n{pad}    width: Fill\n{pad}    height: Fill\n{pad}    flow: Overlay\n{align}{padding}{inner}{pad}}}\n")
+    // `show_bg: false` so the positioning shell does not paint over the page.
+    // The shell is the full window; the child is aligned inside the padding.
+    format!("{pad}RoundedView {{\n{pad}    width: Fill\n{pad}    height: Fill\n{pad}    flow: Overlay\n{pad}    show_bg: false\n{align}{padding}{inner}{pad}}}\n")
 }
 
-fn tree_has_portal(nodes: &[ViewNode]) -> bool {
-    nodes.iter().any(node_has_portal)
-}
-
-fn node_has_portal(node: &ViewNode) -> bool {
-    match node {
-        ViewNode::Portal { .. } => true,
-        ViewNode::El(el) => el.children.iter().any(node_has_portal),
-        ViewNode::Show { child, .. } => node_has_portal(child),
-        ViewNode::Slot { nodes, .. } => nodes.iter().any(node_has_portal),
-        ViewNode::Routes { routes } => routes.iter().any(|(_, nodes)| nodes.iter().any(node_has_portal)),
-        ViewNode::Suspense { fallback, child, .. } | ViewNode::Boundary { fallback, child, .. } => {
-            fallback.iter().any(node_has_portal) || node_has_portal(child)
-        }
-        ViewNode::For { child, .. } => child.children.iter().any(node_has_portal),
-    }
+fn has_size_class(class: &str, axis: &str) -> bool {
+    class.split_whitespace().any(|token| {
+        let base = token.rsplit(':').next().unwrap_or(token);
+        base == axis || base.starts_with(&format!("{axis}-")) || base.starts_with(&format!("{axis}["))
+    })
 }
 
 fn wrap_provides(provides: &[(String, String)], pad: &str, named: bool, widget: String) -> String {
@@ -2303,6 +2386,22 @@ fn emit_stmts(stmts: &[HandlerStmt], row: Option<&RowEnv<'_>>) -> Vec<String> {
                         .into(),
                 );
             }
+            HandlerStmt::If {
+                cond,
+                then_branch,
+                else_branch,
+            } => {
+                let cond = emit_hx(cond, row, &locals);
+                lines.push(format!("if {cond} {{"));
+                lines.extend(emit_stmts(then_branch, row));
+                if else_branch.is_empty() {
+                    lines.push("}".into());
+                } else {
+                    lines.push("} else {".into());
+                    lines.extend(emit_stmts(else_branch, row));
+                    lines.push("}".into());
+                }
+            }
         }
     }
     lines
@@ -2383,6 +2482,12 @@ fn emit_hx(
                 BinOp::Sub => "-",
                 BinOp::Mul => "*",
                 BinOp::Div => "/",
+                BinOp::Eq => "==",
+                BinOp::Ne => "!=",
+                BinOp::Lt => "<",
+                BinOp::Gt => ">",
+                BinOp::Le => "<=",
+                BinOp::Ge => ">=",
             };
             format!(
                 "{} {} {}",
@@ -2404,6 +2509,20 @@ fn emit_hx(
                 .join(", ");
             format!("[{body}]")
         }
+        HxExpr::Call { name, args } => {
+            let args = args
+                .iter()
+                .map(|arg| emit_hx(arg, row, locals))
+                .collect::<Vec<_>>()
+                .join(", ");
+            format!("quinn_{name}({args})")
+        }
+        HxExpr::If { cond, then, els } => format!(
+            "if {} {{ {} }} else {{ {} }}",
+            emit_hx(cond, row, locals),
+            emit_hx(then, row, locals),
+            emit_hx(els, row, locals)
+        ),
         HxExpr::Obj(fields) => {
             let body = fields
                 .iter()
@@ -2442,13 +2561,15 @@ fn text_expr(el: &El, row: Option<&RowEnv<'_>>) -> String {
             Part::Lit(text) => format!("\"{}\"", escape_script(text)),
             Part::Sig(name) => {
                 let read = state_read(name, row);
-                // A bare number is not a label string. Generations and the
-                // pending flag are numbers; prefix an empty string so `+`
-                // makes text. Row signals already take this path.
+                // A bare number is not a label string. A stepper or a slider
+                // interpolated on its own needs `+` with an empty string.
+                // Generations, the pending flag, and the cancel count are
+                // numbers even beside a literal. A literal already next to
+                // `state.count` is what the counter test looks for.
                 let numeric = name == "quinn_cancelled"
                     || name.ends_with("_gen")
                     || name.ends_with("_pending");
-                if row.is_some() || numeric {
+                if row.is_some() || el.parts.len() == 1 || numeric {
                     format!("\"\" + {read}")
                 } else {
                     read
@@ -2472,6 +2593,13 @@ fn text_expr(el: &El, row: Option<&RowEnv<'_>>) -> String {
                 escape_script(empty)
             ),
             Part::Param(name) => name.clone(),
+            Part::Index(name) => {
+                if el.parts.len() == 1 {
+                    format!("\"\" + {name}")
+                } else {
+                    name.clone()
+                }
+            }
             Part::Ctx(key) => format!("mod.ctx.{key}"),
             Part::Job(name) => format!("state.{name}_value"),
         })
@@ -2482,6 +2610,9 @@ fn text_expr(el: &El, row: Option<&RowEnv<'_>>) -> String {
 fn widget_for(tag: &str, style: &Style) -> String {
     if tag == "div" && style.grid_cols.is_some() {
         return "Grid".into();
+    }
+    if tag == "div" && style.vibrancy {
+        return "GaussRoundedView".into();
     }
     if tag == "div" && style.shadow.is_some() {
         // Stock RoundedView has no shadow uniforms. RoundedShadowView is the
@@ -2600,26 +2731,54 @@ fn style_lines(
     let base_map = prop_map(&base, tag);
     let mut rendered = base_map.clone();
     for when in &el.class_when {
-        let mut on = prepared_style(el, tag, parent, stretch);
-        on.merge_from(&parse_classes(&when.token));
-        if when
-            .token
-            .split_whitespace()
-            .any(|token| token == "flex-nowrap")
-        {
-            on.wrap = false;
-        }
-        tune_style(
-            &mut on,
-            parent,
-            stretch && el.class.contains("self-stretch"),
-        );
-        let on_map = prop_map(&on, tag);
         let cond = class_cond(&when.signal, row);
-        for (key, value) in on_map {
-            if base_map.get(&key).map(String::as_str) == Some(value.as_str()) {
+        let stretch_self = stretch && el.class.contains("self-stretch");
+        if when.dark {
+            let mut on = prepared_style(el, tag, parent, stretch);
+            on.merge_from(&parse_classes_in(&when.token, true));
+            tune_style(&mut on, parent, stretch_self);
+            let on_map = prop_map(&on, tag);
+            let cond = format!("({cond}) && state.quinn_dark == 1");
+            paint_conditional(&mut rendered, &base_map, &base, &on_map, &cond);
+            continue;
+        }
+        let mut light = prepared_style(el, tag, parent, stretch);
+        light.merge_from(&parse_classes_in(&when.token, false));
+        let mut dark = prepared_style(el, tag, parent, stretch);
+        dark.merge_from(&parse_classes_in(&when.token, true));
+        tune_style(&mut light, parent, stretch_self);
+        tune_style(&mut dark, parent, stretch_self);
+        let light_map = prop_map(&light, tag);
+        let dark_map = prop_map(&dark, tag);
+        let mut keys: Vec<String> = light_map.keys().cloned().collect();
+        for key in dark_map.keys() {
+            if !keys.iter().any(|have| have == key) {
+                keys.push(key.clone());
+            }
+        }
+        for key in keys {
+            let light_value = light_map
+                .get(&key)
+                .cloned()
+                .or_else(|| base_map.get(&key).cloned());
+            let dark_value = dark_map
+                .get(&key)
+                .cloned()
+                .or_else(|| base_map.get(&key).cloned());
+            let Some(light_value) = light_value else {
+                continue;
+            };
+            let dark_value = dark_value.unwrap_or_else(|| light_value.clone());
+            if base_map.get(&key).map(String::as_str) == Some(light_value.as_str())
+                && light_value == dark_value
+            {
                 continue;
             }
+            let value = if light_value == dark_value {
+                light_value
+            } else {
+                format!("if state.quinn_dark == 1 {{ {dark_value} }} else {{ {light_value} }}")
+            };
             let else_value = rendered
                 .get(&key)
                 .cloned()
@@ -2628,6 +2787,43 @@ fn style_lines(
                 key,
                 format!("if {cond} {{ {value} }} else {{ {else_value} }}"),
             );
+        }
+    }
+    if row.is_some_and(|row| row.striped) {
+        for (odd, token) in stripe_tokens(&el.class) {
+            let mut on = base.clone();
+            on.merge_from(&parse_classes_in(&token, false));
+            let mut dark_on = base.clone();
+            dark_on.merge_from(&parse_classes_in(&token, true));
+            let on_map = prop_map(&on, tag);
+            let dark_map = prop_map(&dark_on, tag);
+            let flag = if odd { "quinn_odd == 1" } else { "quinn_odd == 0" };
+            for (key, light_value) in on_map {
+                if base_map.get(&key).map(String::as_str) == Some(light_value.as_str()) {
+                    if dark_map.get(&key).map(String::as_str) == Some(light_value.as_str()) {
+                        continue;
+                    }
+                }
+                let dark_value = dark_map.get(&key).cloned().unwrap_or_else(|| light_value.clone());
+                let value = if light_value == dark_value {
+                    light_value
+                } else {
+                    format!("if state.quinn_dark == 1 {{ {dark_value} }} else {{ {light_value} }}")
+                };
+                let else_value = rendered.get(&key).cloned().unwrap_or_else(|| {
+                    // An even row with no fill of its own must stay clear.
+                    // The generic fallback is opaque black, which hid the labels.
+                    if key == "draw_bg.color" && base.background.is_none() {
+                        "#00000000".into()
+                    } else {
+                        prop_fallback(&key, &base)
+                    }
+                });
+                rendered.insert(
+                    key,
+                    format!("if {flag} {{ {value} }} else {{ {else_value} }}"),
+                );
+            }
         }
     }
     for when in shell_variants(&el.class) {
@@ -2656,6 +2852,28 @@ fn style_lines(
             rendered.insert(key, format!("if {cond} {{ {yes} }} else {{ {no} }}"));
         }
     }
+    if let Some(min_width) = ROW_AT.with(Cell::get) {
+        if !base.height_explicit {
+            let current = rendered.get("height").cloned();
+            let fills = current
+                .as_deref()
+                .is_some_and(|value| value.starts_with("Fill"));
+            if !fills {
+                let else_height = current.unwrap_or_else(|| "Fit".into());
+                rendered.insert(
+                    "height".into(),
+                    format!(
+                        "if state.quinn_width >= {} {{ Fill }} else {{ {else_height} }}",
+                        script_num(min_width)
+                    ),
+                );
+            }
+        }
+    }
+    if let Some(bind) = &el.bind_width {
+        let width = width_bind_script(bind);
+        rendered.insert("width".into(), width);
+    }
     let mut keys: Vec<String> = rendered.keys().cloned().collect();
     keys.sort_by_key(|key| prop_order(key));
     keys.into_iter()
@@ -2664,6 +2882,76 @@ fn style_lines(
             format!("{key}: {value}")
         })
         .collect()
+}
+
+fn paint_conditional(
+    rendered: &mut std::collections::BTreeMap<String, String>,
+    base_map: &std::collections::BTreeMap<String, String>,
+    base: &Style,
+    on_map: &std::collections::BTreeMap<String, String>,
+    cond: &str,
+) {
+    for (key, value) in on_map {
+        if base_map.get(key).map(String::as_str) == Some(value.as_str()) {
+            continue;
+        }
+        let else_value = rendered
+            .get(key)
+            .cloned()
+            .unwrap_or_else(|| prop_fallback(key, base));
+        rendered.insert(
+            key.clone(),
+            format!("if {cond} {{ {value} }} else {{ {else_value} }}"),
+        );
+    }
+}
+
+fn stripe_tokens(class: &str) -> Vec<(bool, String)> {
+    let mut out = Vec::new();
+    for token in class.split_whitespace() {
+        let mut rest = token;
+        if let Some(next) = rest.strip_prefix("dark:") {
+            rest = next;
+        }
+        if let Some(next) = rest.strip_prefix("odd:") {
+            out.push((true, next.to_string()));
+        } else if let Some(next) = rest.strip_prefix("even:") {
+            out.push((false, next.to_string()));
+        }
+    }
+    out
+}
+
+fn width_bind_script(bind: &WidthBind) -> String {
+    let factor = script_num(bind.factor);
+    let raw = if bind.factor == 1.0 {
+        format!("state.{}", bind.signal)
+    } else {
+        format!("state.{} * {factor}", bind.signal)
+    };
+    if bind.bias == 0.0 {
+        raw
+    } else {
+        format!(
+            "quinn_clamp({raw} + {}, 0, 100000)",
+            script_num(bind.bias)
+        )
+    }
+}
+
+/// `md:flex-row` (and the other breakpoints) plus `items-stretch`.
+fn row_stretch_at(class: &str) -> Option<f64> {
+    let parsed = parse_classes(class);
+    if parsed.cross_align != Some(quinn_styles::CrossAlign::Stretch) {
+        return None;
+    }
+    shell_variants(class).into_iter().find_map(|when| {
+        if when.token == "flex-row" {
+            when.min_width
+        } else {
+            None
+        }
+    })
 }
 
 fn prepared_style(el: &El, tag: Tag, parent: FlowSpec, stretch: bool) -> Style {
@@ -2937,6 +3225,42 @@ fn walk_pairs(style: &Style) -> Vec<(String, String)> {
     lines
 }
 
+fn focus_ring() -> &'static str {
+    "if state.quinn_dark == 1 { #x0a84ff } else { #x007aff }"
+}
+
+fn placeholder_ink() -> String {
+    "if state.quinn_dark == 1 { #ebebf54d } else { #3c3c434d }".into()
+}
+
+/// Makepad `GaussRoundedView` samples the window scene (a render-to-texture
+/// pyramid in `gauss_view.rs`) and tints it. This is not desktop wallpaper
+/// vibrancy: nothing behind the app window is in that texture. A sidebar
+/// beside the content therefore frosts the window fill, and a sheet or toast
+/// over the content frosts the content.
+fn vibrancy_pairs() -> Vec<(String, String)> {
+    let tint = "if state.quinn_dark == 1 { #x202022 } else { #xf6f6f6 }".to_string();
+    vec![
+        ("draw_bg.corner_radius".into(), "0.".into()),
+        ("draw_bg.blur_level".into(), "1.5".into()),
+        ("draw_bg.edge_blur_level".into(), "0.25".into()),
+        ("draw_bg.lensing_effect".into(), "0.".into()),
+        ("draw_bg.lensing_strength".into(), "0.".into()),
+        ("draw_bg.lensing_width".into(), "0.".into()),
+        ("draw_bg.tint_color".into(), tint.clone()),
+        ("draw_bg.tint_alpha".into(), "0.86".into()),
+        ("draw_bg.fallback_color".into(), tint),
+        ("draw_bg.rim_alpha".into(), "0.".into()),
+        ("draw_bg.inner_shadow_alpha".into(), "0.".into()),
+        ("draw_bg.shadow_radius".into(), "0.".into()),
+        ("draw_bg.shadow_offset".into(), "vec2(0., 0.)".into()),
+        ("draw_bg.specular_strength".into(), "0.02".into()),
+        ("draw_bg.noise_strength".into(), "0.008".into()),
+        ("draw_bg.border_width".into(), "0.".into()),
+        ("draw_bg.surface_alpha".into(), "0.94".into()),
+    ]
+}
+
 fn separator_rgba() -> quinn_styles::Rgba {
     quinn_styles::Rgba {
         r: 60,
@@ -2990,7 +3314,12 @@ fn paint_pairs(style: &Style, tag: Tag) -> Vec<(String, String)> {
                 if horizontal { "1.".into() } else { "0.".into() },
             ));
         } else if let Some(color) = style.background {
-            lines.push(("draw_bg.color".into(), color.hex_script()));
+            if !style.vibrancy {
+                lines.push(("draw_bg.color".into(), color.hex_script()));
+            }
+        }
+        if style.vibrancy {
+            lines.extend(vibrancy_pairs());
         }
         if let Some(shadow) = style.shadow {
             if matches!(tag, Tag::Div) {
@@ -3084,8 +3413,11 @@ fn paint_pairs(style: &Style, tag: Tag) -> Vec<(String, String)> {
         mirror_state(&mut lines, "draw_bg.border_color", Some(border));
         mirror_state(&mut lines, "draw_bg.border_color_hover", Some(border));
         mirror_state(&mut lines, "draw_bg.border_color_down", Some(border));
-        // systemBlue, the HIG focus ring. Not the theme's pale focus fill.
-        lines.push(("draw_bg.border_color_focus".into(), "#x007aff".into()));
+        // systemBlue in light, the brighter systemBlue in dark. Not the theme's pale focus fill.
+        lines.push((
+            "draw_bg.border_color_focus".into(),
+            focus_ring().into(),
+        ));
     }
     if matches!(tag, Tag::Input) {
         // The inset theme tints a focused field. Keep the well flat and put
@@ -3115,7 +3447,16 @@ fn paint_pairs(style: &Style, tag: Tag) -> Vec<(String, String)> {
         mirror_state(&mut lines, "draw_bg.border_color_hover", Some(border));
         mirror_state(&mut lines, "draw_bg.border_color_down", Some(border));
         mirror_state(&mut lines, "draw_bg.border_color_empty", Some(border));
-        lines.push(("draw_bg.border_color_focus".into(), "#x007aff".into()));
+        lines.push((
+            "draw_bg.border_color_focus".into(),
+            focus_ring().into(),
+        ));
+        // tertiaryLabel. The theme placeholder is the same grey as a light well,
+        // so "Search" disappeared in the light appearance.
+        let empty = placeholder_ink();
+        lines.push(("draw_text.color_empty".into(), empty.clone()));
+        lines.push(("draw_text.color_empty_hover".into(), empty.clone()));
+        lines.push(("draw_text.color_empty_focus".into(), empty));
         mirror_state(&mut lines, "draw_text.color_hover", style.hover_fg.or(style.color));
         mirror_state(&mut lines, "draw_text.color_down", style.active_fg.or(style.color));
         mirror_state(&mut lines, "draw_text.color_focus", style.focus_fg.or(style.color));

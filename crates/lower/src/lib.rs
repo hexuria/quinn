@@ -521,7 +521,7 @@ mod tests {
         let cases = [
             ("examples/counter/view.rs", "state.count += 1"),
             ("examples/conditional/view.rs", "quinn_show_open_1_on"),
-            ("examples/keyed-list/view.rs", "fn quinn_row(id, label)"),
+            ("examples/keyed-list/view.rs", "fn quinn_row(id, label, index, quinn_odd)"),
             ("examples/form/view.rs", "state.name = text"),
             ("examples/retain/view.rs", "fn quinn_retain_step"),
             (

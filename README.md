@@ -8,6 +8,12 @@ The showcase follows Apple’s macOS Human Interface Guidelines. Light and dark,
 
 ![Notes, dark](docs/images/notes-dark.png)
 
+![Settings, light](docs/images/settings-light.png)
+
+![Table, light](docs/images/table-light.png)
+
+The shots from the previous pass are in `docs/images/before/`.
+
 ```rust
 use quinn::prelude::*;
 

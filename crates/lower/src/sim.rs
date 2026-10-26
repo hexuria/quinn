@@ -614,6 +614,7 @@ impl Sim {
                         out.push_str(&item.label);
                     }
                 }
+                Part::Index(_) => out.push('0'),
                 Part::Sig(name) => {
                     if let Some(text) = self.row_strings.get(&(item.id, name.clone())) {
                         out.push_str(text);
@@ -746,7 +747,7 @@ impl Sim {
                     }
                 }
                 Part::Param(name) if name == "arg" => out.push_str("arg"),
-                Part::Param(_) => {}
+                Part::Param(_) | Part::Index(_) => {}
                 Part::Ctx(key) => {
                     if let Some(text) = self.ctx.get(key) {
                         out.push_str(text);
@@ -992,6 +993,18 @@ impl Sim {
                     let dark = self.state.get("quinn_dark").copied().unwrap_or(0);
                     self.state.insert("quinn_dark".into(), if dark == 0 { 1 } else { 0 });
                 }
+                HandlerStmt::If {
+                    cond,
+                    then_branch,
+                    else_branch,
+                } => {
+                    let on = self.eval(cond, row, &locals).as_int() != 0;
+                    if on {
+                        self.exec(then_branch, row);
+                    } else {
+                        self.exec(else_branch, row);
+                    }
+                }
             }
         }
     }
@@ -1064,8 +1077,34 @@ impl Sim {
                             left / right
                         }
                     }
+                    BinOp::Eq => (left == right) as i64,
+                    BinOp::Ne => (left != right) as i64,
+                    BinOp::Lt => (left < right) as i64,
+                    BinOp::Gt => (left > right) as i64,
+                    BinOp::Le => (left <= right) as i64,
+                    BinOp::Ge => (left >= right) as i64,
                 };
                 Val::Int(value)
+            }
+            HxExpr::Call { name, args } => {
+                let nums: Vec<i64> = args
+                    .iter()
+                    .map(|arg| self.eval(arg, row, locals).as_int())
+                    .collect();
+                let value = match (name.as_str(), nums.as_slice()) {
+                    ("min", [a, b]) => (*a).min(*b),
+                    ("max", [a, b]) => (*a).max(*b),
+                    ("clamp", [v, lo, hi]) => (*v).clamp(*lo, *hi),
+                    _ => 0,
+                };
+                Val::Int(value)
+            }
+            HxExpr::If { cond, then, els } => {
+                if self.eval(cond, row, locals).as_int() != 0 {
+                    self.eval(then, row, locals)
+                } else {
+                    self.eval(els, row, locals)
+                }
             }
             HxExpr::Concat(parts) => Val::Str(
                 parts

@@ -57,9 +57,9 @@ fn Dashboard() -> impl IntoView {
     let (open, set_open) = signal(false);
 
     view! {
-        <div class="flex flex-col gap-3 p-4 h-full bg-window-background dark:bg-window-background overflow-y-auto">
-            <div class="flex flex-row flex-wrap items-center gap-2">
-                <span class="text-title3 text-label dark:text-label">"Async dashboard"</span>
+        <div class="flex flex-col h-full bg-window-background dark:bg-window-background">
+            <div class="flex flex-row flex-wrap items-center min-h-[52px] px-4 py-2 gap-2">
+                <span class="text-headline text-label dark:text-label">"Async dashboard"</span>
                 <button class="px-3 h-control-large rounded-control text-body text-system-blue border-0 bg-transparent dark:text-system-blue" on:click=move |_| { toggle_theme(); }>"Theme"</button>
                 <button class="px-3 h-control-large rounded-control text-body bg-system-blue text-white dark:bg-system-blue" on:click=move |_| { set_open.set(true); }>"Open modal"</button>
                 <button class="px-3 h-control-large rounded-control text-body bg-system-blue text-white dark:bg-system-blue" on:click=move |_| { save.dispatch("Cebu"); }>"Save Cebu"</button>
@@ -73,11 +73,14 @@ fn Dashboard() -> impl IntoView {
                 <span class="text-callout text-label-secondary dark:text-label-secondary">"Tone " {tone}</span>
                 <Shade />
             </div>
-            <div class="flex flex-col md:flex-row gap-3">
-                <div class="h-[72px] w-full md:w-[180px] rounded-control bg-sidebar dark:bg-sidebar">
+            <div class="h-[1px] bg-separator dark:bg-separator"></div>
+            <div class="flex flex-col md:flex-row flex-1 items-stretch">
+                <div class="flex flex-col w-full md:w-[200px] md:h-full vibrancy p-3 gap-2">
+                    <span class="text-subheadline text-label-secondary dark:text-label-secondary">"Library"</span>
                     <span class="text-headline text-label dark:text-label">"Sidebar"</span>
                 </div>
-                <div class="flex flex-col gap-2">
+                <div class="w-full md:w-[1px] h-[1px] md:h-full bg-separator dark:bg-separator"></div>
+                <div class="flex flex-col gap-2 p-4 overflow-y-auto">
                     <Suspense fallback=|| view! { <span class="text-body text-label dark:text-label">"Loading the note"</span> }>
                         <span class="text-body text-label dark:text-label">"Note: " {note}</span>
                     </Suspense>

@@ -40,6 +40,8 @@ pub enum Part {
     },
     /// Function parameter of a keyed row (`label`).
     Param(String),
+    /// Enumerate index of a `<For let:index>`. A row-function parameter, not an item field.
+    Index(String),
     /// `mod.ctx.<key>`
     Ctx(String),
     /// `state.<job>_value`. A resource or action result.
@@ -52,6 +54,12 @@ pub enum BinOp {
     Sub,
     Mul,
     Div,
+    Eq,
+    Ne,
+    Lt,
+    Gt,
+    Le,
+    Ge,
 }
 
 /// A value a handler can compute. Names are signals, `let` bindings, or the
@@ -69,6 +77,17 @@ pub enum HxExpr {
     List(Vec<HxExpr>),
     /// A struct literal. Field order is source order.
     Obj(Vec<(String, HxExpr)>),
+    /// `min` / `max` / `clamp`. Emitted as script helpers.
+    Call {
+        name: String,
+        args: Vec<HxExpr>,
+    },
+    /// `if cond { then } else { els }` used as a value.
+    If {
+        cond: Box<HxExpr>,
+        then: Box<HxExpr>,
+        els: Box<HxExpr>,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -117,6 +136,12 @@ pub enum HandlerStmt {
     },
     /// Flip `state.quinn_dark`. The shell signal behind `dark:` classes.
     ToggleTheme,
+    /// `if cond { ... } else { ... }`. Both branches are statement lists.
+    If {
+        cond: HxExpr,
+        then_branch: Vec<HandlerStmt>,
+        else_branch: Vec<HandlerStmt>,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -138,9 +163,19 @@ pub enum Act {
     Row(Vec<HandlerStmt>),
 }
 
+/// `bind:width="level*2-7"` → `quinn_clamp(state.level * 2 + -7, 0, 100000)`.
+#[derive(Clone, Debug, PartialEq)]
+pub struct WidthBind {
+    pub signal: String,
+    pub factor: f64,
+    pub bias: f64,
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct ClassWhen {
     pub token: String,
+    /// The attribute was `class:dark:...`. It applies only while `quinn_dark` is on.
+    pub dark: bool,
     pub signal: String,
 }
 
@@ -169,6 +204,8 @@ pub struct El {
     pub input: Option<String>,
     /// `bind:value`. The input omits `text:` so a reload does not move the caret.
     pub bind: Option<String>,
+    /// `bind:width="signal*factor+bias"`. Width in pixels from a number signal.
+    pub bind_width: Option<WidthBind>,
     /// `mod.ctx.key = expr` statements emitted just before this widget.
     pub provides: Vec<(String, String)>,
     pub children: Vec<ViewNode>,
@@ -190,6 +227,8 @@ pub enum ViewNode {
         var: String,
         key_field: String,
         fn_name: String,
+        /// `let:index` on `<For>`. The row function receives this and `quinn_odd`.
+        index: Option<String>,
         /// Item fields passed after `id`, in order.
         params: Vec<String>,
         /// Signals declared on the row component. They live under `state.r_<name>`.

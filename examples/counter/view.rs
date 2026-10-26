@@ -14,7 +14,7 @@ fn Counter() -> impl IntoView {
     view! {
         <div class="flex flex-col h-full bg-window-background dark:bg-window-background">
             <div class="flex flex-row items-center h-[52px] px-4 gap-3">
-                <span class="text-title3 text-label dark:text-label">"Counter"</span>
+                <span class="text-headline text-label dark:text-label">"Counter"</span>
                 <div class="flex-1"></div>
                 <button class="px-3 h-control-large rounded-control text-body text-system-blue border-0 bg-transparent dark:text-system-blue" on:click=move |_| { toggle_theme(); }>"Theme"</button>
             </div>

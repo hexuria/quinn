@@ -7,7 +7,7 @@ fn Form() -> impl IntoView {
     view! {
         <div class="flex flex-col h-full bg-window-background dark:bg-window-background">
             <div class="flex flex-row items-center h-[52px] px-4">
-                <span class="text-title3 text-label dark:text-label">"Form"</span>
+                <span class="text-headline text-label dark:text-label">"Form"</span>
             </div>
             <div class="h-[1px] bg-separator dark:bg-separator"></div>
             <div class="flex flex-col flex-1 items-center justify-center p-8">

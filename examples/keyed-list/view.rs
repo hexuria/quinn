@@ -12,7 +12,7 @@ fn Row(item: Item) -> impl IntoView {
     let (open, set_open) = signal(false);
     let label = item.label;
     view! {
-        <div class="flex flex-col">
+        <div class="flex flex-col odd:bg-system-fill">
             <div class="flex flex-row gap-3 items-center h-[36px] px-2">
                 <span class="text-body text-label dark:text-label">{label}</span>
                 <div class="flex-1"></div>
@@ -50,7 +50,7 @@ fn KeyedList() -> impl IntoView {
     view! {
         <div class="flex flex-col h-full bg-window-background dark:bg-window-background">
             <div class="flex flex-row items-center h-[52px] px-4 gap-2">
-                <span class="text-title3 text-label dark:text-label">"Keyed rows"</span>
+                <span class="text-headline text-label dark:text-label">"Keyed rows"</span>
                 <div class="flex-1"></div>
                 <button class="px-3 h-control-large rounded-control text-body bg-system-blue text-white dark:bg-system-blue" on:click=move |_| {
                     let id = next_id.get();
@@ -69,7 +69,7 @@ fn KeyedList() -> impl IntoView {
             <div class="h-[1px] bg-separator dark:bg-separator"></div>
             <div class="flex flex-col p-4 w-[640px]">
                 <div class="rounded-window bg-system-background shadow-control dark:bg-system-background">
-                    <For each=move || items.get() key=|item| item.id let:item>
+                    <For each=move || items.get() key=|item| item.id let:item let:index>
                         <Row item=item />
                     </For>
                 </div>

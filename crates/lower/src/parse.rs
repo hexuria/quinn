@@ -75,6 +75,8 @@ struct Build {
     job_names: Vec<String>,
     /// `<For>` loop variable, so `{city.name}` becomes a row field.
     row_var: Option<String>,
+    /// `<For let:index>` binding. `{index}` is the enumerate position.
+    index_var: Option<String>,
 }
 
 pub fn parse_model(source: &str) -> Result<Model, String> {
@@ -111,6 +113,7 @@ pub fn parse_model(source: &str) -> Result<Model, String> {
         in_children_fn: false,
         job_names: Vec::new(),
         row_var: None,
+        index_var: None,
     };
     let (signals, frame, retain, has_ctx, root_provides, root_ctx, view) = {
         let root = build
@@ -940,6 +943,7 @@ impl Build {
         let mut items = None;
         let mut var = "item".to_string();
         let mut key_field = "id".to_string();
+        let mut index = None;
         for attr in element.attributes() {
             let NodeAttribute::Attribute(attr) = attr else {
                 continue;
@@ -956,6 +960,10 @@ impl Build {
                         var = name;
                         key_field = field;
                     }
+                }
+            } else if let Some(name) = key.strip_prefix("let:") {
+                if !name.is_empty() && name != var {
+                    index = Some(name.to_string());
                 }
             }
         }
@@ -974,9 +982,12 @@ impl Build {
         }
         self.pending_row_signals.clear();
         let saved_row = self.row_var.clone();
+        let saved_index = self.index_var.clone();
         self.row_var = Some(var.clone());
+        self.index_var = index.clone();
         let child = self.lower_node(body[0], signals, true)?;
         self.row_var = saved_row;
+        self.index_var = saved_index;
         let ViewNode::El(el) = child else {
             return Err("<For> child must be one element".into());
         };
@@ -993,6 +1004,7 @@ impl Build {
             var,
             key_field,
             fn_name,
+            index,
             params,
             row_signals,
             child: el,
@@ -1181,6 +1193,7 @@ impl Build {
         let mut click = None;
         let mut input = None;
         let mut bind = None;
+        let mut bind_width = None;
         for attr in element.attributes() {
             let NodeAttribute::Attribute(attr) = attr else {
                 return Err("computed attribute keys are not supported".into());
@@ -1193,8 +1206,13 @@ impl Build {
                 let Some(expr) = attr.value() else {
                     return Err(format!("class:{token} needs a bool signal"));
                 };
+                let (token, dark) = token
+                    .strip_prefix("dark:")
+                    .map(|rest| (rest.to_string(), true))
+                    .unwrap_or_else(|| (token.to_string(), false));
                 class_when.push(ClassWhen {
-                    token: token.to_string(),
+                    token,
+                    dark,
                     signal: bool_signal(expr, signals)?,
                 });
                 continue;
@@ -1219,6 +1237,13 @@ impl Build {
                 let signal = bind_signal(expr, signals)?;
                 bind = Some(signal.clone());
                 input = Some(signal);
+                continue;
+            }
+            if key == "bind:width" {
+                let Some(expr) = attr.value() else {
+                    return Err("bind:width needs a signal".into());
+                };
+                bind_width = Some(width_bind(expr)?);
                 continue;
             }
             if (tag == "A" || tag == "a") && key == "href" {
@@ -1270,6 +1295,7 @@ impl Build {
                         self.in_children_fn,
                         &self.job_names,
                         self.row_var.as_deref(),
+                        self.index_var.as_deref(),
                     )?);
                 }
                 Node::Comment(_) | Node::Doctype(_) => {}
@@ -1349,6 +1375,7 @@ impl Build {
             click,
             input,
             bind,
+            bind_width,
             provides: Vec::new(),
             children,
         }))
@@ -1724,7 +1751,7 @@ fn rename_part(part: &mut Part, orig: &[Signal], prefix: &str) {
         | Part::IfBool { signal: name, .. } => {
             *name = prefixed(name, orig, prefix);
         }
-        Part::Lit(_) | Part::Param(_) | Part::Ctx(_) | Part::Job(_) => {}
+        Part::Lit(_) | Part::Param(_) | Part::Index(_) | Part::Ctx(_) | Part::Job(_) => {}
     }
 }
 
@@ -1742,35 +1769,46 @@ fn rename_act(act: &mut Act, orig: &[Signal], prefix: &str) {
             *items = prefixed(items, orig, prefix);
         }
         Act::RowInc => {}
-        Act::Body(stmts) | Act::Row(stmts) => {
-            for stmt in stmts {
-                match stmt {
-                    HandlerStmt::Set { signal, expr } => {
-                        *signal = prefixed(signal, orig, prefix);
-                        rename_expr(expr, orig, prefix);
-                    }
-                    HandlerStmt::Let { expr, .. } => rename_expr(expr, orig, prefix),
-                    HandlerStmt::Push { items, id, label } => {
-                        *items = prefixed(items, orig, prefix);
-                        rename_expr(id, orig, prefix);
-                        rename_expr(label, orig, prefix);
-                    }
-                    HandlerStmt::Pop { items } | HandlerStmt::Reverse { items } => {
-                        *items = prefixed(items, orig, prefix);
-                    }
-                    HandlerStmt::RemoveKey { items, key } => {
-                        *items = prefixed(items, orig, prefix);
-                        rename_expr(key, orig, prefix);
-                    }
-                    HandlerStmt::SwapKey { items, a, b } => {
-                        *items = prefixed(items, orig, prefix);
-                        rename_expr(a, orig, prefix);
-                        rename_expr(b, orig, prefix);
-                    }
-                    HandlerStmt::Navigate(expr) => rename_expr(expr, orig, prefix),
-                    HandlerStmt::Dispatch { arg, .. } => rename_expr(arg, orig, prefix),
-                    HandlerStmt::Refetch { .. } | HandlerStmt::ToggleTheme => {}
-                }
+        Act::Body(stmts) | Act::Row(stmts) => rename_stmts(stmts, orig, prefix),
+    }
+}
+
+fn rename_stmts(stmts: &mut [HandlerStmt], orig: &[Signal], prefix: &str) {
+    for stmt in stmts {
+        match stmt {
+            HandlerStmt::Set { signal, expr } => {
+                *signal = prefixed(signal, orig, prefix);
+                rename_expr(expr, orig, prefix);
+            }
+            HandlerStmt::Let { expr, .. } => rename_expr(expr, orig, prefix),
+            HandlerStmt::Push { items, id, label } => {
+                *items = prefixed(items, orig, prefix);
+                rename_expr(id, orig, prefix);
+                rename_expr(label, orig, prefix);
+            }
+            HandlerStmt::Pop { items } | HandlerStmt::Reverse { items } => {
+                *items = prefixed(items, orig, prefix);
+            }
+            HandlerStmt::RemoveKey { items, key } => {
+                *items = prefixed(items, orig, prefix);
+                rename_expr(key, orig, prefix);
+            }
+            HandlerStmt::SwapKey { items, a, b } => {
+                *items = prefixed(items, orig, prefix);
+                rename_expr(a, orig, prefix);
+                rename_expr(b, orig, prefix);
+            }
+            HandlerStmt::Navigate(expr) => rename_expr(expr, orig, prefix),
+            HandlerStmt::Dispatch { arg, .. } => rename_expr(arg, orig, prefix),
+            HandlerStmt::Refetch { .. } | HandlerStmt::ToggleTheme => {}
+            HandlerStmt::If {
+                cond,
+                then_branch,
+                else_branch,
+            } => {
+                rename_expr(cond, orig, prefix);
+                rename_stmts(then_branch, orig, prefix);
+                rename_stmts(else_branch, orig, prefix);
             }
         }
     }
@@ -1794,8 +1832,60 @@ fn rename_expr(expr: &mut HxExpr, orig: &[Signal], prefix: &str) {
                 rename_expr(value, orig, prefix);
             }
         }
+        HxExpr::Call { args, .. } => {
+            for arg in args {
+                rename_expr(arg, orig, prefix);
+            }
+        }
+        HxExpr::If { cond, then, els } => {
+            rename_expr(cond, orig, prefix);
+            rename_expr(then, orig, prefix);
+            rename_expr(els, orig, prefix);
+        }
         HxExpr::Int(_) | HxExpr::Bool(_) | HxExpr::Str(_) => {}
     }
+}
+
+fn width_bind(expr: &Expr) -> Result<WidthBind, String> {
+    let text = match expr {
+        Expr::Lit(lit) => match &lit.lit {
+            syn::Lit::Str(value) => value.value(),
+            _ => return Err("bind:width must be a string like \"level*2-7\"".into()),
+        },
+        _ => return Err("bind:width must be a string like \"level*2-7\"".into()),
+    };
+    let text = text.trim();
+    let (head, bias) = if let Some((head, tail)) = text.split_once('+') {
+        (head, tail.trim().parse::<f64>().unwrap_or(0.0))
+    } else if let Some((head, tail)) = text.rsplit_once('-') {
+        if head.is_empty() {
+            (text, 0.0)
+        } else {
+            (head, -tail.trim().parse::<f64>().unwrap_or(0.0))
+        }
+    } else {
+        (text, 0.0)
+    };
+    let (signal, factor) = if let Some((name, factor)) = head.split_once('*') {
+        (
+            name.trim().to_string(),
+            factor.trim().parse::<f64>().unwrap_or(1.0),
+        )
+    } else {
+        (head.trim().to_string(), 1.0)
+    };
+    if signal.is_empty()
+        || !signal
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || ch == '_')
+    {
+        return Err("bind:width signal must be a plain name".into());
+    }
+    Ok(WidthBind {
+        signal,
+        factor,
+        bias,
+    })
 }
 
 fn prefixed(name: &str, orig: &[Signal], prefix: &str) -> String {
@@ -2768,6 +2858,7 @@ fn parse_interp(
     in_children_fn: bool,
     jobs: &[String],
     row_var: Option<&str>,
+    index_var: Option<&str>,
 ) -> Result<Part, String> {
     let NodeBlock::ValidBlock(block) = block else {
         return Err("invalid interpolation block".into());
@@ -2798,6 +2889,9 @@ fn parse_interp(
         }
         if jobs.iter().any(|job| job == &name) {
             return Ok(Part::Job(name));
+        }
+        if in_row && index_var == Some(name.as_str()) {
+            return Ok(Part::Index(name));
         }
         if in_row && signals.iter().all(|signal| signal.read != name) {
             return Ok(Part::Param(name));

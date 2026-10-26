@@ -22,7 +22,7 @@ fn Conditional() -> impl IntoView {
     view! {
         <div class="flex flex-col h-full bg-window-background dark:bg-window-background">
             <div class="flex flex-row items-center h-[52px] px-4">
-                <span class="text-title3 text-label dark:text-label">"Conditional"</span>
+                <span class="text-headline text-label dark:text-label">"Conditional"</span>
             </div>
             <div class="h-[1px] bg-separator dark:bg-separator"></div>
             <div class="flex flex-col gap-4 p-6 w-[520px]">

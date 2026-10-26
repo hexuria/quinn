@@ -253,6 +253,8 @@ pub struct Style {
     pub line_height: Option<f64>,
     pub gradient: Option<Gradient>,
     pub shadow: Option<Shadow>,
+    /// Sidebar material. The emitter uses Makepad's scene-blur view.
+    pub vibrancy: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -450,6 +452,9 @@ impl Style {
         if over.shadow.is_some() {
             self.shadow = over.shadow;
         }
+        if over.vibrancy {
+            self.vibrancy = true;
+        }
     }
 
     pub fn main_gap(&self) -> Option<f64> {
@@ -517,6 +522,10 @@ fn strip_known_prefixes(token: &str) -> &str {
         } else if let Some(next) = rest.strip_prefix("focus:") {
             next
         } else if let Some(next) = rest.strip_prefix("disabled:") {
+            next
+        } else if let Some(next) = rest.strip_prefix("even:") {
+            next
+        } else if let Some(next) = rest.strip_prefix("odd:") {
             next
         } else {
             break;
@@ -725,6 +734,7 @@ fn apply_token(style: &mut Style, token: &str) {
         "leading-normal" => style.line_height = Some(1.5),
         "leading-relaxed" => style.line_height = Some(1.625),
         "leading-loose" => style.line_height = Some(2.0),
+        "vibrancy" => style.vibrancy = true,
         "shadow" | "shadow-sm" => style.shadow = Some(shadow(3.0, 1.0)),
         "shadow-md" => style.shadow = Some(shadow(8.0, 4.0)),
         "shadow-lg" => style.shadow = Some(shadow(16.0, 8.0)),

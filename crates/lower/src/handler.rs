@@ -88,6 +88,9 @@ fn lower_stmt(stmt: BodyStmt, signals: &[Signal]) -> Result<Vec<HandlerStmt>, St
 }
 
 fn lower_expr_stmt(expr: &Expr, signals: &[Signal]) -> Result<Vec<HandlerStmt>, String> {
+    if let Expr::If(iff) = expr {
+        return lower_if(iff, signals);
+    }
     if let Expr::Call(call) = expr {
         if path_ends(&call.func, &["navigate"]) {
             let Some(arg) = call.args.first() else {
@@ -199,8 +202,66 @@ fn rewrite_name(expr: &mut HxExpr, from: &str, to: &str) {
                 rewrite_name(value, from, to);
             }
         }
+        HxExpr::Call { args, .. } => {
+            for arg in args {
+                rewrite_name(arg, from, to);
+            }
+        }
+        HxExpr::If { cond, then, els } => {
+            rewrite_name(cond, from, to);
+            rewrite_name(then, from, to);
+            rewrite_name(els, from, to);
+        }
         _ => {}
     }
+}
+
+fn lower_if(iff: &syn::ExprIf, signals: &[Signal]) -> Result<Vec<HandlerStmt>, String> {
+    let cond = lower_expr(&iff.cond, signals)?;
+    let then_branch = lower_block_stmts(&iff.then_branch, signals)?;
+    let else_branch = match iff.else_branch.as_ref().map(|(_, expr)| expr.as_ref()) {
+        None => Vec::new(),
+        Some(Expr::Block(block)) => lower_block_stmts(&block.block, signals)?,
+        Some(Expr::If(nested)) => lower_if(nested, signals)?,
+        Some(_) => {
+            return Err(reject(
+                "that else branch",
+                "else { ... } or else if, with signal updates inside",
+            ))
+        }
+    };
+    Ok(vec![HandlerStmt::If {
+        cond,
+        then_branch,
+        else_branch,
+    }])
+}
+
+fn block_value(block: &syn::Block) -> Result<Expr, String> {
+    if block.stmts.len() == 1 {
+        if let syn::Stmt::Expr(expr, None) = &block.stmts[0] {
+            return Ok(expr.clone());
+        }
+    }
+    Err("if used as a value needs one expression in each branch".into())
+}
+
+fn lower_block_stmts(block: &syn::Block, signals: &[Signal]) -> Result<Vec<HandlerStmt>, String> {
+    let mut out = Vec::new();
+    for stmt in &block.stmts {
+        let body = match stmt {
+            syn::Stmt::Expr(expr, _) => BodyStmt::Expr(expr.clone()),
+            syn::Stmt::Local(local) => BodyStmt::Let(local.clone()),
+            _ => {
+                return Err(reject(
+                    "a handler statement",
+                    "let bindings, signal updates, and if / else",
+                ))
+            }
+        };
+        out.extend(lower_stmt(body, signals)?);
+    }
+    Ok(out)
 }
 
 fn lower_scalar_update(
@@ -412,6 +473,12 @@ fn lower_expr(expr: &Expr, signals: &[Signal]) -> Result<HxExpr, String> {
                 syn::BinOp::Sub(_) => BinOp::Sub,
                 syn::BinOp::Mul(_) => BinOp::Mul,
                 syn::BinOp::Div(_) => BinOp::Div,
+                syn::BinOp::Eq(_) => BinOp::Eq,
+                syn::BinOp::Ne(_) => BinOp::Ne,
+                syn::BinOp::Lt(_) => BinOp::Lt,
+                syn::BinOp::Gt(_) => BinOp::Gt,
+                syn::BinOp::Le(_) => BinOp::Le,
+                syn::BinOp::Ge(_) => BinOp::Ge,
                 _ => return Err(reject_expr(expr)),
             };
             Ok(HxExpr::Binary(
@@ -449,6 +516,34 @@ fn lower_expr(expr: &Expr, signals: &[Signal]) -> Result<HxExpr, String> {
         }
         Expr::Call(call) if path_ends(&call.func, &["String", "new"]) && call.args.is_empty() => {
             Ok(HxExpr::Str(String::new()))
+        }
+        Expr::Call(call)
+            if path_ends(&call.func, &["min"])
+                || path_ends(&call.func, &["max"])
+                || path_ends(&call.func, &["clamp"]) =>
+        {
+            let name = path_ident(&call.func)?;
+            let mut args = Vec::new();
+            for arg in &call.args {
+                args.push(lower_expr(arg, signals)?);
+            }
+            let need = if name == "clamp" { 3 } else { 2 };
+            if args.len() != need {
+                return Err(format!("{name} takes {need} arguments"));
+            }
+            Ok(HxExpr::Call { name, args })
+        }
+        Expr::If(iff) => {
+            let cond = Box::new(lower_expr(&iff.cond, signals)?);
+            let then = Box::new(lower_expr(&block_value(&iff.then_branch)?, signals)?);
+            let Some((_, else_expr)) = &iff.else_branch else {
+                return Err("if used as a value needs an else branch".into());
+            };
+            let els = Box::new(match else_expr.as_ref() {
+                Expr::Block(block) => lower_expr(&block_value(&block.block)?, signals)?,
+                other => lower_expr(other, signals)?,
+            });
+            Ok(HxExpr::If { cond, then, els })
         }
         Expr::Macro(mac)
             if mac
@@ -602,7 +697,7 @@ fn reject(found: &str, expected: &str) -> String {
 fn reject_expr(expr: &Expr) -> String {
     let text = short_expr(expr);
     format!(
-        "cannot lower `{text}`. Handlers may set or update a signal with arithmetic (+ - * /), a boolean not, a string, or a field write (profile.name = ...); may navigate(path); and may push, pop, reverse, swap, or remove a list by item id. This expression is outside that set"
+        "cannot lower `{text}`. Handlers may set or update a signal with arithmetic (+ - * /), comparisons, min, max, and clamp, a boolean not, if / else, a string, or a field write (profile.name = ...); may navigate(path); and may push, pop, reverse, swap, or remove a list by item id. This expression is outside that set"
     )
 }
 

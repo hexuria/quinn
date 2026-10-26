@@ -3755,6 +3755,16 @@ fn prop_fallback(key: &str, base: &Style) -> String {
             .color
             .map(|color| color.hex_script())
             .unwrap_or_else(|| "#x000000".into()),
+        // A missing max must not clamp. The generic `0` else hid the 64-wide
+        // rail whenever `bp1120:max-w-*` was the only maximum.
+        "max_width" => base
+            .max_width
+            .map(bound_script)
+            .unwrap_or_else(|| "\"100%\"".into()),
+        "max_height" => base
+            .max_height
+            .map(bound_script)
+            .unwrap_or_else(|| "\"100%\"".into()),
         "width" | "height" => "Fit".into(),
         "flow" => "Down".into(),
         "distribute" => "Distribute.Start".into(),

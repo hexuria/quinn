@@ -135,8 +135,6 @@ pub trait Surface {
 #[derive(Clone, Debug)]
 struct MemNode {
     parent: Option<u64>,
-    #[allow(dead_code)]
-    tag: Tag,
     text: String,
     placeholder: String,
     style: Style,
@@ -191,7 +189,6 @@ impl Surface for MemorySurface {
             id,
             MemNode {
                 parent,
-                tag: spec.tag,
                 text: spec.text.clone(),
                 placeholder: spec.placeholder.clone(),
                 style: spec.style.clone(),

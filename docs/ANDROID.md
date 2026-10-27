@@ -1,6 +1,6 @@
 # Android
 
-The showcase is the only Quinn example that has been installed and drawn on Android. The other examples still lower `view.rs` from the host disk at startup, so they panic on a device. Desktop `--hot` is unchanged.
+The showcase is the only Quinn example that has been installed and drawn on Android. The other examples still lower `view.rs` from the host disk at startup, so they panic on a device. Desktop `--hot` is unchanged. Host packages, the Makepad checkout's `cargo-makepad`, and the Makepad counter APK are in [SETUP_LINUX_AND_ANDROID.md](SETUP_LINUX_AND_ANDROID.md).
 
 Run on 27 Oct 2026, about 11:28 AM Asia/Manila. Pixel emulator, Android 15 (API 35), `x86_64`, emulator 37.2.12. The production APK was a release build with `android:debuggable` false. After install, `am start` opened `dev.makepad.showcase` and the Kitchen note was on screen (Library, search, the two paragraphs, and the weekday bars).
 
@@ -40,7 +40,7 @@ unset MAKEPAD_ANDROID_DEBUGGABLE
 "$MAKEPAD/target/release/cargo-makepad" android --abi=x86_64 --no-icon build -p showcase --release
 ```
 
-`--release` is the production profile. The log line is `debuggable=false`, and the manifest attribute `android:debuggable` is `0`. Any other profile is packaged debuggable. `MAKEPAD_ANDROID_DEBUGGABLE=1` forces a release APK to stay debuggable. `--no-icon` skips the check for `examples/showcase/resources/icon_32.png`, `icon_64.png`, `icon_128.png`, and `icon.ico`. Those files are not in the tree. Without the flag the packager prints a warning and continues.
+`--release` is the production profile. The log line is `debuggable=false`, and the manifest attribute `android:debuggable` is `0`. Any other profile is packaged debuggable. `MAKEPAD_ANDROID_DEBUGGABLE=1` forces a release APK to stay debuggable. `--no-icon` belongs with the other `cargo-makepad` options, before `build`. It skips the check for `examples/showcase/resources/icon_32.png`, `icon_64.png`, `icon_128.png`, and `icon.ico`. Those files are not in the tree. The same flag after the subcommand is forwarded to `rustc` and the build fails. Omitting it prints a missing-icon warning and the packager continues.
 
 The APK is `target/android/makepad-android-apk/showcase/apk/showcase.apk`. On 27 Oct 2026 it was 42 MB. Package `dev.makepad.showcase`, label `Showcase`, `versionName` `0.1.0`, `versionCode` 1. It is signed with cargo-makepad's bundled debug keystore. That is a release binary, not a Play upload key. `build-aab` is the Play artifact and was not produced.
 

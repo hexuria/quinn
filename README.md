@@ -56,7 +56,7 @@ cargo run -p counter --release -- --hot
 
 Edit `examples/counter/view.rs` while that process is up. The same command works for `conditional`, `keyed-list`, `form`, `retain`, `tailwind-gallery`, `app-shell`, `async-dashboard`, and `showcase`. Saving `src/main.rs` still rebuilds. `baseline-counter` and `probe-widget-lifecycle` are hand-written Makepad programs; they have no `view.rs`. `showcase` is the Notes window (navigation, collection, editor, inspector, and the component gallery) and is the place to look at the design system. `async-dashboard` and the other themed examples call `quinn::drive_shell` so resources, the dark flag, and the window width update without a rebuild.
 
-`xvfb-run -a cargo run -p counter --release` still starts a window when you are not reloading. Drop `xvfb-run -a` if `DISPLAY` is already a real X server. On macOS, leave both GPU variables unset and follow [docs/TESTING_ON_MACOS.md](docs/TESTING_ON_MACOS.md).
+`xvfb-run -a cargo run -p counter --release` still starts a window when you are not reloading. Drop `xvfb-run -a` if `DISPLAY` is already a real X server. On macOS, leave both GPU variables unset and follow [docs/TESTING_ON_MACOS.md](docs/TESTING_ON_MACOS.md). The Android production APK is the showcase only; the steps and the emulator notes are in [docs/ANDROID.md](docs/ANDROID.md).
 
 `QUINN_EXIT=1` asks `counter`, `baseline-counter`, and `retain` to quit after the first presented frame. `QUINN_READY=/tmp/ready` writes `ready` from Makepad's `post_draw_hook`, after that frame's draw lists are recorded and before swap. The lifecycle probe writes `artifacts/probe-widget-lifecycle.log` and quits with a failure status when `QUINN_PROBE_EXIT=1` if any of the eight checks failed.
 
@@ -83,7 +83,7 @@ Other harness variables, read by `counter` and `baseline-counter`:
 - `crates/quinn` — what applications import
 - `examples/` — counter, conditional, keyed list, form, retain, Tailwind gallery, and a Makepad baseline. The gallery is the P0 utilities (wrap, distribute, row align, flex weight, fractions, per-side spacing, arbitrary values, `class:`, button hover, and a show inside a row). The baseline keeps the button and the label inside a `height: Fill` client view, with light text on a dark button, so neither sits in the title band.
 - `probes/widget-lifecycle` — the Makepad tree experiment
-- `docs/` — research, architecture, decisions, compatibility, benchmarks, roadmap, macOS checklist
+- `docs/` — research, architecture, decisions, compatibility, benchmarks, roadmap, macOS checklist, Android notes
 
 ## Docs
 
@@ -97,3 +97,4 @@ Other harness variables, read by `counter` and `baseline-counter`:
 - [Benchmarks](docs/benchmarks.md)
 - [Roadmap](docs/roadmap.md)
 - [Testing on macOS](docs/TESTING_ON_MACOS.md)
+- [Android](docs/ANDROID.md)

@@ -13,11 +13,12 @@ What this tree is, and what it is not taking on next. Crate names on crates.io a
 - P3b is in: a superseded or unmounted job aborts its tokio task. Drop before `Ready` increments `quinn::cancelled_count()`, which the dashboard shows as `Cancelled`. A resource may read several signals (`(id.get(), page.get())`) and `await` a chain of registered fns. An action may take a `Serialize` / `Deserialize` struct and return `Result<T, E: Display>`. The async body stays compiled Rust, keyed by the function idents. Markup hot-reloads. `if` / `match` / loops inside the closure are rejected. `QUINN_HTTP=1` with `--features net` GETs one public user list; without the variable the city list stays Manila / Cebu / Davao.
 - The macOS Human Interface Guidelines are the design system: Inter in the macOS type scale, Apple system colors, and a Notes-style `examples/showcase`. SF Pro and SF Symbols are not bundled. See [design-system.md](design-system.md).
 - The Linux X11 software-GL path runs the examples. The counter also runs as wasm under Chromium with SwiftShader.
+- The showcase release APK runs on an Android 15 Pixel emulator (`x86_64`). See [ANDROID.md](ANDROID.md). The other examples do not embed `view.rs` and have not been packaged.
 - Startup, latency, and live script reload share `post_draw_hook` with a hand-written Makepad counter.
 
 ## Left open
 
-- macOS, Windows, iOS, and Android have not been executed. [TESTING_ON_MACOS.md](TESTING_ON_MACOS.md) is the unchecked list.
+- macOS, Windows, and iOS have not been executed. [TESTING_ON_MACOS.md](TESTING_ON_MACOS.md) is the unchecked list. Android has been executed for the showcase release APK only ([ANDROID.md](ANDROID.md)).
 - The script retain run (2,000 cycles, two bursts) keeps widgets at 4 and buttons at 1. RSS rests about 3 MiB above the start and does not climb again on the second burst. The old 400 MiB spike was the reactive `ScriptVm::eval` mount. The headless `MemorySurface` test still passes and is a different runtime.
 - A `view.rs` edit the lowerer accepts hot-reloads, including a `<Show>` nested inside a `<For>` row. An edit in `src/` or a shape the lowerer rejects still needs a rebuild. `quinn::run!` shells are strings, so they are not watcher targets. The baseline counter's block is `examples/baseline-counter/src/main.rs`.
 - The style language is the utility list in [compatibility.md](compatibility.md). Server functions, an async body that is not a chain of named `quinn::job` fns, `align-content`, and Taffy are not in the plan. The router does not speak URLs. A nested provider shadows for its subtree and restores the previous value; the root `mod.ctx` seed does not reset on reload. Changing an async fn in `src/jobs.rs` needs a rebuild.

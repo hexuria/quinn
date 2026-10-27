@@ -1,26 +1,21 @@
-# Quinn Design System — Product Requirements Document
+# Quinn design system
 
 Version: 1.0  
-Scope: Design system, component design, layout behavior, and showcase quality  
-Audience: The agent implementing Quinn and applications built with Quinn
+Scope: tokens, component geometry, layout, and the showcase
 
 ## 1. Mission
 
-Build a coherent, production-quality design system for Quinn, a GUI framework for cross-platform applications authored with the project's existing Leptos-style syntax.
+Quinn screens use the existing Leptos-style syntax and are drawn by Makepad. This document is the visual contract: spacing, type, color, density, shell widths, and interaction states.
 
-A developer must be able to compose Quinn components and get consistent spacing, alignment, readable typography, complete interaction states, and predictable resizing without manually correcting every screen.
+Composed components share spacing, alignment, type, and states. A screen should not need one-off spacing or clipping fixes to match a row here.
 
-This is a design-system task. Preserve the existing rendering architecture, reactive model, application behavior, and authoring syntax. Make only the component styling and layout changes required to satisfy this document. Do not turn this into a renderer rewrite, framework migration, dependency cleanup, or unrelated code refactor.
+Keep the renderer, the reactive model, and the authoring syntax. Meet a row with component styling and layout. Do not add a second renderer, a second layout engine, or a framework migration to satisfy it.
 
 ## 2. Evidence and boundaries
 
-The supplied 20-second showcase demonstrates a Notes application, a table, a Settings component gallery, an inspector, light and dark themes, and notification feedback.
+The showcase this contract answers is a Notes window, a table, a Settings gallery, an inspector, light and dark themes, and a toast. The defects that set the contract were a text field whose lower outline was clipped, control heights that did not match, labels that sat too far from their controls, and secondary text that failed 4.5:1. Measurements and the capability map are in [audit-ff86f73.md](audit-ff86f73.md).
 
-Visible concerns include a text field with an incomplete lower outline around 00:04, inconsistent apparent control sizes, loose relationships between labels and controls, and secondary text that appears weak against its background. Contrast must be measured before declaring a standards failure. These observations identify visual symptoms, not their underlying code causes.
-
-The supplied repository URL required authentication during preparation of this PRD. Existing component names, props, rendering capabilities, and platform support have not been verified. The implementing agent must inspect the actual repository before mapping this specification to code.
-
-All dimensions and component names below are proposed design contracts, not claims about APIs already implemented.
+Dimensions and names below are the contract. What this host implements, and what it does not, is [design-system.md](design-system.md), [components.md](components.md), and [verification-matrix.md](verification-matrix.md).
 
 ## 3. Product outcomes
 
@@ -31,14 +26,13 @@ The design system must deliver:
 - Layouts that adapt to their available container width and content.
 - Complete keyboard, pointer, touch, focus, validation, and disabled behavior where applicable.
 - Light and dark themes with semantic colors and verified contrast.
-- Familiar platform behavior without maintaining unrelated visual systems.
 - Documented, runnable examples using Quinn's existing Leptos syntax.
 
 The Notes demo is a reference application. Do not make generic components depend on Notes-specific dimensions, content, or colors.
 
 ## 4. Design direction
 
-Use a restrained desktop productivity aesthetic: neutral surfaces, strong typography, compact but comfortable spacing, restrained borders, and one primary accent.
+Neutral surfaces, one accent (`#1D4ED8` light, `#93C5FD` dark), compact spacing, and a border only where a control has to be identifiable.
 
 Hierarchy comes from typography, grouping, spacing, and surface separation. Avoid wrapping every group in a card. Avoid decorative gradients, oversized rounding, and shadows on ordinary controls.
 
@@ -347,23 +341,15 @@ Use brief 120–180 ms state transitions. Motion must not delay activation or hi
 
 ## 11. Preserve Leptos authoring
 
-Use the repository's existing Leptos-style component composition, reactive values, event conventions, and child composition.
+Keep the existing Leptos-style component composition, reactive values, event conventions, and child composition.
 
-Before changing anything, document the current canonical examples. Do not invent a parallel JSX/TSX API, introduce JavaScript authoring, or assume browser DOM/CSS support exists in Quinn's native backend.
+Do not add a JSX/TSX API, JavaScript authoring, or browser DOM/CSS in the native backend.
 
-For each design concept, record:
+The capability map for the showcase at `ff86f73` is [audit-ff86f73.md](audit-ff86f73.md). Current props, and the gaps that remain, are [components.md](components.md) and [verification-matrix.md](verification-matrix.md).
 
-| Design concept | Existing Quinn component/prop | Supported targets | Gap or fallback |
-|---|---|---|---|
-| Density | Fill from repository | Verify | Document |
-| Semantic variant | Fill from repository | Verify | Document |
-| Layout gap/alignment | Fill from repository | Verify | Document |
-| Overflow policy | Fill from repository | Verify | Document |
-| Accessible label/state | Fill from repository | Verify | Document |
+Prefer existing props and theme mechanisms. Every example in this repository has to compile.
 
-Prefer existing props and theme mechanisms. Add only the minimal missing design-facing capability. Every published example must compile in this repository.
-
-If a design requirement reveals an engine limitation, document the affected component, target, visible consequence, and bounded fallback. Do not silently claim support or launch an unrelated architecture rewrite.
+When the engine cannot do what a row here asks, record the component, the target, what the user sees, and the fallback. Do not mark that row supported.
 
 ## 12. Showcase requirements
 
@@ -422,20 +408,15 @@ Release gates:
 
 Screenshots alone do not prove hit targets, keyboard operation, accessibility, or scroll reachability. Check those behaviors directly.
 
-## 14. Execution order and deliverables
+## 14. Deliverables
 
-1. Audit the current components and demo. Produce a screenshot-backed issue list and capability map.
-2. Establish semantic tokens, typography, density, and layout contracts.
-3. Validate the foundation with a button, field, navigation row, and overlay in both themes and constrained layouts.
-4. Apply the system to all existing components and complete their state contracts.
-5. Apply it to Notes, Table, and Settings; build the reference gallery.
-6. Run visual and interaction checks; fix shared causes; record remaining gaps.
+- Issues and the capability map: [audit-ff86f73.md](audit-ff86f73.md), `docs/images/audit/`, `docs/images/before/`
+- Token reference: [design-system.md](design-system.md)
+- Component sheets: [components.md](components.md). Each sheet names anatomy, props, sizing, spacing, states, keyboard behavior, accessibility, overflow, responsive behavior, and an example.
+- Notes, Table, Settings, and the gallery: `examples/showcase`
+- Viewport and state record: [verification-matrix.md](verification-matrix.md)
 
-Required deliverables: design-system documentation, token reference, component specification sheets, working gallery, corrected showcase, verified Leptos examples, before/after evidence, and a platform verification matrix.
-
-For each component specification, include anatomy; props mapped to existing APIs; sizing; spacing; states; keyboard behavior; accessibility; overflow; responsive behavior; and examples.
-
-Completion means a developer can compose a new screen from Quinn's documented components without adding ad hoc spacing or clipping fixes. “Looks better at one window size” is not completion.
+Done means a new screen can be composed from the documented components without one-off spacing or clipping fixes. One window size looking right is not done.
 
 ## References
 

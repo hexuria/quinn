@@ -13,7 +13,7 @@ Call-site `on:click`, `class`, `class:`, `bind:value`, and `placeholder` are for
 
 Every color utility on these components has a `dark:` pair. A light-only face under `dark:text-*` made the toast title disappear.
 
-Keyboard behavior below is the behavior this desktop host can stand behind. Anything else is marked unsupported.
+Keyboard behavior below is what this desktop host does. Anything else is marked unsupported.
 
 ## Button
 

@@ -1,6 +1,6 @@
 # Linux and Android setup
 
-Linux is the host this workspace was run on. Android builds go through Makepad revision `44ecb822b48106fa76bde4dfd309e5a8a7ff1932`, the pin in `crates/makepad/Cargo.toml`. Quinn's example windows were run on Linux. They were not packaged as Android apps. The Android section built Makepad's `makepad-example-counter` from that checkout and installed it on an emulator.
+Linux is the host this workspace was run on. Android builds go through Makepad revision `44ecb822b48106fa76bde4dfd309e5a8a7ff1932`, the pin in `crates/makepad/Cargo.toml`. Quinn's example windows were run on Linux. The Android section below built Makepad's `makepad-example-counter` from that checkout and installed it on an emulator. Quinn's own showcase APK is a later step: [ANDROID.md](ANDROID.md).
 
 macOS is a separate checklist: [TESTING_ON_MACOS.md](TESTING_ON_MACOS.md). Leave `MAKEPAD_GPU` and `LIBGL_ALWAYS_SOFTWARE` unset there.
 
@@ -213,4 +213,4 @@ A handset was not used for the check above. That run was the x86_64 emulator, so
 
 ## What this does not cover
 
-Quinn's `examples/counter` and the other workspace binaries were not built as APKs. [compatibility.md](compatibility.md) records that Quinn's Android UI has not been executed. `quinn-makepad` links the same Makepad revision, which is why the toolchain above is the one that matches this repo.
+Quinn's showcase release APK is [ANDROID.md](ANDROID.md). The other workspace binaries, including `examples/counter`, were not built as APKs. `quinn-makepad` links the same Makepad revision, which is why the toolchain above is the one that matches this repo.

@@ -18,6 +18,21 @@ impl AppMain for App {
     fn script_mod(vm: &mut ScriptVm) -> ScriptValue {
         quinn::makepad_widgets::script_mod(vm);
         let component = Self::script_component(vm).script_to_value(vm);
+        #[cfg(target_os = "android")]
+        {
+            return quinn::load_bundled_view(
+                vm,
+                env!("CARGO_MANIFEST_DIR"),
+                module_path!(),
+                "Notes",
+                1080,
+                1920,
+                component,
+                quinn_ui::SOURCE,
+                include_str!("../view.rs"),
+            );
+        }
+        #[cfg(not(target_os = "android"))]
         quinn::load_hot_view_with(
             vm,
             env!("CARGO_MANIFEST_DIR"),

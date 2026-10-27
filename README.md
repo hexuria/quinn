@@ -12,6 +12,10 @@ The showcase is the Notes, Table, Settings, and component gallery window. Its vi
 
 ![Table, light](docs/images/table-light.png)
 
+The same Notes screen on the Android 15 release APK (`dev.makepad.showcase`):
+
+![Notes on Android](docs/images/notes-android.png)
+
 The shots from the previous pass are in `docs/images/before/`.
 
 ```rust

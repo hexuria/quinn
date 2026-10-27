@@ -1,9 +1,0 @@
-[package]
-name = "probe-widget-lifecycle"
-version.workspace = true
-edition.workspace = true
-license.workspace = true
-publish.workspace = true
-
-[dependencies]
-makepad-widgets = { git = "https://github.com/makepad/makepad", rev = "44ecb822b48106fa76bde4dfd309e5a8a7ff1932", default-features = false }

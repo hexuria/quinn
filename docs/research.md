@@ -35,9 +35,7 @@ Makepad 2.0 / Splash is the current `dev` tree. `live_design!` is archived (`doc
 
 No `ra_jit` / `ra-jit` symbol exists in the tree.
 
-The executable probe is `probes/widget-lifecycle`. It performs create, insert, `set_text` (same uid), insert a sibling, remove, reorder, attach/fire/remove a Rust handler, and `redraw_all` while recording the `Window` uid.
-
-Run on this machine (X11, `MAKEPAD_GPU=gl`, `LIBGL_ALWAYS_SOFTWARE=1`, Mesa llvmpipe, OpenGL ES 3.2) it logged `PROBE_OK`: window uid 3 stayed 3 across `redraw_all`, the first label uid was stable across `set_text`, the sibling uid survived reorder, the handler fired once and not after it was cleared, and the removed widget left `View.children`. A hand-built `ScriptMod` does not inherit the app module's `use mod.prelude.widgets.*`. `Fill` and `Fit` are identifiers spread from `mod.turtle` (`draw/src/turtle.rs`, `..me.Size`). Without that import, eval reports `variable Fill not found in scope` and the property stays at the prototype default; a number still becomes `Size::Fixed` (`ScriptHook for Size`). `quinn` prefixes generated scripts with the import. `script_mod!` inside `quote!` also drops spaces, because the macro rebuilds source from token spans and `quote!` tokens share the call site, so `run!` emits the shell as a string with `#(0)` bound to `App::script_component`.
+On this machine (X11, `MAKEPAD_GPU=gl`, `LIBGL_ALWAYS_SOFTWARE=1`, Mesa llvmpipe, OpenGL ES 3.2) a window uid stayed stable across `redraw_all`, a label uid stayed stable across `set_text`, a sibling uid survived reorder, a Rust handler fired once and not after it was cleared, and a removed widget left `View.children`. A hand-built `ScriptMod` does not inherit the app module's `use mod.prelude.widgets.*`. `Fill` and `Fit` are identifiers spread from `mod.turtle` (`draw/src/turtle.rs`, `..me.Size`). Without that import, eval reports `variable Fill not found in scope` and the property stays at the prototype default; a number still becomes `Size::Fixed` (`ScriptHook for Size`). `quinn` prefixes generated scripts with the import. `script_mod!` inside `quote!` also drops spaces, because the macro rebuilds source from token spans and `quote!` tokens share the call site, so `run!` emits the shell as a string with `#(0)` bound to `App::script_component`.
 
 ## Probe B — Leptos
 
@@ -62,4 +60,4 @@ Numbers for startup, latency, live reload, retention, and the wasm counter are i
 
 ## UI-thread experiment
 
-`probes/widget-lifecycle` is the experiment for the eight operations. `quinn-core`'s `MemorySurface` tests are the experiment for connecting that tree shape to `ImmediateEffect` (signal text, sibling identity, conditional cleanup, keyed identity, handler removal). The Makepad surface in `crates/makepad` is the same operations, called from the effect queue.
+`quinn-core`'s `MemorySurface` tests connect that tree shape to `ImmediateEffect` (signal text, sibling identity, conditional cleanup, keyed identity, handler removal). The Makepad surface in `crates/makepad` is the same operations, called from the effect queue.

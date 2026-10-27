@@ -58,7 +58,7 @@ leptos-native (`README.md`, MIT) is a fork: its own `view!` / `IntoView<R>`, Taf
 
 rstml parses the token tree into `Node` / `NodeElement` / `KeyedAttribute`. `NodeName`'s `Display` joins `on:click` and `let:item` (`rstml/src/node/node_name.rs`). `parse2` is the entry point. That is the parser `view!` uses. It does not create DOM nodes.
 
-Numbers for startup, latency, live reload, retention, and the wasm counter are in [benchmarks.md](benchmarks.md). The macOS run that this machine could not do is [TESTING_ON_MACOS.md](TESTING_ON_MACOS.md).
+Numbers for startup, latency, live reload, retention, and the wasm counter are in [benchmarks.md](benchmarks.md). The macOS run that this machine could not do is [TESTING_ON_MACOS.md](TESTING_ON_MACOS.md). Linux packages and the Android toolchain are in [SETUP_LINUX_AND_ANDROID.md](SETUP_LINUX_AND_ANDROID.md).
 
 ## UI-thread experiment
 

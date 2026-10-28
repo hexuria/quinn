@@ -145,6 +145,8 @@ Harness variables. `counter` and `baseline-counter` read the shared set below.
 - [Linux and Android setup](docs/SETUP_LINUX_AND_ANDROID.md)
 - [Android](docs/ANDROID.md)
 - [Testing on macOS](docs/TESTING_ON_MACOS.md)
+- [Testing on iOS and Android](docs/TESTING_ON_MOBILE.md)
+- [One app on macOS, iOS, and Android](docs/MULTI_PLATFORM.md)
 
 ## License
 

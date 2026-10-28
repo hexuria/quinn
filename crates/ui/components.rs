@@ -48,7 +48,7 @@ fn Search(
 }
 
 /// A row in the navigation rail: an icon over a caption, or beside the label
-/// from 1120 up. The look is the `QNavItem` template; `selected` is the
+/// from 1120 up and below 800, where the rail is the full-width first screen. The look is the `QNavItem` template; `selected` is the
 /// current page.
 #[component]
 fn NavItem(
@@ -57,7 +57,7 @@ fn NavItem(
     children: Children,
 ) -> impl IntoView {
     view! {
-        <button widget="QNavItem" class="w-full h-[56px] flex flex-col items-center justify-center gap-1 text-caption bp1120:flex-row bp1120:justify-start bp1120:h-fit bp1120:min-h-control bp1120:py-2 bp1120:px-3 bp1120:gap-2 bp1120:text-body">
+        <button widget="QNavItem" class="w-full h-[56px] flex flex-col items-center justify-center gap-1 text-caption bp1120:flex-row bp1120:justify-start bp1120:h-fit bp1120:min-h-control bp1120:py-2 bp1120:px-3 bp1120:gap-2 bp1120:text-body max-bp800:flex-row max-bp800:justify-start max-bp800:h-fit max-bp800:min-h-control max-bp800:py-3 max-bp800:px-4 max-bp800:gap-3 max-bp800:text-body">
             {children()}
         </button>
     }
@@ -181,7 +181,7 @@ fn InfoRow(
 #[component]
 fn Overlay(children: Children) -> impl IntoView {
     view! {
-        <div class="absolute right-[16px] top-[64px] z-50 flex flex-col w-[360px] max-w-full">
+        <div class="absolute right-[16px] top-safe top-[64px] z-50 flex flex-col w-[360px] max-w-full">
             {children()}
         </div>
     }

@@ -2,6 +2,7 @@ use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};
 use std::sync::{Mutex, OnceLock};
 
+use makepad_widgets::event::TouchState;
 use makepad_widgets::makepad_platform::SignalToUI;
 use makepad_widgets::makepad_script::ScriptMod;
 use makepad_widgets::*;
@@ -749,13 +750,25 @@ pub fn eval_hot_file(
 ) -> ScriptValue {
     let source = std::fs::read_to_string(path)
         .unwrap_or_else(|err| panic!("read hot script {}: {err}", path.display()));
-    let extracted = quinn_lower::extract_hot_script(&source)
-        .unwrap_or_else(|err| panic!("extract hot script {}: {err}", path.display()));
     let file = path
         .canonicalize()
         .unwrap_or_else(|_| path.to_path_buf())
         .to_string_lossy()
         .replace('\\', "/");
+    eval_script_text(vm, &source, file, manifest_dir, module_path, component)
+}
+
+/// Eval lowered script text. `file` names it for errors and the watcher.
+fn eval_script_text(
+    vm: &mut ScriptVm,
+    source: &str,
+    file: String,
+    manifest_dir: &str,
+    module_path: &str,
+    component: ScriptValue,
+) -> ScriptValue {
+    let extracted = quinn_lower::extract_hot_script(source)
+        .unwrap_or_else(|err| panic!("extract hot script {file}: {err}"));
     // Also registers this crate's manifest, which is how
     // `crate_resource("quinn_makepad:resources/icons/...")` resolves.
     crate::widgets::script_mod(vm);
@@ -818,14 +831,41 @@ pub fn load_hot_view_with(
     component: ScriptValue,
     library: &str,
 ) -> ScriptValue {
-    let view = quinn_lower::view_path(manifest_dir);
+    load_view_with(vm, manifest_dir, module_path, title, width, height, component, library, "")
+}
+
+/// [`load_hot_view_with`] that also carries the view's source, for a build
+/// that runs where `view.rs` is not on disk: an Android emulator or any
+/// phone. Pass `include_str!("../view.rs")`. When `view.rs` can be read, this
+/// is `load_hot_view_with`, hot reload included. When it cannot, `view` is
+/// lowered in memory and nothing is written or watched.
+#[allow(clippy::too_many_arguments)]
+pub fn load_view_with(
+    vm: &mut ScriptVm,
+    manifest_dir: &str,
+    module_path: &str,
+    title: &'static str,
+    width: u32,
+    height: u32,
+    component: ScriptValue,
+    library: &str,
+    view: &str,
+) -> ScriptValue {
+    let view_file = quinn_lower::view_path(manifest_dir);
     let hot = quinn_lower::hot_ui_path(manifest_dir);
+    let shell = quinn_lower::Shell {
+        title,
+        width,
+        height,
+    };
+    if !view.is_empty() && !view_file.is_file() {
+        let script = quinn_lower::lower_file_with(view, shell, library)
+            .unwrap_or_else(|err| panic!("lower {title} view: {err}"));
+        let file = format!("{}/hot/ui.rs", manifest_dir.replace('\\', "/"));
+        return eval_script_text(vm, &script, file, manifest_dir, module_path, component);
+    }
+    let view = view_file;
     if !vm.is_reload() {
-        let shell = quinn_lower::Shell {
-            title,
-            width,
-            height,
-        };
         if std::env::var("QUINN_SKIP_LOWER").is_err() {
             quinn_lower::write_lowered_with(&view, &hot, shell, library)
                 .unwrap_or_else(|err| panic!("lower {title} view: {err}"));
@@ -890,28 +930,120 @@ pub(crate) fn forward_key(cx: &mut Cx, ke: &KeyEvent) {
     });
 }
 
+/// Android's system Back runs the view's Escape chain: both mean "dismiss the
+/// top thing". The event is marked handled only when the chain set a signal,
+/// so Back at the root still leaves the app.
+fn forward_back(cx: &mut Cx, handled: &Cell<bool>) {
+    if handled.get() {
+        return;
+    }
+    let hit = script_eval!(cx, {
+        fn quinn_missing() { 0 }
+        if ok{mod.quinn_back} == nil { quinn_missing() } else { mod.quinn_back() }
+    });
+    if script_number(hit).round() as i64 == 1 {
+        handled.set(true);
+    }
+}
+
+/// `state.quinn_os`: 0 desktop, 1 iOS, 2 Android.
+fn os_code(cx: &Cx) -> f64 {
+    match cx.os_type() {
+        OsType::Ios(_) => 1.0,
+        OsType::Android(_) => 2.0,
+        _ => 0.0,
+    }
+}
+
+fn set_geom(cx: &mut Cx, width: f64, insets: SafeAreaInsets) {
+    let (t, r, b, l) = (insets.top, insets.right, insets.bottom, insets.left);
+    script_eval!(cx, {
+        if ok{mod.quinn_set_geom} != nil { mod.quinn_set_geom(#(width), #(t), #(r), #(b), #(l)) } else { 0 }
+        true
+    });
+}
+
+std::thread_local! {
+    /// The `quinn_dark` the status bar was last tinted for.
+    static BAR_DARK: Cell<Option<bool>> = const { Cell::new(None) };
+}
+
+/// Tint the iOS and Android status bar for the view's theme. Quinn paints its
+/// background with a view, so Makepad's `Auto` tint reads the window clear
+/// color instead and picks light icons on a light page.
+fn sync_system_bar(cx: &mut Cx) {
+    if !matches!(cx.os_type(), OsType::Ios(_) | OsType::Android(_)) {
+        return;
+    }
+    let dark = script_eval!(cx, {
+        fn quinn_missing() { 0 }
+        if ok{mod.quinn_dark_now} == nil { quinn_missing() } else { mod.quinn_dark_now() }
+    });
+    let dark = script_number(dark).round() as i64 == 1;
+    if BAR_DARK.with(|last| last.replace(Some(dark))) == Some(dark) {
+        return;
+    }
+    if std::env::var("QUINN_JOB_LOG").is_ok() {
+        eprintln!("quinn system bar dark={dark}");
+    }
+    cx.set_system_bar_appearance(if dark {
+        SystemBarAppearance::LightIcons
+    } else {
+        SystemBarAppearance::DarkIcons
+    });
+    cx.redraw_all();
+}
+
 pub fn drive_shell(cx: &mut Cx, event: &Event) {
     if std::env::var("QUINN_JOB_LOG").is_ok() {
         eprintln!("drive_shell");
     }
-    if let Event::WindowGeomChange(ev) = event {
-        let w = ev.new_geom.inner_size.x;
+    // Seed the platform and geometry before the first frame. iOS and Android
+    // set the display context before Startup, so a phone does not lay out
+    // once at the shell's desktop width.
+    if let Event::Startup = event {
+        let os = os_code(cx);
         script_eval!(cx, {
-            if ok{mod.quinn_set_width} != nil { mod.quinn_set_width(#(w)) } else { 0 }
+            if ok{mod.quinn_set_os} != nil { mod.quinn_set_os(#(os)) } else { 0 }
             true
         });
+        if cx.display_context.is_screen_size_known() {
+            let width = cx.display_context.screen_size.x;
+            let insets = cx.display_context.safe_area_insets;
+            set_geom(cx, width, insets);
+        }
+    }
+    if let Event::WindowGeomChange(ev) = event {
+        set_geom(cx, ev.new_geom.inner_size.x, ev.new_geom.safe_area_insets);
     }
     if let Event::KeyDown(ke) = event {
         forward_key(cx, ke);
     }
+    if let Event::BackPressed { handled } = event {
+        forward_back(cx, handled);
+    }
     // A press outside the focused widget blurs it, as it does in a browser.
     // Rows, segments, and toggles do not take key focus when clicked, so a
     // field focused before a click on one kept its focus look. A field that
-    // was just clicked has already taken the focus, so it keeps it.
-    if let Event::MouseDown(down) = event {
+    // was just clicked has already taken the focus, so it keeps it. A phone
+    // presses with `TouchUpdate`, not `MouseDown`.
+    let presses: Vec<DVec2> = match event {
+        Event::MouseDown(down) => vec![down.abs],
+        Event::TouchUpdate(update) => update
+            .touches
+            .iter()
+            .filter(|touch| touch.state == TouchState::Start)
+            .map(|touch| touch.abs)
+            .collect(),
+        _ => Vec::new(),
+    };
+    if !presses.is_empty() {
         let focus = cx.key_focus();
-        if !focus.is_empty() && !focus.clipped_rect(cx).contains(down.abs) {
-            cx.set_key_focus(Area::Empty);
+        if !focus.is_empty() {
+            let rect = focus.clipped_rect(cx);
+            if presses.iter().all(|abs| !rect.contains(*abs)) {
+                cx.set_key_focus(Area::Empty);
+            }
         }
     }
     let poll = matches!(
@@ -922,6 +1054,8 @@ pub fn drive_shell(cx: &mut Cx, event: &Event) {
             | Event::Timer(_)
             | Event::LiveEdit
             | Event::MouseUp(_)
+            | Event::TouchUpdate(_)
+            | Event::BackPressed { .. }
             | Event::KeyDown(_)
             | Event::TextInput(_)
     );
@@ -935,6 +1069,11 @@ pub fn drive_shell(cx: &mut Cx, event: &Event) {
                 true
             });
         }
+    }
+    // A click handler runs after the press events went by. Its change shows
+    // at the next draw, so the tint follows the theme on that draw.
+    if poll || matches!(event, Event::Actions(_) | Event::Draw(_)) {
+        sync_system_bar(cx);
     }
 }
 

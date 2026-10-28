@@ -147,6 +147,15 @@ pub fn parse_model_with(source: &str, library: &str) -> Result<Model, String> {
         return Err("the component root must be a <div>".into());
     }
     let root_class = class_of(element)?;
+    let mut root_keydown = None;
+    for attr in element.attributes() {
+        let NodeAttribute::Attribute(attr) = attr else {
+            continue;
+        };
+        if let ("on:keydown", Some(expr)) = (attr_key(attr).as_str(), attr.value()) {
+            root_keydown = Some(crate::handler::parse_handler(expr, &signals, false)?);
+        }
+    }
     let mut children = Vec::new();
     let mut keyed = false;
     for child in element.children() {
@@ -173,6 +182,7 @@ pub fn parse_model_with(source: &str, library: &str) -> Result<Model, String> {
         signals,
         frame,
         root_class,
+        root_keydown,
         nodes: children,
         keyed,
         retain,

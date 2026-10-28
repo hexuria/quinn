@@ -17,7 +17,7 @@ What this tree is, and what it is not taking on next. Crate names on crates.io a
 
 ## Left open
 
-- macOS, Windows, iOS, and Android have not been executed. [TESTING_ON_MACOS.md](TESTING_ON_MACOS.md) is the unchecked list.
+- Windows has not been executed. [TESTING_ON_MACOS.md](TESTING_ON_MACOS.md) is the unchecked macOS list. The showcase runs in the iOS simulator and the Android emulator; [TESTING_ON_MOBILE.md](TESTING_ON_MOBILE.md) has the steps and the known gaps. Page changes on a phone are instant; lowering to Makepad's `StackNavigation` (slide, swipe-back) is not done.
 - The script retain run (2,000 cycles, two bursts) keeps widgets at 4 and buttons at 1. RSS rests about 3 MiB above the start and does not climb again on the second burst. The old 400 MiB spike was the reactive `ScriptVm::eval` mount. The headless `MemorySurface` test still passes and is a different runtime.
 - A `view.rs` edit the lowerer accepts hot-reloads, including a `<Show>` nested inside a `<For>` row. An edit in `src/` or a shape the lowerer rejects still needs a rebuild. `quinn::run!` shells are strings, so they are not watcher targets. The baseline counter's block is `examples/baseline-counter/src/main.rs`.
 - The style language is the utility list in [compatibility.md](compatibility.md). Server functions, an async body that is not a chain of named `quinn::job` fns, `align-content`, and Taffy are not in the plan. The router does not speak URLs. A nested provider shadows for its subtree and restores the previous value; the root `mod.ctx` seed does not reset on reload. Changing an async fn in `src/jobs.rs` needs a rebuild.

@@ -73,9 +73,9 @@ P3b keeps the async body in compiled Rust and lowers only the source reads. A ch
 
 ## Android view is bundled, desktop view stays on disk
 
-Chosen for `showcase` only. `cfg(target_os = "android")` calls `load_bundled_view` with `include_str!` of `view.rs` and of `quinn-ui`'s `components.rs`. The lowerer runs in the process and the script is eval'd from that string. The other examples keep `load_hot_view`, which reads `CARGO_MANIFEST_DIR` at startup.
+Chosen for `showcase` only. `load_view_with` takes `include_str!` of `view.rs` and of `quinn-ui`'s `components.rs`, and calls `load_bundled_view` when `view.rs` is not on disk (Android, an iOS device). The lowerer runs in the process and the script is eval'd from that string. The other examples keep `load_hot_view`, which reads `CARGO_MANIFEST_DIR` at startup.
 
-A phone does not have the checkout. `eval_hot_file` panics when `hot/ui.rs` is missing, so a disk read cannot be the Android boot path. Embedding the authoring source, rather than a pre-lowered `script_mod!`, keeps one lowerer for both targets. The phone does not watch `view.rs`. `--hot` stays the desktop watcher. The seed size on Android is 1080×1920 so `state.quinn_width` matches a phone; the desktop seed stays 1440×900.
+A phone does not have the checkout. `eval_hot_file` panics when `hot/ui.rs` is missing, so a disk read cannot be the Android boot path. Embedding the authoring source, rather than a pre-lowered `script_mod!`, keeps one lowerer for both targets. The phone does not watch `view.rs`. `--hot` stays the desktop watcher. The seed size is 1440×900 everywhere; on a phone the host overwrites `state.quinn_width` and the safe-area insets from the screen at startup.
 
 `examples/showcase/Cargo.toml` does not inherit `edition` or `version` from the workspace. `cargo-makepad` copies that file into its own wrapper workspace, and `edition.workspace = true` does not resolve there. The observed release APK (`debuggable=false`, `x86_64`, Kitchen note on an Android 15 emulator) is [ANDROID.md](ANDROID.md).
 

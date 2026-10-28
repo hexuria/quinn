@@ -1,5 +1,7 @@
 [package]
 name = "showcase"
+# Spelled out rather than inherited: `cargo makepad android` builds this
+# manifest inside a wrapper workspace that has no `workspace.package`.
 version = "0.1.0"
 edition = "2021"
 license = "MIT OR Apache-2.0"

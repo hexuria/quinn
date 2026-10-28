@@ -206,6 +206,28 @@ impl Edges {
     }
 }
 
+/// Edges that add the device safe-area inset (`state.quinn_safe_*`) on top
+/// of whatever the class sets: `pt-safe pt-2` is the inset plus 8.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct SafeEdges {
+    pub left: bool,
+    pub top: bool,
+    pub right: bool,
+    pub bottom: bool,
+}
+
+impl SafeEdges {
+    pub fn any(self) -> bool {
+        self.left || self.top || self.right || self.bottom
+    }
+    pub fn merge(&mut self, over: SafeEdges) {
+        self.left |= over.left;
+        self.top |= over.top;
+        self.right |= over.right;
+        self.bottom |= over.bottom;
+    }
+}
+
 /// Resolved style. `None` means "leave the Makepad prototype value alone"
 /// except where tag defaults fill a field in before class parsing.
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -217,6 +239,8 @@ pub struct Style {
     pub gap_x: Option<f64>,
     pub gap_y: Option<f64>,
     pub padding: Edges,
+    /// `pt-safe`, `px-safe`, `p-safe`, ...
+    pub safe_pad: SafeEdges,
     pub margin: Edges,
     pub main_align: Option<AlignSpec>,
     pub cross_align: Option<CrossAlign>,
@@ -262,6 +286,9 @@ pub struct Style {
     pub abs_y: Option<f64>,
     pub abs_right: Option<f64>,
     pub abs_bottom: Option<f64>,
+    /// `top-safe`, `bottom-safe`, `left-safe`, `right-safe`: the inset adds
+    /// to the matching `abs_*` offset.
+    pub safe_abs: SafeEdges,
     /// Paint order among overlay siblings. Higher paints later.
     pub z_index: Option<i64>,
     pub clip: bool,
@@ -275,6 +302,9 @@ pub struct Style {
     pub shadow: Option<Shadow>,
     /// Sidebar material. The emitter uses Makepad's scene-blur view.
     pub vibrancy: bool,
+    /// `hidden`: `visible: false`, which takes no space. Usually under a
+    /// variant, such as `max-bp800:hidden` for "wide screens only".
+    pub hidden: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -344,7 +374,12 @@ impl Style {
             self.gap_y = over.gap_y;
         }
         self.padding.merge(over.padding);
+        self.safe_pad.merge(over.safe_pad);
+        if over.hidden {
+            self.hidden = true;
+        }
         self.margin.merge(over.margin);
+        self.safe_abs.merge(over.safe_abs);
         if over.main_align.is_some() {
             self.main_align = over.main_align;
         }
@@ -556,7 +591,17 @@ pub fn unknown_classes(class: &str) -> Vec<String> {
 fn strip_known_prefixes(token: &str) -> &str {
     let mut rest = token;
     loop {
-        let next = if let Some(next) = rest.strip_prefix("dark:") {
+        let max_bp = rest.strip_prefix("max-").and_then(|r| {
+            BREAKPOINTS.iter().find_map(|(prefix, _)| r.strip_prefix(prefix))
+        });
+        let next = if let Some(next) = max_bp {
+            next
+        } else if let Some(next) = ["ios:", "android:", "mobile:"]
+            .iter()
+            .find_map(|prefix| rest.strip_prefix(prefix))
+        {
+            next
+        } else if let Some(next) = rest.strip_prefix("dark:") {
             next
         } else if let Some(next) = rest.strip_prefix("sm:") {
             next
@@ -773,6 +818,7 @@ fn apply_token(style: &mut Style, token: &str) {
             style.border_color = palette("system-blue");
         }
         "absolute" => style.absolute = true,
+        "hidden" => style.hidden = true,
         "inset-0" => {
             style.absolute = true;
             style.abs_x = Some(0.0);
@@ -933,19 +979,27 @@ fn apply_prefixed(style: &mut Style, token: &str) {
             }
         }
     } else if let Some(rest) = token.strip_prefix("left-") {
-        if let Some(px) = spacing(rest) {
+        if rest == "safe" {
+            style.safe_abs.left = true;
+        } else if let Some(px) = spacing(rest) {
             style.abs_x = Some(px);
         }
     } else if let Some(rest) = token.strip_prefix("right-") {
-        if let Some(px) = spacing(rest) {
+        if rest == "safe" {
+            style.safe_abs.right = true;
+        } else if let Some(px) = spacing(rest) {
             style.abs_right = Some(px);
         }
     } else if let Some(rest) = token.strip_prefix("top-") {
-        if let Some(px) = spacing(rest) {
+        if rest == "safe" {
+            style.safe_abs.top = true;
+        } else if let Some(px) = spacing(rest) {
             style.abs_y = Some(px);
         }
     } else if let Some(rest) = token.strip_prefix("bottom-") {
-        if let Some(px) = spacing(rest) {
+        if rest == "safe" {
+            style.safe_abs.bottom = true;
+        } else if let Some(px) = spacing(rest) {
             style.abs_bottom = Some(px);
         }
     } else if let Some(rest) = token.strip_prefix("z-") {
@@ -995,6 +1049,20 @@ fn strip_edge<'a>(token: &'a str, prefix: &str) -> Option<(&'a str, &'a str)> {
 }
 
 fn apply_padding(style: &mut Style, edge: &str, token: &str) {
+    if token == "safe" {
+        let safe = &mut style.safe_pad;
+        match edge {
+            "" => *safe = SafeEdges { left: true, top: true, right: true, bottom: true },
+            "x" => (safe.left, safe.right) = (true, true),
+            "y" => (safe.top, safe.bottom) = (true, true),
+            "t" => safe.top = true,
+            "r" => safe.right = true,
+            "b" => safe.bottom = true,
+            "l" => safe.left = true,
+            _ => {}
+        }
+        return;
+    }
     let Some(px) = spacing(token) else {
         return;
     };
@@ -1053,12 +1121,35 @@ enum Variant {
     Focus,
 }
 
+/// `ios:`, `android:`, `mobile:` (either). Reads `state.quinn_os`, which the
+/// host sets at startup from `cx.os_type()`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum OsWhen {
+    Ios,
+    Android,
+    Mobile,
+}
+
+/// Breakpoint variants. `max-` reads "narrower than".
+const BREAKPOINTS: [(&str, f64); 7] = [
+    ("sm:", 640.0),
+    ("md:", 768.0),
+    ("lg:", 1024.0),
+    ("xl:", 1280.0),
+    ("bp800:", 800.0),
+    ("bp1120:", 1120.0),
+    ("bp1440:", 1440.0),
+];
+
 /// Tailwind defaults: sm 640, md 768, lg 1024, xl 1280.
 /// `dark:` reads `state.quinn_dark`. Not a media query.
 #[derive(Clone, Debug, PartialEq)]
 pub struct ShellWhen {
     pub dark: bool,
     pub min_width: Option<f64>,
+    /// `max-md:` and friends: `state.quinn_width` below this.
+    pub max_width: Option<f64>,
+    pub os: Option<OsWhen>,
     /// Utility after the variant prefixes, including `hover:` / `focus:`.
     pub token: String,
 }
@@ -1070,6 +1161,8 @@ pub fn shell_variants(class: &str) -> Vec<ShellWhen> {
 fn shell_token(token: &str) -> Option<ShellWhen> {
     let mut dark = false;
     let mut min_width = None;
+    let mut max_width = None;
+    let mut os = None;
     let mut rest = token;
     loop {
         if let Some(next) = rest.strip_prefix("dark:") {
@@ -1077,19 +1170,29 @@ fn shell_token(token: &str) -> Option<ShellWhen> {
             rest = next;
             continue;
         }
-        let bp = [
-            ("sm:", 640.0),
-            ("md:", 768.0),
-            ("lg:", 1024.0),
-            ("xl:", 1280.0),
-            ("bp800:", 800.0),
-            ("bp1120:", 1120.0),
-            ("bp1440:", 1440.0),
+        let platform = [
+            ("ios:", OsWhen::Ios),
+            ("android:", OsWhen::Android),
+            ("mobile:", OsWhen::Mobile),
         ];
+        if let Some((next, when)) = platform
+            .iter()
+            .find_map(|(prefix, when)| rest.strip_prefix(prefix).map(|next| (next, *when)))
+        {
+            os = Some(when);
+            rest = next;
+            continue;
+        }
         let mut hit = false;
-        for (prefix, width) in bp {
+        for (prefix, width) in BREAKPOINTS {
             if let Some(next) = rest.strip_prefix(prefix) {
                 min_width = Some(min_width.map_or(width, |have: f64| have.max(width)));
+                rest = next;
+                hit = true;
+                break;
+            }
+            if let Some(next) = rest.strip_prefix("max-").and_then(|r| r.strip_prefix(prefix)) {
+                max_width = Some(max_width.map_or(width, |have: f64| have.min(width)));
                 rest = next;
                 hit = true;
                 break;
@@ -1099,7 +1202,7 @@ fn shell_token(token: &str) -> Option<ShellWhen> {
             break;
         }
     }
-    if !dark && min_width.is_none() {
+    if !dark && min_width.is_none() && max_width.is_none() && os.is_none() {
         return None;
     }
     if rest.is_empty() {
@@ -1108,6 +1211,8 @@ fn shell_token(token: &str) -> Option<ShellWhen> {
     Some(ShellWhen {
         dark,
         min_width,
+        max_width,
+        os,
         token: rest.to_string(),
     })
 }
@@ -1552,6 +1657,34 @@ mod tests {
         let ink = parse_classes("bg-[#1c191780]");
         assert_eq!(ink.background.unwrap().a, 0x80);
         assert_eq!(ink.background.unwrap().hex_script(), "#1c191780");
+    }
+
+    #[test]
+    fn safe_area_platform_and_max_breakpoints() {
+        let bar = parse_classes("pt-safe px-safe pt-2");
+        assert!(bar.safe_pad.top && bar.safe_pad.left && bar.safe_pad.right);
+        assert!(!bar.safe_pad.bottom);
+        assert_eq!(bar.padding.top, Some(8.0));
+        let all = parse_classes("p-safe");
+        assert!(all.safe_pad.top && all.safe_pad.right && all.safe_pad.bottom && all.safe_pad.left);
+        assert!(!all.padding.any());
+        let toast = parse_classes("absolute bottom-safe bottom-4");
+        assert!(toast.safe_abs.bottom);
+        assert_eq!(toast.abs_bottom, Some(16.0));
+        let variants = shell_variants("max-bp800:flex-col mobile:max-bp800:p-4 ios:gap-2 android:gap-3");
+        assert_eq!(variants.len(), 4);
+        assert_eq!(variants[0].max_width, Some(800.0));
+        assert!(variants[0].min_width.is_none() && variants[0].os.is_none());
+        assert_eq!(variants[1].os, Some(OsWhen::Mobile));
+        assert_eq!(variants[1].max_width, Some(800.0));
+        assert_eq!(variants[1].token, "p-4");
+        assert_eq!(variants[2].os, Some(OsWhen::Ios));
+        assert_eq!(variants[3].os, Some(OsWhen::Android));
+        // Variant tokens stay out of the base style, and the checker knows them.
+        assert_eq!(parse_classes("max-bp800:flex-col mobile:p-4").flow, None);
+        assert!(unknown_classes("pt-safe top-safe max-md:flex-col ios:p-2 mobile:pb-safe").is_empty());
+        // `max-w-*` is still the width bound, not a variant.
+        assert!(shell_variants("max-w-[280px]").is_empty());
     }
 
     #[test]

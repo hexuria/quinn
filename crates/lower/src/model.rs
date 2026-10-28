@@ -362,6 +362,8 @@ pub struct Model {
     pub signals: Vec<Signal>,
     pub frame: Option<String>,
     pub root_class: String,
+    /// The root `<div on:keydown>`. The root is the host, not a node.
+    pub root_keydown: Option<Act>,
     pub nodes: Vec<ViewNode>,
     /// Emit the keyed-count helpers.
     pub keyed: bool,

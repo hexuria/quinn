@@ -64,6 +64,10 @@ fn Showcase() -> impl IntoView {
         "Call the joiner before Thursday. Leave the island where it is.".to_string(),
     );
     let (nav_open, set_nav_open) = signal(false);
+    // Below 800 the library list is the first screen and a page is pushed
+    // over it. `at_root` and `page_open` are the two sides of that stack.
+    let (at_root, set_at_root) = signal(true);
+    let (page_open, set_page_open) = signal(false);
     let (list_open, set_list_open) = signal(false);
     let (info_open, set_info_open) = signal(false);
     let (density_compact, set_density_compact) = signal(false);
@@ -99,38 +103,58 @@ fn Showcase() -> impl IntoView {
                     set_info_open.set(false);
                 } else if toast.get() {
                     set_toast.set(false);
+                } else if page_open.get() {
+                    set_page_open.set(false);
+                    set_at_root.set(true);
                 }
             }
         }>
-            <div class="flex flex-row items-center h-toolbar px-4 gap-2 bg-surface dark:bg-surface">
-                <Button variant="ghost" on:click=move |_| { set_nav_open.update(|value| *value = !*value); }>"Library"</Button>
-                <Show when=move || notes.get()>
-                    <span class="text-section text-primary dark:text-primary">"Notes"</span>
-                </Show>
-                <Show when=move || table.get()>
-                    <span class="text-section text-primary dark:text-primary">"Table"</span>
-                </Show>
-                <Show when=move || settings.get()>
-                    <span class="text-section text-primary dark:text-primary">"Settings"</span>
-                </Show>
-                <Show when=move || gallery.get()>
-                    <span class="text-section text-primary dark:text-primary">"Gallery"</span>
-                </Show>
-                <div class="flex-1"></div>
-                <Search placeholder="Search" bind:value=query />
-                <div class="flex-1"></div>
-                <Button variant="ghost" on:click=move |_| { toggle_theme(); set_dark_on.update(|value| *value = !*value); set_light_on.update(|value| *value = !*value); }>"Theme"</Button>
-                <Button on:click=move |_| { set_sheet.set(true); }>"New note"</Button>
+            <div class="flex flex-col pt-safe px-safe bg-surface dark:bg-surface">
+                <div class="flex flex-row items-center h-toolbar px-4 gap-2">
+                    <div class="flex flex-row w-fit h-fit max-bp800:hidden">
+                        <Button variant="ghost" on:click=move |_| { set_nav_open.update(|value| *value = !*value); }>"Library"</Button>
+                    </div>
+                    <div class="flex flex-row w-fit h-fit bp800:hidden" class:hidden=move || at_root.get()>
+                        <Button variant="ghost" on:click=move |_| { set_page_open.set(false); set_at_root.set(true); }>"‹ Library"</Button>
+                    </div>
+                    <div class="flex flex-row w-fit h-fit bp800:hidden" class:hidden=move || page_open.get()>
+                        <span class="text-section text-primary dark:text-primary">"Library"</span>
+                    </div>
+                    <div class="flex flex-row w-fit h-fit" class:max-bp800:hidden=move || at_root.get()>
+                        <Show when=move || notes.get()>
+                            <span class="text-section text-primary dark:text-primary">"Notes"</span>
+                        </Show>
+                        <Show when=move || table.get()>
+                            <span class="text-section text-primary dark:text-primary">"Table"</span>
+                        </Show>
+                        <Show when=move || settings.get()>
+                            <span class="text-section text-primary dark:text-primary">"Settings"</span>
+                        </Show>
+                        <Show when=move || gallery.get()>
+                            <span class="text-section text-primary dark:text-primary">"Gallery"</span>
+                        </Show>
+                    </div>
+                    <div class="flex-1"></div>
+                    <div class="flex flex-row w-fit h-fit max-bp800:hidden">
+                        <Search placeholder="Search" bind:value=query />
+                    </div>
+                    <div class="flex-1 max-bp800:hidden"></div>
+                    <Button variant="ghost" on:click=move |_| { toggle_theme(); set_dark_on.update(|value| *value = !*value); set_light_on.update(|value| *value = !*value); }>"Theme"</Button>
+                    <Button on:click=move |_| { set_sheet.set(true); }>"New note"</Button>
+                </div>
+                <div class="flex flex-col w-full px-4 pb-2 bp800:hidden">
+                    <Search placeholder="Search" class="w-full" bind:value=query />
+                </div>
             </div>
             <div class="h-[1px] bg-divider dark:bg-divider"></div>
-            <div class="flex flex-row flex-1 items-stretch">
-                <div class="flex flex-col h-full bg-subtle overflow-hidden w-[0px] bp800:w-[64px] bp1120:w-[224px] bp1120:min-w-[200px] bp1120:max-w-[280px] dark:bg-subtle">
+            <div class="flex flex-row flex-1 items-stretch px-safe">
+                <div class="flex flex-col h-full bg-subtle overflow-hidden w-full bp800:w-[64px] bp1120:w-[224px] bp1120:min-w-[200px] bp1120:max-w-[280px] dark:bg-subtle" class:max-bp800:hidden=move || page_open.get()>
                     <div class="flex flex-col gap-1 py-3 bp1120:px-2">
                         <span class="text-caption text-secondary px-3 w-[0px] h-[0px] bp1120:w-[160px] bp1120:h-fit dark:text-secondary">"Library"</span>
-                        <NavItem icon="notes" selected=move || notes.get() on:click=move |_| { set_notes.set(true); set_table.set(false); set_settings.set(false); set_gallery.set(false); set_nav_open.set(false); }>"Notes"</NavItem>
-                        <NavItem icon="table" selected=move || table.get() on:click=move |_| { set_notes.set(false); set_table.set(true); set_settings.set(false); set_gallery.set(false); set_nav_open.set(false); }>"Table"</NavItem>
-                        <NavItem icon="settings" selected=move || settings.get() on:click=move |_| { set_notes.set(false); set_table.set(false); set_settings.set(true); set_gallery.set(false); set_nav_open.set(false); }>"Settings"</NavItem>
-                        <NavItem icon="gallery" selected=move || gallery.get() on:click=move |_| { set_notes.set(false); set_table.set(false); set_settings.set(false); set_gallery.set(true); set_nav_open.set(false); }>"Gallery"</NavItem>
+                        <NavItem icon="notes" selected=move || notes.get() on:click=move |_| { set_notes.set(true); set_table.set(false); set_settings.set(false); set_gallery.set(false); set_nav_open.set(false); set_page_open.set(true); set_at_root.set(false); }>"Notes"</NavItem>
+                        <NavItem icon="table" selected=move || table.get() on:click=move |_| { set_notes.set(false); set_table.set(true); set_settings.set(false); set_gallery.set(false); set_nav_open.set(false); set_page_open.set(true); set_at_root.set(false); }>"Table"</NavItem>
+                        <NavItem icon="settings" selected=move || settings.get() on:click=move |_| { set_notes.set(false); set_table.set(false); set_settings.set(true); set_gallery.set(false); set_nav_open.set(false); set_page_open.set(true); set_at_root.set(false); }>"Settings"</NavItem>
+                        <NavItem icon="gallery" selected=move || gallery.get() on:click=move |_| { set_notes.set(false); set_table.set(false); set_settings.set(false); set_gallery.set(true); set_nav_open.set(false); set_page_open.set(true); set_at_root.set(false); }>"Gallery"</NavItem>
                     </div>
                 </div>
                 <Show when=move || notes.get()>
@@ -171,7 +195,7 @@ fn Showcase() -> impl IntoView {
                     </div>
                 </Show>
                 <Show when=move || notes.get()>
-                    <div class="flex flex-col flex-1 h-full min-w-0 bp800:min-w-[480px] overflow-y-auto bg-canvas px-6 py-6 dark:bg-canvas">
+                    <div class="flex flex-col flex-1 h-full min-w-0 bp800:min-w-[480px] overflow-y-auto bg-canvas px-6 py-6 pb-safe dark:bg-canvas" class:max-bp800:hidden=move || at_root.get()>
                         <div class="flex flex-col w-full max-w-[640px] gap-6">
                             <div class="flex flex-col gap-2">
                                 <span class="text-page text-primary w-full dark:text-primary">{note_title}</span>
@@ -218,7 +242,7 @@ fn Showcase() -> impl IntoView {
                     </div>
                 </Show>
                 <Show when=move || table.get()>
-                    <div class="flex flex-col flex-1 h-full min-w-0 bp800:min-w-[480px] overflow-y-auto bg-canvas p-6 gap-6 dark:bg-canvas">
+                    <div class="flex flex-col flex-1 h-full min-w-0 bp800:min-w-[480px] overflow-y-auto bg-canvas p-6 pb-safe gap-6 dark:bg-canvas" class:max-bp800:hidden=move || at_root.get()>
                         <span class="text-page text-primary dark:text-primary">"All notes"</span>
                         <Table>
                             <div class="flex flex-row items-center h-[36px] px-3">
@@ -246,7 +270,7 @@ fn Showcase() -> impl IntoView {
                     </div>
                 </Show>
                 <Show when=move || settings.get()>
-                    <div class="flex flex-col flex-1 h-full min-w-0 bp800:min-w-[480px] overflow-y-auto bg-canvas p-6 gap-8 dark:bg-canvas">
+                    <div class="flex flex-col flex-1 h-full min-w-0 bp800:min-w-[480px] overflow-y-auto bg-canvas p-6 pb-safe gap-8 dark:bg-canvas" class:max-bp800:hidden=move || at_root.get()>
                         <span class="text-page text-primary dark:text-primary">"Settings"</span>
                         <div class="flex flex-col bp1120:flex-row gap-6">
                             <div class="flex flex-col gap-6 w-full bp1120:w-[280px]">
@@ -331,7 +355,7 @@ fn Showcase() -> impl IntoView {
                     </div>
                 </Show>
                 <Show when=move || gallery.get()>
-                    <div class="flex flex-col flex-1 h-full min-w-0 bp800:min-w-[480px] overflow-y-auto bg-canvas p-6 gap-8 dark:bg-canvas">
+                    <div class="flex flex-col flex-1 h-full min-w-0 bp800:min-w-[480px] overflow-y-auto bg-canvas p-6 pb-safe gap-8 dark:bg-canvas" class:max-bp800:hidden=move || at_root.get()>
                         <div class="flex flex-col w-full max-w-[880px] gap-4">
                             <div class="flex flex-col gap-2">
                                 <span class="text-page text-primary dark:text-primary">"Component reference"</span>
@@ -636,7 +660,7 @@ fn Showcase() -> impl IntoView {
                 </Overlay>
             </Show>
             <Show when=move || nav_open.get()>
-                <Panel class="absolute left-[8px] top-[64px] z-50 gap-1 w-[224px] p-2">
+                <Panel class="absolute left-[8px] top-safe top-[64px] z-50 gap-1 w-[224px] p-2">
                     <MenuItem on:click=move |_| { set_notes.set(true); set_table.set(false); set_settings.set(false); set_gallery.set(false); set_nav_open.set(false); }>"Notes"</MenuItem>
                     <MenuItem on:click=move |_| { set_notes.set(false); set_table.set(true); set_settings.set(false); set_gallery.set(false); set_nav_open.set(false); }>"Table"</MenuItem>
                     <MenuItem on:click=move |_| { set_notes.set(false); set_table.set(false); set_settings.set(true); set_gallery.set(false); set_nav_open.set(false); }>"Settings"</MenuItem>
@@ -647,7 +671,7 @@ fn Showcase() -> impl IntoView {
                 <Show when=move || sheet.get()>
                     <div class="absolute inset-0">
                         <div class="absolute inset-0 z-40 bg-scrim dark:bg-scrim"></div>
-                        <div class="absolute inset-0 z-50 flex flex-col items-center justify-center p-6">
+                        <div class="absolute inset-0 z-50 flex flex-col items-center justify-center p-safe p-6">
                             <Panel class="gap-4 w-[480px] max-w-full p-6">
                                 <span class="text-section text-primary dark:text-primary">"New note"</span>
                                 <div class="flex flex-col gap-2 w-full max-h-[240px] overflow-y-auto">
@@ -667,7 +691,7 @@ fn Showcase() -> impl IntoView {
                 <Show when=move || alert.get()>
                     <div class="absolute inset-0">
                         <div class="absolute inset-0 z-40 bg-scrim dark:bg-scrim"></div>
-                        <div class="absolute inset-0 z-50 flex flex-col items-center justify-center p-6">
+                        <div class="absolute inset-0 z-50 flex flex-col items-center justify-center p-safe p-6">
                             <Panel class="gap-4 w-[400px] max-w-full p-6">
                                 <span class="text-section text-primary dark:text-primary">"Delete this note?"</span>
                                 <span class="text-body text-secondary w-full dark:text-secondary">"The note moves to Recently Deleted. You can recover it for 30 days."</span>

@@ -54,7 +54,7 @@ fn bind_slot_frame(flow: FlowSpec, style: &Style, class: &str) -> SlotFrame {
     let mut wide: Option<SlotWide> = None;
     let mut merged = style.clone();
     for when in shell_variants(class) {
-        let (false, Some(min_width)) = (when.dark, when.min_width) else {
+        let (false, Some(min_width), None, None) = (when.dark, when.min_width, when.max_width, when.os) else {
             continue;
         };
         merged.merge_from(&parse_classes(&when.token));
@@ -117,7 +117,7 @@ pub fn emit_rust(model: &Model, shell: &Shell) -> String {
 "#,
     );
     body.push_str(&emit_shell_fns(shell));
-    body.push_str(&emit_keydown(&model.nodes));
+    body.push_str(&emit_keydown(model));
     body.push_str(&emit_job_fns(model));
     body.push_str(&emit_ctx(model));
     if let Some(signal) = &model.frame {
@@ -670,7 +670,11 @@ fn emit_retain(model: &Model) -> String {
 
 /// `mod.quinn_keydown(key)`, from the first `on:keydown` in the view. The
 /// host calls it for Escape.
-fn emit_keydown(nodes: &[ViewNode]) -> String {
+///
+/// `mod.quinn_back()` runs the same handler for Android's system Back and
+/// returns 1 when it wrote state, so the host can mark Back handled. Every
+/// write to `state` sets `state.quinn_key_hit`.
+fn emit_keydown(model: &Model) -> String {
     fn find(nodes: &[ViewNode]) -> Option<&Act> {
         nodes.iter().find_map(|node| match node {
             ViewNode::El(el) => el.keydown.as_ref().or_else(|| find(&el.children)),
@@ -678,26 +682,51 @@ fn emit_keydown(nodes: &[ViewNode]) -> String {
             _ => None,
         })
     }
-    let body = match find(nodes) {
-        Some(act) => emit_act(act, None, "        "),
+    let body: String = match model.root_keydown.as_ref().or_else(|| find(&model.nodes)) {
+        Some(act) => emit_act(act, None, "        ")
+            .lines()
+            .map(|line| {
+                let indent = &line[..line.len() - line.trim_start().len()];
+                if line.trim_start().starts_with("state.") {
+                    format!("{line}\n{indent}state.quinn_key_hit = 1\n")
+                } else {
+                    format!("{line}\n")
+                }
+            })
+            .collect(),
         None => "            0\n".into(),
     };
-    format!("        fn quinn_keydown(quinn_key) {{\n{body}        }}\n        mod.quinn_keydown = quinn_keydown\n")
+    format!(
+        "        fn quinn_keydown(quinn_key) {{\n{body}        }}\n        mod.quinn_keydown = quinn_keydown\n        fn quinn_back() {{\n            state.quinn_key_hit = 0\n            quinn_keydown(\"Escape\")\n            return state.quinn_key_hit\n        }}\n        mod.quinn_back = quinn_back\n"
+    )
 }
 
 fn emit_shell_fns(shell: &Shell) -> String {
     let _ = shell;
-    r#"        fn quinn_apply_width(w) {
+    r#"        fn quinn_apply_geom(w, t, r, b, l) {
             state.quinn_width = w
+            state.quinn_safe_top = t
+            state.quinn_safe_right = r
+            state.quinn_safe_bottom = b
+            state.quinn_safe_left = l
             ui.host.render()
         }
-        fn quinn_skip_width() { 0 }
-        fn quinn_set_width(w) {
-            if state.quinn_width != w { quinn_apply_width(w) } else { quinn_skip_width() }
+        fn quinn_skip_geom() { 0 }
+        fn quinn_set_geom(w, t, r, b, l) {
+            if state.quinn_width != w || state.quinn_safe_top != t || state.quinn_safe_right != r || state.quinn_safe_bottom != b || state.quinn_safe_left != l { quinn_apply_geom(w, t, r, b, l) } else { quinn_skip_geom() }
         }
+        fn quinn_touch_density() { state.quinn_density = 2 }
+        fn quinn_keep_density() { 0 }
+        fn quinn_set_os(os) {
+            state.quinn_os = os
+            if os >= 1 { quinn_touch_density() } else { quinn_keep_density() }
+        }
+        fn quinn_dark_now() { return state.quinn_dark }
         fn quinn_theme_on() { state.quinn_dark = 1 }
         fn quinn_theme_off() { state.quinn_dark = 0 }
-        mod.quinn_set_width = quinn_set_width
+        mod.quinn_set_geom = quinn_set_geom
+        mod.quinn_set_os = quinn_set_os
+        mod.quinn_dark_now = quinn_dark_now
 "#
     .to_string()
 }
@@ -1036,6 +1065,11 @@ fn seed_lines(model: &Model, shell: &Shell) -> Vec<String> {
         lines.push(format!("{flag}: 0"));
     }
     lines.push(format!("quinn_width: {}.", shell.width));
+    for side in ["top", "right", "bottom", "left"] {
+        lines.push(format!("quinn_safe_{side}: 0."));
+    }
+    lines.push("quinn_os: 0".into());
+    lines.push("quinn_key_hit: 0".into());
     lines.push("quinn_dark: 0".into());
     lines.push("quinn_density: 1".into());
     if !model.jobs.is_empty() {
@@ -3019,15 +3053,16 @@ fn abs_shell(style: &Style, indent: usize, inner: String) -> String {
             script_num(y)
         )
     };
-    let padding = if left == 0.0 && top == 0.0 && right == 0.0 && bottom == 0.0 {
+    let safe = style.safe_abs;
+    let padding = if left == 0.0 && top == 0.0 && right == 0.0 && bottom == 0.0 && !safe.any() {
         String::new()
     } else {
         format!(
             "{pad}    padding: Inset{{left: {} top: {} right: {} bottom: {}}}\n",
-            script_num(left),
-            script_num(top),
-            script_num(right),
-            script_num(bottom)
+            safe_side(safe.left, "left", &script_num(left)),
+            safe_side(safe.top, "top", &script_num(top)),
+            safe_side(safe.right, "right", &script_num(right)),
+            safe_side(safe.bottom, "bottom", &script_num(bottom))
         )
     };
     // `show_bg: false` so the positioning shell does not paint over the page.
@@ -3488,6 +3523,15 @@ fn shell_cond(when: &quinn_styles::ShellWhen) -> String {
     if let Some(width) = when.min_width {
         parts.push(format!("state.quinn_width >= {}", script_num(width)));
     }
+    if let Some(width) = when.max_width {
+        parts.push(format!("state.quinn_width < {}", script_num(width)));
+    }
+    match when.os {
+        Some(quinn_styles::OsWhen::Ios) => parts.push("state.quinn_os == 1".into()),
+        Some(quinn_styles::OsWhen::Android) => parts.push("state.quinn_os == 2".into()),
+        Some(quinn_styles::OsWhen::Mobile) => parts.push("state.quinn_os >= 1".into()),
+        None => {}
+    }
     if parts.is_empty() {
         return "true".into();
     }
@@ -3584,10 +3628,20 @@ fn style_lines(
     }
     for when in &el.class_when {
         let cond = class_cond(&when.signal, row);
+        // `class:max-bp800:hidden=move || x.get()`: the signal and the shell
+        // condition both have to hold.
+        let (token, dark, cond) = match shell_variants(&when.token).pop() {
+            Some(mut shell) => {
+                let dark = when.dark || shell.dark;
+                shell.dark = false;
+                (shell.token.clone(), dark, format!("({cond}) && {}", shell_cond(&shell)))
+            }
+            None => (when.token.clone(), when.dark, cond),
+        };
         let stretch_self = stretch && el.class.contains("self-stretch");
-        if when.dark {
+        if dark {
             let mut on = prepared_style(el, tag, parent, stretch);
-            on.merge_from(&parse_classes_in(&when.token, true));
+            on.merge_from(&parse_classes_in(&token, true));
             tune_style(&mut on, parent, stretch_self);
             let on_map = prop_map(&on, tag);
             let cond = format!("({cond}) && state.quinn_dark == 1");
@@ -3595,9 +3649,9 @@ fn style_lines(
             continue;
         }
         let mut light = prepared_style(el, tag, parent, stretch);
-        light.merge_from(&parse_classes_in(&when.token, false));
+        light.merge_from(&parse_classes_in(&token, false));
         let mut dark = prepared_style(el, tag, parent, stretch);
-        dark.merge_from(&parse_classes_in(&when.token, true));
+        dark.merge_from(&parse_classes_in(&token, true));
         tune_style(&mut light, parent, stretch_self);
         tune_style(&mut dark, parent, stretch_self);
         let light_map = prop_map(&light, tag);
@@ -3752,7 +3806,7 @@ fn row_stretch_at(class: &str) -> Option<f64> {
         return None;
     }
     shell_variants(class).into_iter().find_map(|when| {
-        if when.token == "flex-row" {
+        if when.token == "flex-row" && when.max_width.is_none() && when.os.is_none() {
             when.min_width
         } else {
             None
@@ -4016,12 +4070,15 @@ fn push_clip(style: &Style, lines: &mut Vec<(String, String)>) {
     }
 }
 
+/// A finger drags the content on iOS and Android. On the desktop a drag on
+/// the content is a press or a text selection, and the wheel scrolls.
 fn push_scroll(style: &Style, lines: &mut Vec<(String, String)>) {
     if style.scroll_x || style.scroll_y {
+        let touch = "if state.quinn_os >= 1 { true } else { false }";
         lines.push((
             "scroll_bars".into(),
             format!(
-                "ScrollBars{{show_scroll_x: {} show_scroll_y: {}}}",
+                "ScrollBars{{show_scroll_x: {} show_scroll_y: {} scroll_bar_x.drag_scrolling: {touch} scroll_bar_y.drag_scrolling: {touch}}}",
                 if style.scroll_x { "true" } else { "false" },
                 if style.scroll_y { "true" } else { "false" }
             ),
@@ -4031,6 +4088,9 @@ fn push_scroll(style: &Style, lines: &mut Vec<(String, String)>) {
 
 fn walk_pairs(style: &Style) -> Vec<(String, String)> {
     let mut lines = Vec::new();
+    if style.hidden {
+        lines.push(("visible".into(), "false".into()));
+    }
     if let Some(size) = style.width {
         lines.push(("width".into(), size_script(size)));
     }
@@ -4419,7 +4479,35 @@ fn size_script(size: SizeSpec) -> String {
     }
 }
 
+/// `state.quinn_safe_<side>` plus `base`, or `base` alone.
+fn safe_side(safe: bool, side: &str, base: &str) -> String {
+    if safe && base.contains(' ') {
+        format!("(state.quinn_safe_{side} + ({base}))")
+    } else if safe {
+        format!("(state.quinn_safe_{side} + {base})")
+    } else {
+        base.to_string()
+    }
+}
+
 fn padding_script(style: &Style) -> Option<String> {
+    let safe = style.safe_pad;
+    if safe.any() {
+        let (left, top, right, bottom) = style.padding.resolve();
+        let (left, right) = if style.control_pad {
+            let x = density_height(8.0, 12.0, 16.0);
+            (x.clone(), x)
+        } else {
+            (script_num(left), script_num(right))
+        };
+        return Some(format!(
+            "Inset{{left: {} top: {} right: {} bottom: {}}}",
+            safe_side(safe.left, "left", &left),
+            safe_side(safe.top, "top", &script_num(top)),
+            safe_side(safe.right, "right", &right),
+            safe_side(safe.bottom, "bottom", &script_num(bottom))
+        ));
+    }
     if style.control_pad {
         let (_, top, _, bottom) = style.padding.resolve();
         let x = density_height(8.0, 12.0, 16.0);
@@ -4527,6 +4615,7 @@ fn prop_fallback(key: &str, base: &Style) -> String {
             .map(bound_script)
             .unwrap_or_else(|| "\"100%\"".into()),
         "width" | "height" => "Fit".into(),
+        "visible" => "true".into(),
         "flow" => "Down".into(),
         "distribute" => "Distribute.Start".into(),
         "align" => "Align{x: 0. y: 0.}".into(),

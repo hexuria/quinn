@@ -15,8 +15,8 @@ mod widgets;
 pub use control::drive_control;
 pub use host::{
     boot_script, census_host, drive_shell, eval_hot_file, load_bundled_view, load_hot_view,
-    load_hot_view_with, on_actions, reclaim_script_heap, startup, with_current_cx, with_cx,
-    WidgetCensus,
+    load_hot_view_with, load_view_with, on_actions, reclaim_script_heap, startup, with_current_cx,
+    with_cx, WidgetCensus,
 };
 pub use makepad_widgets;
 pub use probe::{

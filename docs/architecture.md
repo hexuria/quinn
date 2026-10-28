@@ -68,7 +68,7 @@ The script examples do not have that owner. Unmount is "the widget is not return
 
 Each example's `src/main.rs` is an `app_main!` shell. `script_mod` calls `load_hot_view`, which lowers `view.rs` on the first eval and `eval`s `hot/ui.rs`. The host is the `RoundedView` named `host`. `boot_script` checks that view exists and installs the frame probe. `script_eval!` in `main.rs` would make Makepad's extractor reject `hot/ui.rs` if it lived in the same file; the evals that must stay in Rust are in `examples/counter/src/ops.rs`, or they call `mod.*` from `main.rs` only when that file is not the watched script.
 
-The showcase Android target does not call `load_hot_view`. `load_bundled_view` lowers the `include_str!` of `view.rs` in memory, because the APK has no host tree and `eval_hot_file` would panic on the missing path. Desktop `showcase` still uses `load_hot_view_with`. See [ANDROID.md](ANDROID.md).
+The showcase calls `load_view_with`. Where `view.rs` is missing (an APK or an iOS device has no host tree, and `eval_hot_file` would panic on the missing path), it calls `load_bundled_view`, which lowers the `include_str!` of `view.rs` in memory. Otherwise it is `load_hot_view_with`. See [ANDROID.md](ANDROID.md).
 
 ## What is intentionally not a second system
 

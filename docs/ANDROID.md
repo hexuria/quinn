@@ -6,9 +6,9 @@ Run on 27 Oct 2026, about 11:28 AM Asia/Manila. Pixel emulator, Android 15 (API 
 
 ## What the phone runs
 
-`examples/showcase/src/main.rs` calls `quinn::load_bundled_view` when `target_os` is `android`. That embeds `examples/showcase/view.rs` and `quinn-ui`'s `components.rs` with `include_str!`, lowers them in memory, and evals the script. The seed window is 1080×1920, so `state.quinn_width` starts at 1080. `sm:` / `md:` / `lg:` apply. `xl:` (1280) does not, and Library opens a menu (Notes, Table, Settings, Gallery) instead of the desktop sidebar.
+`examples/showcase/src/main.rs` calls `quinn::load_view_with` with `include_str!("../view.rs")` and `quinn-ui`'s `components.rs`. On a phone `view.rs` is not on disk, so it calls `load_bundled_view`, which lowers them in memory and evals the script. At startup the host replaces the 1440×900 seed with the screen's width and safe-area insets, so a phone gets the compact layout ([TESTING_ON_MOBILE.md](TESTING_ON_MOBILE.md)).
 
-On every other target the same function is `load_hot_view_with`. It still reads `view.rs`, writes `hot/ui.rs`, and watches that file when the process was started with `--hot`. The seed window stays 1440×900.
+Where `view.rs` can be read (the desktop, the iOS simulator), the same call is `load_hot_view_with`. It reads `view.rs`, writes `hot/ui.rs`, and watches that file when the process was started with `--hot`.
 
 `load_hot_view` is what `counter`, `conditional`, `keyed-list`, `form`, `retain`, `tailwind-gallery`, `app-shell`, and `async-dashboard` call. None of those embed `view.rs`. An APK of one of them reaches `eval_hot_file`, does not find `CARGO_MANIFEST_DIR` on the device, and panics.
 

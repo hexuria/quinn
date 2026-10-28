@@ -601,7 +601,10 @@ mod tests {
             ("examples/showcase/view.rs", "QSwitch {"),
             ("examples/showcase/view.rs", "QCheckbox {"),
             ("examples/showcase/view.rs", "QNavItem {"),
-            ("examples/showcase/view.rs", "label_walk: if state.quinn_width >= 1120. { Walk{width: Fill height: Fit} }"),
+            ("examples/showcase/view.rs", "label_walk: if state.quinn_width < 800. { Walk{width: Fill height: Fit} }"),
+            ("examples/showcase/view.rs", "if state.quinn_width >= 1120. { Walk{width: Fill height: Fit} } else { Walk{width: Fit height: Fit} }"),
+            ("examples/showcase/view.rs", "visible: if (state.at_root) && state.quinn_width < 800. { false } else { true }"),
+            ("examples/showcase/view.rs", "padding: Inset{left: (state.quinn_safe_left + 0.) top: (state.quinn_safe_top + 0.)"),
             ("examples/showcase/view.rs", "draw_icon.svg: crate_resource(\"quinn_makepad:resources/icons/notes.svg\")"),
         ];
         for (rel, needle) in cases {
@@ -975,7 +978,7 @@ mod tests {
             "width: Fit",
             "clip_x: true",
             "clip_y: true",
-            "ScrollBars{show_scroll_x: true show_scroll_y: true}",
+            "ScrollBars{show_scroll_x: true show_scroll_y: true scroll_bar_x.drag_scrolling: if state.quinn_os >= 1 { true } else { false }",
             "Inter.ttf",
             "weight: 700.",
             "weight: 600.",
@@ -1456,6 +1459,52 @@ mod tests {
             file.contains("align: if state.quinn_width >= 1120. { Align{x: 0. y: 0.} }"),
             "{file}"
         );
+    }
+
+    /// Safe-area padding reads the host's insets, a `max-` breakpoint reads
+    /// "narrower than", a platform variant reads `quinn_os`, and Android
+    /// Back runs the Escape handler and reports whether it wrote state.
+    #[test]
+    fn mobile_safe_area_platform_and_back() {
+        let src = r#"
+            #[component]
+            fn Phone() -> impl IntoView {
+                let (open, set_open) = signal(true);
+                view! {
+                    <div class="flex flex-col" on:keydown=move |ev| {
+                        if ev.key() == "Escape" {
+                            if open.get() {
+                                set_open.set(false);
+                            }
+                        }
+                    }>
+                        <div class="flex flex-row pt-safe px-safe pt-2 max-bp800:flex-col mobile:gap-4">
+                            <span>"Bar"</span>
+                        </div>
+                        <div class="absolute bottom-safe bottom-4 left-4">
+                            <span>"Toast"</span>
+                        </div>
+                    </div>
+                }
+            }
+        "#;
+        let file = lower_file(src, shell()).unwrap();
+        for needle in [
+            "padding: Inset{left: (state.quinn_safe_left + 0.) top: (state.quinn_safe_top + 8.) right: (state.quinn_safe_right + 0.) bottom: 0.}",
+            "if state.quinn_width < 800. { Down }",
+            "if state.quinn_os >= 1 {",
+            "bottom: (state.quinn_safe_bottom + 16.)",
+            "quinn_safe_top: 0.",
+            "quinn_os: 0",
+            "fn quinn_set_geom(w, t, r, b, l)",
+            "fn quinn_set_os(os)",
+            "if quinn_key == \"Escape\"",
+            "state.open = false\n            state.quinn_key_hit = 1",
+            "fn quinn_back() {",
+            "mod.quinn_back = quinn_back",
+        ] {
+            assert!(file.contains(needle), "missing {needle:?} in\n{file}");
+        }
     }
 
     const SORTED: &str = r#"

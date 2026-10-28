@@ -76,6 +76,7 @@ impl Sim {
         }
         state.insert("quinn_dark".into(), 0);
         state.insert("quinn_density".into(), 1);
+        state.insert("quinn_os".into(), 0);
         for job in &model.jobs {
             let phase = match job.kind {
                 JobKind::Action => "idle",

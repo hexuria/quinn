@@ -1,5 +1,7 @@
 # Testing on iOS and Android
 
+How to lay out one view for phones and desktops is [MULTI_PLATFORM.md](MULTI_PLATFORM.md).
+
 `cargo-makepad` builds and installs the examples on a simulator, an emulator, or a device. Install it at the Makepad revision this workspace pins (the `rev` in `crates/makepad/Cargo.toml`):
 
 ```bash

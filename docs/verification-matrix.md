@@ -48,7 +48,29 @@ Relative luminance, WCAG 2.2. Normal text needs 4.5:1. A control boundary needs 
 | 800×600 | Light | 64-wide rail. Main column keeps the note. |
 | 640×700 | Light | Nav width 0. Note fills the width and wraps. Toolbar clips Theme and New note. Library in the toolbar opens the drawer. |
 
-Touch density (`set_density(2)`) was captured at 1440 in `docs/images/notes-touch.png`. Standard is density 1. Compact (0) is implemented by `set_density` and is not in the showcase UI.
+Touch density (`set_density(2)`) was captured at 1440 in [notes-touch.png](images/notes-touch.png). Standard is density 1. Compact (0) is implemented by `set_density` and is not in the showcase UI.
+
+## Shots
+
+`docs/images/audit/` is the ff86f73 showcase. `docs/images/before/` is the pass linked from the README. The files below are this design system. Pixel sizes are the PNG dimensions.
+
+| What | File | Pixels |
+| --- | --- | --- |
+| Notes, light | [notes-light.png](images/notes-light.png) | 1440×900 |
+| Notes, dark | [notes-dark.png](images/notes-dark.png) | 1440×900 |
+| Notes, 1024-wide | [notes-light-1024.png](images/notes-light-1024.png) | 1024×768 |
+| Notes, 800-wide | [notes-light-800.png](images/notes-light-800.png) | 800×600 |
+| Notes, 640-wide | [notes-light-640.png](images/notes-light-640.png) | 640×700 |
+| Notes, touch density | [notes-touch.png](images/notes-touch.png) | 1440×900 |
+| Settings, light | [settings-light.png](images/settings-light.png) | 1440×900 |
+| Settings, dark | [settings-dark.png](images/settings-dark.png) | 1440×900 |
+| Table, light | [table-light.png](images/table-light.png) | 1440×900 |
+| Table, dark | [table-dark.png](images/table-dark.png) | 1440×900 |
+| Dialog | [dialog-light.png](images/dialog-light.png) | 1440×900 |
+| Toast, dark | [toast-dark.png](images/toast-dark.png) | 1440×900 |
+| Gallery | [gallery-light.png](images/gallery-light.png) | 1440×900 |
+
+There is no separate light toast file for this pass. `docs/images/audit/toast-light.png` is the ff86f73 shot.
 
 ## Controls that were exercised
 

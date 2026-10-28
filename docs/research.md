@@ -11,7 +11,7 @@ Pins were taken on 2026-10-24 from the default branch each project publishes as 
 
 `rstml` 0.13.1 on crates.io has no `repository` field. Its crate is not a Cargo workspace member of the git tree (`rstml/` sits beside `examples/` and `rstml-control-flow`, and the workspace members list does not include it), so the framework depends on `rstml = "=0.13.1"` and records the tag commit above. Leptos pins the same crates.io version (`leptos/Cargo.toml`).
 
-Rust is pinned to **1.99.0** (`rustc 1.99.0 b940084d7 2026-09-28`), not `stable` (stable was 1.99.1 when this was written).
+Rust is pinned to 1.99.0 (`rustc 1.99.0 b940084d7 2026-09-28`), not `stable` (stable was 1.99.1 when this was written).
 
 ## Probe A — Makepad
 
@@ -27,17 +27,15 @@ Makepad 2.0 / Splash is the current `dev` tree. `live_design!` is archived (`doc
 - `WidgetRef::set_text`, `text`, `redraw`. `Label::set_text_color` no-ops when the color is unchanged. `Label.walk` and `Label.draw_text` are public. `Button` draw fields are private; `ButtonRef::clicked` and `TextInputRef::changed` / `set_text` / `set_empty_text` are public. `TextInput::set_text` clears undo history, so identical writes must be skipped.
 - `View.layout`, `View.walk`, `View.show_bg`, `View.new_batch` are public. `RoundedView` is a script prototype of `View` (`widgets/core/src/view_ui.rs`) with a shader that has `color`, `border_size`, `border_radius`, `border_color`. Plain `DrawQuad` has no color.
 - `Cx::redraw_all`, `Cx::quit`, `MatchEvent`. Linux paints with Vulkan if a device answers, else OpenGL ES (`platform/Cargo.toml`, `MAKEPAD_GPU`). `new_batch: true` is required when a background would otherwise cover text (`splash.md`).
-- There is **no** public remove or reorder method. Removal is "drop the `WidgetRef` and delete it from `View.children`". The tree entry is weak and dies with the last strong ref.
+- There is no public remove or reorder method. Removal is "drop the `WidgetRef` and delete it from `View.children`". The tree entry is weak and dies with the last strong ref.
 
-`script_apply_eval` (`ScriptApply` in `traits.rs`) applies `Apply::Eval`, which does **not** rebuild children (`View::on_after_apply` skips eval). Creation must be `Apply::New`. Updates can be field writes or `script_apply_eval`.
+`script_apply_eval` (`ScriptApply` in `traits.rs`) applies `Apply::Eval`, which does not rebuild children (`View::on_after_apply` skips eval). Creation must be `Apply::New`. Updates can be field writes or `script_apply_eval`.
 
 `libs/html` and `widgets/families/rich_text` parse HTML into rich text. They are not a widget tree and are not used here.
 
 No `ra_jit` / `ra-jit` symbol exists in the tree.
 
-The executable probe is `probes/widget-lifecycle`. It performs create, insert, `set_text` (same uid), insert a sibling, remove, reorder, attach/fire/remove a Rust handler, and `redraw_all` while recording the `Window` uid.
-
-Run on this machine (X11, `MAKEPAD_GPU=gl`, `LIBGL_ALWAYS_SOFTWARE=1`, Mesa llvmpipe, OpenGL ES 3.2) it logged `PROBE_OK`: window uid 3 stayed 3 across `redraw_all`, the first label uid was stable across `set_text`, the sibling uid survived reorder, the handler fired once and not after it was cleared, and the removed widget left `View.children`. A hand-built `ScriptMod` does **not** inherit the app module's `use mod.prelude.widgets.*`. `Fill` and `Fit` are identifiers spread from `mod.turtle` (`draw/src/turtle.rs`, `..me.Size`). Without that import, eval reports `variable Fill not found in scope` and the property stays at the prototype default; a number still becomes `Size::Fixed` (`ScriptHook for Size`). `quinn` prefixes generated scripts with the import. `script_mod!` inside `quote!` also drops spaces, because the macro rebuilds source from token spans and `quote!` tokens share the call site, so `run!` emits the shell as a string with `#(0)` bound to `App::script_component`.
+On this machine (X11, `MAKEPAD_GPU=gl`, `LIBGL_ALWAYS_SOFTWARE=1`, Mesa llvmpipe, OpenGL ES 3.2) a window uid stayed stable across `redraw_all`, a label uid stayed stable across `set_text`, a sibling uid survived reorder, a Rust handler fired once and not after it was cleared, and a removed widget left `View.children`. A hand-built `ScriptMod` does not inherit the app module's `use mod.prelude.widgets.*`. `Fill` and `Fit` are identifiers spread from `mod.turtle` (`draw/src/turtle.rs`, `..me.Size`). Without that import, eval reports `variable Fill not found in scope` and the property stays at the prototype default; a number still becomes `Size::Fixed` (`ScriptHook for Size`). `quinn` prefixes generated scripts with the import. `script_mod!` inside `quote!` also drops spaces, because the macro rebuilds source from token spans and `quote!` tokens share the call site, so `run!` emits the shell as a string with `#(0)` bound to `App::script_component`.
 
 ## Probe B — Leptos
 
@@ -58,8 +56,8 @@ leptos-native (`README.md`, MIT) is a fork: its own `view!` / `IntoView<R>`, Taf
 
 rstml parses the token tree into `Node` / `NodeElement` / `KeyedAttribute`. `NodeName`'s `Display` joins `on:click` and `let:item` (`rstml/src/node/node_name.rs`). `parse2` is the entry point. That is the parser `view!` uses. It does not create DOM nodes.
 
-Numbers for startup, latency, live reload, retention, and the wasm counter are in [benchmarks.md](benchmarks.md). The macOS run that this machine could not do is [TESTING_ON_MACOS.md](TESTING_ON_MACOS.md).
+Numbers for startup, latency, live reload, retention, and the wasm counter are in [benchmarks.md](benchmarks.md). The macOS run that this machine could not do is [TESTING_ON_MACOS.md](TESTING_ON_MACOS.md). Linux packages and the Android toolchain are in [SETUP_LINUX_AND_ANDROID.md](SETUP_LINUX_AND_ANDROID.md).
 
 ## UI-thread experiment
 
-`probes/widget-lifecycle` is the experiment for the eight operations. `quinn-core`'s `MemorySurface` tests are the experiment for connecting that tree shape to `ImmediateEffect` (signal text, sibling identity, conditional cleanup, keyed identity, handler removal). The Makepad surface in `crates/makepad` is the same operations, called from the effect queue.
+`quinn-core`'s `MemorySurface` tests connect that tree shape to `ImmediateEffect` (signal text, sibling identity, conditional cleanup, keyed identity, handler removal). The Makepad surface in `crates/makepad` is the same operations, called from the effect queue.

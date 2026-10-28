@@ -515,7 +515,11 @@ fn size_of(size: SizeSpec) -> Size {
         },
         SizeSpec::Control => Size::Fixed(36.0),
         SizeSpec::Bar => Size::Fixed(48.0),
-        SizeSpec::Flex { weight, shrink, basis } => Size::Fill {
+        SizeSpec::Flex {
+            weight,
+            shrink,
+            basis,
+        } => Size::Fill {
             weight,
             basis: FitBound::Abs(basis),
             shrink,
@@ -664,7 +668,11 @@ fn size_script_host(size: SizeSpec) -> String {
             };
             format!("Rel{{base: {base} factor: {factor}}}")
         }
-        SizeSpec::Flex { weight, shrink, basis } => {
+        SizeSpec::Flex {
+            weight,
+            shrink,
+            basis,
+        } => {
             format!("Fill{{weight: {weight} shrink: {shrink} basis: {basis}}}")
         }
         SizeSpec::Control => "36".into(),
@@ -721,7 +729,12 @@ fn view_children(widget: &WidgetRef) -> Vec<WidgetRef> {
     widget
         .as_view()
         .borrow()
-        .map(|view| view.children.iter().map(|(_, child)| child.clone()).collect())
+        .map(|view| {
+            view.children
+                .iter()
+                .map(|(_, child)| child.clone())
+                .collect()
+        })
         .unwrap_or_default()
 }
 
@@ -852,18 +865,25 @@ pub fn load_view_with(
     view: &str,
 ) -> ScriptValue {
     let view_file = quinn_lower::view_path(manifest_dir);
+    if !view.is_empty() && !view_file.is_file() {
+        return load_bundled_view(
+            vm,
+            manifest_dir,
+            module_path,
+            title,
+            width,
+            height,
+            component,
+            library,
+            view,
+        );
+    }
     let hot = quinn_lower::hot_ui_path(manifest_dir);
     let shell = quinn_lower::Shell {
         title,
         width,
         height,
     };
-    if !view.is_empty() && !view_file.is_file() {
-        let script = quinn_lower::lower_file_with(view, shell, library)
-            .unwrap_or_else(|err| panic!("lower {title} view: {err}"));
-        let file = format!("{}/hot/ui.rs", manifest_dir.replace('\\', "/"));
-        return eval_script_text(vm, &script, file, manifest_dir, module_path, component);
-    }
     let view = view_file;
     if !vm.is_reload() {
         if std::env::var("QUINN_SKIP_LOWER").is_err() {
@@ -875,6 +895,34 @@ pub fn load_view_with(
         }
     }
     eval_hot_file(vm, &hot, manifest_dir, module_path, component)
+}
+
+/// Lower `view_source` in memory and eval it.
+///
+/// Desktop builds read `view.rs` from disk so `--hot` can rewrite it. An
+/// Android package has no host tree, so the example embeds `view.rs` with
+/// `include_str!` and calls this instead.
+#[allow(clippy::too_many_arguments)]
+pub fn load_bundled_view(
+    vm: &mut ScriptVm,
+    manifest_dir: &str,
+    module_path: &str,
+    title: &'static str,
+    width: u32,
+    height: u32,
+    component: ScriptValue,
+    library: &str,
+    view_source: &str,
+) -> ScriptValue {
+    let shell = quinn_lower::Shell {
+        title,
+        width,
+        height,
+    };
+    let lowered = quinn_lower::lower_file_with(view_source, shell, library)
+        .unwrap_or_else(|err| panic!("lower {title} bundled view: {err}"));
+    let file = format!("{}/hot/ui.rs", manifest_dir.trim_end_matches(['/', '\\']));
+    eval_script_text(vm, &lowered, file, manifest_dir, module_path, component)
 }
 
 struct Delivery {

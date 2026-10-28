@@ -14,16 +14,16 @@ mod widgets;
 
 pub use control::drive_control;
 pub use host::{
-    boot_script, census_host, drive_shell, eval_hot_file, load_hot_view, load_hot_view_with, load_view_with,
-    on_actions,
-    reclaim_script_heap, startup, with_current_cx, with_cx, WidgetCensus,
+    boot_script, census_host, drive_shell, eval_hot_file, load_bundled_view, load_hot_view,
+    load_hot_view_with, load_view_with, on_actions, reclaim_script_heap, startup, with_current_cx,
+    with_cx, WidgetCensus,
 };
-pub use quinn_lower::{accept_gen, cancelled_count, job, JobArg, JobValue};
 pub use makepad_widgets;
 pub use probe::{
     after_mount, flush_now, rss_kib, session_stats, set_frame_driver, set_inspector,
     set_live_shell, SessionStats,
 };
+pub use quinn_lower::{accept_gen, cancelled_count, job, JobArg, JobValue};
 
 use std::cell::RefCell;
 

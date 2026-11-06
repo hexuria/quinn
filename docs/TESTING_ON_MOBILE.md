@@ -1,9 +1,9 @@
 # Testing on iOS and Android
 
-`cargo-makepad` builds and installs the examples on a simulator, an emulator, or a device. Install it at the Makepad revision this workspace pins (the `rev` in `crates/makepad/Cargo.toml`):
+`cargo-makepad` builds and installs the examples on a simulator, an emulator, or a device. Install it from the same Makepad `work` branch `crates/makepad/Cargo.toml` uses:
 
 ```bash
-cargo install --locked --git https://github.com/makepad/makepad --rev 44ecb822b48106fa76bde4dfd309e5a8a7ff1932 cargo-makepad
+cargo install --locked --git https://github.com/makepad/makepad --branch work cargo-makepad
 ```
 
 ## iOS simulator
@@ -62,7 +62,7 @@ cargo makepad android --abi=aarch64 run -p showcase --release
 
 ## Known gaps
 
-- Android Back at the list does nothing. Quinn leaves the event unhandled there, but this Makepad revision's activity always keeps Back and implements neither `Quit` nor `MinimizeWindow` on Android, so nothing sends the app to the background.
+- Android Back at the list does nothing. Quinn leaves the event unhandled there, but this Makepad tree's activity always keeps Back and implements neither `Quit` nor `MinimizeWindow` on Android, so nothing sends the app to the background.
 - The Android emulator shows a blank screen for several seconds at startup while the view is lowered on the device.
 - The showcase's Density control shows Standard on a phone, which starts at touch density; the three segment signals do not read `quinn_os`.
 - On a phone the toast sits over the search row: `Overlay` is placed `top-safe top-[64px]`, and the phone toolbar is taller than 64.
@@ -70,5 +70,5 @@ cargo makepad android --abi=aarch64 run -p showcase --release
 - The page change is instant. Makepad's `StackNavigation` has the iOS slide and the interactive swipe-back; Quinn does not lower to it yet.
 - The notes list beside the Notes page is hidden below 1120 pt, so on a phone the Notes page shows the selected note only.
 - A text field can show the focus look when its page first appears (the iOS search field at launch, the Settings Folder field on Android), before anything was tapped. A tap elsewhere clears it.
-- A trackpad's two-finger scroll does not move a Makepad page in the iOS Simulator: the Simulator sends it as short one-finger touch drags, which Makepad does not treat as a scroll. A click-and-drag (a finger) does scroll. On the Android emulator the same gesture becomes fast swipes that coast too far. Makepad `44ecb822` has no trackpad or mouse-wheel scroll path on iOS or Android.
+- A trackpad's two-finger scroll does not move a Makepad page in the iOS Simulator: the Simulator sends it as short one-finger touch drags, which Makepad does not treat as a scroll. A click-and-drag (a finger) does scroll. On the Android emulator the same gesture becomes fast swipes that coast too far. Makepad `work` has no trackpad or mouse-wheel scroll path on iOS or Android.
 - The software keyboard was not seen in the simulator, which had a hardware keyboard connected (I/O › Keyboard › Connect Hardware Keyboard toggles it).

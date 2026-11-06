@@ -11,4 +11,4 @@ quinn-core = { path = "../core" }
 quinn-styles = { path = "../styles" }
 quinn-lower = { path = "../lower" }
 tokio = { version = "1", features = ["rt-multi-thread", "time", "sync"] }
-makepad-widgets = { git = "https://github.com/makepad/makepad", rev = "44ecb822b48106fa76bde4dfd309e5a8a7ff1932", default-features = false }
+makepad-widgets = { git = "https://github.com/makepad/makepad", branch = "work", default-features = false }

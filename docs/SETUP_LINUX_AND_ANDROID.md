@@ -1,6 +1,6 @@
 # Linux and Android setup
 
-Linux is the host this workspace was run on. Android builds go through Makepad revision `44ecb822b48106fa76bde4dfd309e5a8a7ff1932`, the pin in `crates/makepad/Cargo.toml`. Quinn's example windows were run on Linux. The Android section below built Makepad's `makepad-example-counter` from that checkout and installed it on an emulator. Quinn's own showcase APK is a later step: [ANDROID.md](ANDROID.md).
+Linux is the host this workspace was run on. Android builds go through the Makepad `work` branch named by `crates/makepad/Cargo.toml`. Quinn's example windows were run on Linux. The Android section below built Makepad's `makepad-example-counter` from that checkout and installed it on an emulator. Quinn's own showcase APK is a later step: [ANDROID.md](ANDROID.md).
 
 macOS is a separate checklist: [TESTING_ON_MACOS.md](TESTING_ON_MACOS.md). Leave `MAKEPAD_GPU` and `LIBGL_ALWAYS_SOFTWARE` unset there.
 
@@ -57,11 +57,11 @@ Without a display, `xvfb-run -a cargo run -p counter --release` starts one. The 
 `cargo-makepad` is not a member of this workspace. It is a package in the Makepad checkout Cargo fetches for `makepad-widgets`. From the workspace root, after `cargo fetch` or any command that resolves that git dependency:
 
 ```bash
-MAKEPAD="$(find "${CARGO_HOME:-$HOME/.cargo}/git/checkouts" -maxdepth 2 -type d -name '44ecb82' -print -quit)"
+MAKEPAD="$(find "${CARGO_HOME:-$HOME/.cargo}/git/checkouts" -maxdepth 2 -type d -name '92db3b1' -print -quit)"
 cd "$MAKEPAD"
 ```
 
-`44ecb82` is the first seven hex digits of the pin. The rest of the Android commands run in that directory, not in the Quinn workspace. `cargo run -p cargo-makepad` from the Quinn root has no such package.
+`92db3b1` is the first seven hex digits of the `work` commit currently in `Cargo.lock`. The rest of the Android commands run in that directory, not in the Quinn workspace. `cargo run -p cargo-makepad` from the Quinn root has no such package.
 
 That checkout does not carry Quinn's `rust-toolchain.toml`. Compile `cargo-makepad` with 1.99 (`cargo +1.99.0`). An older default such as 1.83 stops on `edition2024`.
 
@@ -213,4 +213,4 @@ A handset was not used for the check above. That run was the x86_64 emulator, so
 
 ## What this does not cover
 
-Quinn's showcase release APK is [ANDROID.md](ANDROID.md). The other workspace binaries, including `examples/counter`, were not built as APKs. `quinn-makepad` links the same Makepad revision, which is why the toolchain above is the one that matches this repo.
+Quinn's showcase release APK is [ANDROID.md](ANDROID.md). The other workspace binaries, including `examples/counter`, were not built as APKs. `quinn-makepad` links the same Makepad source, which is why the toolchain above is the one that matches this repo.

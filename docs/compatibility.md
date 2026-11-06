@@ -5,7 +5,7 @@
 | Piece | License | Notes |
 | --- | --- | --- |
 | This workspace | MIT OR Apache-2.0 | `publish = false` |
-| Makepad `dev` @ `44ecb822` | MIT (Makepad B.V. 2023, root `LICENSE`); widget crates also `MIT OR Apache-2.0` | Git dependency, default features off so the tweaker and the other families are not linked |
+| Makepad `work` @ `92db3b1` | MIT (Makepad B.V. 2023, root `LICENSE`); widget crates also `MIT OR Apache-2.0` | Git dependency on `branch = "work"`, default features off so the tweaker and the other families are not linked |
 | `reactive_graph` @ `5ca3a9bf` | MIT (Greg Johnston 2022) | Git dependency, feature `effects` |
 | rstml 0.13.1 | MIT (stoically, vldm) | crates.io `=0.13.1`, matching git `9fe0f461` |
 | leptos-native @ `00a81fe2` | MIT | Investigated, not depended on |

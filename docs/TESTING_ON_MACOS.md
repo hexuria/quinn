@@ -98,7 +98,7 @@ A change the lowerer does not understand is a rebuild only if you then edit Rust
 
 ## Wasm
 
-Install Makepad's wrapper from a checkout of `44ecb822` (`tools/cargo_makepad`), then:
+Install Makepad's wrapper from a checkout of the `work` branch (`tools/cargo_makepad`), then:
 
 ```bash
 cargo makepad wasm install-toolchain
@@ -118,6 +118,6 @@ Open the page, click Increment, and confirm the label reads `Counter: 1`. The fi
 
 A button’s face and label stay the colors from its class after a click. Hover and press return to that face. They do not stick on the theme’s pale outset.
 
-The first click in an unfocused window is swallowed. AppKit’s default `acceptsFirstMouse` is `NO`. Makepad `44ecb822` returns that default unless `mouse_down_can_drag_window()` is true (`platform/src/os/apple/macos/macos_delegates.rs`). This workspace does not patch that file. Linux does not call it.
+The first click in an unfocused window is swallowed. AppKit’s default `acceptsFirstMouse` is `NO`. Makepad `work` returns that default unless `mouse_down_can_drag_window()` is true (`platform/src/os/apple/macos/macos_delegates.rs`). This workspace does not patch that file. Linux does not call it.
 
 Typing with the keyboard, and IME `insertText:`, reaches `TextInput`. An accessibility client that sets `AXValue` or uses XCUITest `typeText` does not: the view does not publish `AXValue` or `AXSelectedText`. `save.version()` on the async dashboard reads 0 before the first Save.

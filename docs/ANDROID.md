@@ -18,9 +18,9 @@ Where `view.rs` can be read (the desktop, the iOS simulator), the same call is `
 
 ## Toolchain
 
-The pin is Makepad `44ecb822`. Build `cargo-makepad` from that checkout, then run the binary with the Quinn workspace as the current directory. `cargo-makepad` calls `rustup run stable cargo`, so the Android standard libraries have to be on the stable toolchain. Quinn's `rust-toolchain.toml` pin (1.99.0) is not the compiler that produces the `.so`.
+The dependency is Makepad's `work` branch. Build `cargo-makepad` from a `work` checkout, then run the binary with the Quinn workspace as the current directory. `cargo-makepad` calls `rustup run stable cargo`, so the Android standard libraries have to be on the stable toolchain. Quinn's `rust-toolchain.toml` pin (1.99.0) is not the compiler that produces the `.so`.
 
-This pin's Android flag is `--abi`, not `--target`. `tools/android/README.md` in the Makepad tree still says `--target=all` and `makepad-example-ironfish`. `--target=all` is rejected (`--target=all is not a valid android subcommand`). `makepad-example-ironfish` is not a package in this checkout. ABIs are `aarch64`, `x86_64`, `armv7`, `i686`, and `all`. The default ABI is `aarch64`. The emulator below is `x86_64`.
+This tree's Android flag is `--abi`, not `--target`. `tools/android/README.md` in the Makepad tree still says `--target=all` and `makepad-example-ironfish`. `--target=all` is rejected (`--target=all is not a valid android subcommand`). `makepad-example-ironfish` is not a package in this checkout. ABIs are `aarch64`, `x86_64`, `armv7`, `i686`, and `all`. The default ABI is `aarch64`. The emulator below is `x86_64`.
 
 Install the SDK, NDK, and Rust targets once:
 
